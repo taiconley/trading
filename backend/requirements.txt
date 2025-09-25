@@ -12,8 +12,8 @@ sqlalchemy==2.0.23
 alembic==1.12.1
 psycopg2-binary==2.9.9
 
-# Interactive Brokers (will add later)
-# ib-insync==0.9.86
+# Interactive Brokers
+ib-insync==0.9.86
 
 # Data Processing (will add later)
 # pandas==2.1.3
