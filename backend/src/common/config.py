@@ -7,7 +7,8 @@ with validation, defaults, and feature flags for the trading bot system.
 
 import os
 from typing import List, Optional
-from pydantic import BaseSettings, Field, validator
+from pydantic import Field, validator
+from pydantic_settings import BaseSettings
 
 
 class DatabaseSettings(BaseSettings):

@@ -132,51 +132,51 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 3) Database & Migrations
 ### Tasks:
-- [ ] Set up Alembic configuration
-  - [ ] Create `backend/alembic.ini` configuration file
-  - [ ] Create `backend/migrations/` directory structure
-  - [ ] Configure database connection string
-- [ ] Create `backend/src/common/models.py` with SQLAlchemy models:
-  - [ ] **Reference & Control tables:**
-    - [ ] `symbols(symbol, conid, primary_exchange, currency, active, updated_at)`
-    - [ ] `watchlist(id, symbol, added_at)` — live subs choose from here
-    - [ ] `strategies(strategy_id, name, enabled, params_json, created_at)`
-    - [ ] `risk_limits(id, key, value_json, updated_at)`
-    - [ ] `health(service, status, updated_at)`
-    - [ ] `logs(id, service, level, msg, ts, meta_json)`
-  - [ ] **Account & Portfolio tables:**
-    - [ ] `accounts(account_id, currency, created_at)`
-    - [ ] `account_summary(id, account_id, tag, value, currency, ts)`
-    - [ ] `positions(id, account_id, symbol, conid, qty, avg_price, ts)`
-  - [ ] **Market Data tables:**
-    - [ ] `ticks(id, symbol, ts, bid, ask, last, bid_size, ask_size, last_size)`
-    - [ ] `candles(id, symbol, tf, ts, open, high, low, close, volume)`
-  - [ ] **Trading tables:**
-    - [ ] `orders(id, account_id, strategy_id, symbol, side, qty, order_type, limit_price, stop_price, tif, status, external_order_id, placed_at, updated_at)`
-    - [ ] `executions(id, order_id, trade_id, symbol, qty, price, ts)`
-  - [ ] **Signals & Research tables:**
-    - [ ] `signals(id, strategy_id, symbol, signal_type, strength, ts, meta_json)` — all strategy signals for analysis
-    - [ ] `backtest_runs(id, strategy_name, params_json, start_ts, end_ts, pnl, sharpe, maxdd, trades, created_at)`
-    - [ ] `backtest_trades(id, run_id, symbol, side, qty, entry_ts, entry_px, exit_ts, exit_px, pnl)`
-- [ ] Create database indexes for performance:
-  - [ ] `ticks(symbol, ts DESC)`
-  - [ ] `candles(symbol, tf, ts DESC)`
-  - [ ] `orders(updated_at DESC)`
-  - [ ] `executions(order_id, ts)`
-  - [ ] `positions(symbol)`
-  - [ ] `signals(strategy_id, ts DESC)`
-- [ ] Create initial Alembic migration
-  - [ ] Generate migration: `alembic revision --autogenerate -m "Initial schema"`
-  - [ ] Review and edit migration file
-  - [ ] Test migration: `alembic upgrade head`
-- [ ] Create `backend/src/common/db.py` for database utilities:
-  - [ ] SQLAlchemy engine creation with connection pooling
-  - [ ] Session factory with proper cleanup
-  - [ ] Retry logic for transient database errors
-  - [ ] Health check function
-- [ ] Test: Migrations run cleanly without errors
-- [ ] Test: Round-trip data insertion and retrieval for all tables
-- [ ] Test: Database connection retry logic works
+- [x] Set up Alembic configuration
+  - [x] Create `backend/alembic.ini` configuration file
+  - [x] Create `backend/migrations/` directory structure
+  - [x] Configure database connection string
+- [x] Create `backend/src/common/models.py` with SQLAlchemy models:
+  - [x] **Reference & Control tables:**
+    - [x] `symbols(symbol, conid, primary_exchange, currency, active, updated_at)`
+    - [x] `watchlist(id, symbol, added_at)` — live subs choose from here
+    - [x] `strategies(strategy_id, name, enabled, params_json, created_at)`
+    - [x] `risk_limits(id, key, value_json, updated_at)`
+    - [x] `health(service, status, updated_at)`
+    - [x] `logs(id, service, level, msg, ts, meta_json)`
+  - [x] **Account & Portfolio tables:**
+    - [x] `accounts(account_id, currency, created_at)`
+    - [x] `account_summary(id, account_id, tag, value, currency, ts)`
+    - [x] `positions(id, account_id, symbol, conid, qty, avg_price, ts)`
+  - [x] **Market Data tables:**
+    - [x] `ticks(id, symbol, ts, bid, ask, last, bid_size, ask_size, last_size)`
+    - [x] `candles(id, symbol, tf, ts, open, high, low, close, volume)`
+  - [x] **Trading tables:**
+    - [x] `orders(id, account_id, strategy_id, symbol, side, qty, order_type, limit_price, stop_price, tif, status, external_order_id, placed_at, updated_at)`
+    - [x] `executions(id, order_id, trade_id, symbol, qty, price, ts)`
+  - [x] **Signals & Research tables:**
+    - [x] `signals(id, strategy_id, symbol, signal_type, strength, ts, meta_json)` — all strategy signals for analysis
+    - [x] `backtest_runs(id, strategy_name, params_json, start_ts, end_ts, pnl, sharpe, maxdd, trades, created_at)`
+    - [x] `backtest_trades(id, run_id, symbol, side, qty, entry_ts, entry_px, exit_ts, exit_px, pnl)`
+- [x] Create database indexes for performance:
+  - [x] `ticks(symbol, ts DESC)`
+  - [x] `candles(symbol, tf, ts DESC)`
+  - [x] `orders(updated_at DESC)`
+  - [x] `executions(order_id, ts)`
+  - [x] `positions(symbol)`
+  - [x] `signals(strategy_id, ts DESC)`
+- [x] Create initial Alembic migration
+  - [x] Generate migration: `alembic revision --autogenerate -m "Initial schema"`
+  - [x] Review and edit migration file
+  - [x] Test migration: `alembic upgrade head`
+- [x] Create `backend/src/common/db.py` for database utilities:
+  - [x] SQLAlchemy engine creation with connection pooling
+  - [x] Session factory with proper cleanup
+  - [x] Retry logic for transient database errors
+  - [x] Health check function
+- [x] Test: Migrations run cleanly without errors
+- [x] Test: Round-trip data insertion and retrieval for all tables
+- [x] Test: Database connection retry logic works
 
 ## 4) Common Libraries
 ### Tasks:

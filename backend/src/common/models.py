@@ -1,0 +1,424 @@
+"""
+SQLAlchemy models for the trading bot database.
+
+This module defines all database tables and relationships for the trading system.
+Models are organized by functional area: reference/control, account/portfolio,
+market data, trading, and signals/research.
+"""
+
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import Optional
+import sqlalchemy as sa
+from sqlalchemy import (
+    Column, Integer, String, Boolean, DateTime, Numeric, Text, JSON,
+    ForeignKey, Index, UniqueConstraint, CheckConstraint
+)
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
+
+Base = declarative_base()
+
+
+# =============================================================================
+# Reference & Control Tables
+# =============================================================================
+
+class Symbol(Base):
+    """Symbol reference data from Interactive Brokers."""
+    __tablename__ = 'symbols'
+    
+    symbol = Column(String(20), primary_key=True, nullable=False)
+    conid = Column(Integer, nullable=True, unique=True)  # IB contract ID
+    primary_exchange = Column(String(20), nullable=True)
+    currency = Column(String(3), nullable=False, default='USD')
+    active = Column(Boolean, nullable=False, default=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    watchlist_entries = relationship("WatchlistEntry", back_populates="symbol_ref")
+    ticks = relationship("Tick", back_populates="symbol_ref")
+    candles = relationship("Candle", back_populates="symbol_ref")
+    orders = relationship("Order", back_populates="symbol_ref")
+    positions = relationship("Position", back_populates="symbol_ref")
+    executions = relationship("Execution", back_populates="symbol_ref")
+    signals = relationship("Signal", back_populates="symbol_ref")
+    backtest_trades = relationship("BacktestTrade", back_populates="symbol_ref")
+
+
+class WatchlistEntry(Base):
+    """Symbols in the live market data watchlist."""
+    __tablename__ = 'watchlist'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    added_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    symbol_ref = relationship("Symbol", back_populates="watchlist_entries")
+    
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint('symbol', name='uq_watchlist_symbol'),
+        Index('ix_watchlist_symbol', 'symbol'),
+    )
+
+
+class Strategy(Base):
+    """Strategy configurations and parameters."""
+    __tablename__ = 'strategies'
+    
+    strategy_id = Column(String(50), primary_key=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    enabled = Column(Boolean, nullable=False, default=False)
+    params_json = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    orders = relationship("Order", back_populates="strategy_ref")
+    signals = relationship("Signal", back_populates="strategy_ref")
+
+
+class RiskLimit(Base):
+    """Risk management limits and controls."""
+    __tablename__ = 'risk_limits'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key = Column(String(50), nullable=False, unique=True)
+    value_json = Column(JSON, nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_risk_limits_key', 'key'),
+    )
+
+
+class HealthStatus(Base):
+    """Service health monitoring."""
+    __tablename__ = 'health'
+    
+    service = Column(String(50), primary_key=True, nullable=False)
+    status = Column(String(20), nullable=False)  # healthy, unhealthy, starting, stopping
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("status IN ('healthy', 'unhealthy', 'starting', 'stopping')", 
+                       name='ck_health_status'),
+    )
+
+
+class LogEntry(Base):
+    """Application logs (optional database storage)."""
+    __tablename__ = 'logs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    service = Column(String(50), nullable=False)
+    level = Column(String(10), nullable=False)  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    msg = Column(Text, nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    meta_json = Column(JSON, nullable=True)
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_logs_service_ts', 'service', 'ts'),
+        Index('ix_logs_level_ts', 'level', 'ts'),
+        CheckConstraint("level IN ('DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')", 
+                       name='ck_logs_level'),
+    )
+
+
+# =============================================================================
+# Account & Portfolio Tables
+# =============================================================================
+
+class Account(Base):
+    """IB account information."""
+    __tablename__ = 'accounts'
+    
+    account_id = Column(String(20), primary_key=True, nullable=False)
+    currency = Column(String(3), nullable=False, default='USD')
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    account_summaries = relationship("AccountSummary", back_populates="account_ref")
+    positions = relationship("Position", back_populates="account_ref")
+    orders = relationship("Order", back_populates="account_ref")
+
+
+class AccountSummary(Base):
+    """Account summary data from IB."""
+    __tablename__ = 'account_summary'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(20), ForeignKey('accounts.account_id'), nullable=False)
+    tag = Column(String(50), nullable=False)  # NetLiquidation, TotalCashValue, etc.
+    value = Column(String(50), nullable=False)  # Store as string to preserve precision
+    currency = Column(String(3), nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    account_ref = relationship("Account", back_populates="account_summaries")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_account_summary_account_tag_ts', 'account_id', 'tag', 'ts'),
+    )
+
+
+class Position(Base):
+    """Current positions from IB."""
+    __tablename__ = 'positions'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(20), ForeignKey('accounts.account_id'), nullable=False)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    conid = Column(Integer, nullable=True)
+    qty = Column(Numeric(15, 2), nullable=False)
+    avg_price = Column(Numeric(10, 4), nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    account_ref = relationship("Account", back_populates="positions")
+    symbol_ref = relationship("Symbol", back_populates="positions")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_positions_account_symbol', 'account_id', 'symbol'),
+        Index('ix_positions_symbol', 'symbol'),
+    )
+
+
+# =============================================================================
+# Market Data Tables
+# =============================================================================
+
+class Tick(Base):
+    """Live market data ticks."""
+    __tablename__ = 'ticks'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    bid = Column(Numeric(10, 4), nullable=True)
+    ask = Column(Numeric(10, 4), nullable=True)
+    last = Column(Numeric(10, 4), nullable=True)
+    bid_size = Column(Integer, nullable=True)
+    ask_size = Column(Integer, nullable=True)
+    last_size = Column(Integer, nullable=True)
+    
+    # Relationships
+    symbol_ref = relationship("Symbol", back_populates="ticks")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_ticks_symbol_ts', 'symbol', 'ts'),
+    )
+
+
+class Candle(Base):
+    """Historical and live bar data."""
+    __tablename__ = 'candles'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    tf = Column(String(20), nullable=False)  # timeframe: "1 min", "5 mins", "1 day"
+    ts = Column(DateTime(timezone=True), nullable=False)  # bar timestamp
+    open = Column(Numeric(10, 4), nullable=False)
+    high = Column(Numeric(10, 4), nullable=False)
+    low = Column(Numeric(10, 4), nullable=False)
+    close = Column(Numeric(10, 4), nullable=False)
+    volume = Column(Integer, nullable=False, default=0)
+    
+    # Relationships
+    symbol_ref = relationship("Symbol", back_populates="candles")
+    
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint('symbol', 'tf', 'ts', name='uq_candles_symbol_tf_ts'),
+        Index('ix_candles_symbol_tf_ts', 'symbol', 'tf', 'ts'),
+    )
+
+
+# =============================================================================
+# Trading Tables
+# =============================================================================
+
+class Order(Base):
+    """Order records and lifecycle."""
+    __tablename__ = 'orders'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(String(20), ForeignKey('accounts.account_id'), nullable=False)
+    strategy_id = Column(String(50), ForeignKey('strategies.strategy_id'), nullable=True)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    side = Column(String(4), nullable=False)  # BUY, SELL
+    qty = Column(Numeric(15, 2), nullable=False)
+    order_type = Column(String(10), nullable=False)  # MKT, LMT, STP, STP-LMT
+    limit_price = Column(Numeric(10, 4), nullable=True)
+    stop_price = Column(Numeric(10, 4), nullable=True)
+    tif = Column(String(10), nullable=False, default='DAY')  # DAY, GTC, IOC, FOK
+    status = Column(String(20), nullable=False, default='PendingSubmit')
+    external_order_id = Column(String(50), nullable=True)  # IB order ID
+    placed_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    account_ref = relationship("Account", back_populates="orders")
+    strategy_ref = relationship("Strategy", back_populates="orders")
+    symbol_ref = relationship("Symbol", back_populates="orders")
+    executions = relationship("Execution", back_populates="order_ref")
+    
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("side IN ('BUY', 'SELL')", name='ck_orders_side'),
+        CheckConstraint("order_type IN ('MKT', 'LMT', 'STP', 'STP-LMT')", name='ck_orders_type'),
+        CheckConstraint("tif IN ('DAY', 'GTC', 'IOC', 'FOK')", name='ck_orders_tif'),
+        CheckConstraint("qty > 0", name='ck_orders_qty_positive'),
+        Index('ix_orders_updated_at', 'updated_at'),
+        Index('ix_orders_strategy_symbol', 'strategy_id', 'symbol'),
+        Index('ix_orders_external_id', 'external_order_id'),
+    )
+
+
+class Execution(Base):
+    """Trade executions."""
+    __tablename__ = 'executions'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(Integer, ForeignKey('orders.id'), nullable=False)
+    trade_id = Column(String(50), nullable=True)  # IB execution ID
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    qty = Column(Numeric(15, 2), nullable=False)
+    price = Column(Numeric(10, 4), nullable=False)
+    ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    order_ref = relationship("Order", back_populates="executions")
+    symbol_ref = relationship("Symbol", back_populates="executions")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_executions_order_id_ts', 'order_id', 'ts'),
+        Index('ix_executions_symbol_ts', 'symbol', 'ts'),
+        CheckConstraint("qty > 0", name='ck_executions_qty_positive'),
+        CheckConstraint("price > 0", name='ck_executions_price_positive'),
+    )
+
+
+# =============================================================================
+# Signals & Research Tables  
+# =============================================================================
+
+class Signal(Base):
+    """Strategy signals for analysis."""
+    __tablename__ = 'signals'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_id = Column(String(50), ForeignKey('strategies.strategy_id'), nullable=False)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    signal_type = Column(String(20), nullable=False)  # BUY, SELL, HOLD, etc.
+    strength = Column(Numeric(5, 4), nullable=True)  # Signal strength 0.0-1.0
+    ts = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    meta_json = Column(JSON, nullable=True)  # Additional signal metadata
+    
+    # Relationships
+    strategy_ref = relationship("Strategy", back_populates="signals")
+    symbol_ref = relationship("Symbol", back_populates="signals")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_signals_strategy_ts', 'strategy_id', 'ts'),
+        Index('ix_signals_symbol_ts', 'symbol', 'ts'),
+        CheckConstraint("strength IS NULL OR (strength >= 0.0 AND strength <= 1.0)", 
+                       name='ck_signals_strength_range'),
+    )
+
+
+class BacktestRun(Base):
+    """Backtest execution results."""
+    __tablename__ = 'backtest_runs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(String(100), nullable=False)
+    params_json = Column(JSON, nullable=True)
+    start_ts = Column(DateTime(timezone=True), nullable=False)
+    end_ts = Column(DateTime(timezone=True), nullable=False)
+    pnl = Column(Numeric(15, 2), nullable=False)
+    sharpe = Column(Numeric(8, 4), nullable=True)
+    maxdd = Column(Numeric(8, 4), nullable=True)  # Max drawdown as percentage
+    trades = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    backtest_trades = relationship("BacktestTrade", back_populates="run_ref")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_backtest_runs_strategy_created', 'strategy_name', 'created_at'),
+        CheckConstraint("start_ts < end_ts", name='ck_backtest_runs_date_order'),
+        CheckConstraint("trades >= 0", name='ck_backtest_runs_trades_positive'),
+    )
+
+
+class BacktestTrade(Base):
+    """Individual trades from backtest runs."""
+    __tablename__ = 'backtest_trades'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey('backtest_runs.id'), nullable=False)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    side = Column(String(4), nullable=False)  # BUY, SELL
+    qty = Column(Numeric(15, 2), nullable=False)
+    entry_ts = Column(DateTime(timezone=True), nullable=False)
+    entry_px = Column(Numeric(10, 4), nullable=False)
+    exit_ts = Column(DateTime(timezone=True), nullable=True)
+    exit_px = Column(Numeric(10, 4), nullable=True)
+    pnl = Column(Numeric(15, 2), nullable=True)
+    
+    # Relationships
+    run_ref = relationship("BacktestRun", back_populates="backtest_trades")
+    symbol_ref = relationship("Symbol", back_populates="backtest_trades")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_backtest_trades_run_symbol', 'run_id', 'symbol'),
+        CheckConstraint("side IN ('BUY', 'SELL')", name='ck_backtest_trades_side'),
+        CheckConstraint("qty > 0", name='ck_backtest_trades_qty_positive'),
+        CheckConstraint("entry_px > 0", name='ck_backtest_trades_entry_px_positive'),
+        CheckConstraint("exit_px IS NULL OR exit_px > 0", name='ck_backtest_trades_exit_px_positive'),
+        CheckConstraint("exit_ts IS NULL OR entry_ts <= exit_ts", name='ck_backtest_trades_date_order'),
+    )
+
+
+# =============================================================================
+# Additional Indexes for Performance
+# =============================================================================
+
+# These indexes are created as part of the table definitions above, but we can add
+# additional composite indexes here if needed for specific query patterns
+
+# Example of adding additional indexes after table creation:
+# Index('ix_ticks_symbol_ts_desc', Tick.symbol, Tick.ts.desc())
+# Index('ix_candles_symbol_tf_ts_desc', Candle.symbol, Candle.tf, Candle.ts.desc())
+# Index('ix_orders_account_status_updated', Order.account_id, Order.status, Order.updated_at)
+
+# =============================================================================
+# Utility Functions
+# =============================================================================
+
+def get_utc_now():
+    """Get current UTC timestamp."""
+    return datetime.now(timezone.utc)
+
+
+def create_all_tables(engine):
+    """Create all tables in the database."""
+    Base.metadata.create_all(bind=engine)
+
+
+def drop_all_tables(engine):
+    """Drop all tables from the database (use with caution)."""
+    Base.metadata.drop_all(bind=engine)
