@@ -5,18 +5,21 @@ Streams account values, positions, and P&L data to database and WebSocket client
 """
 import asyncio
 import logging
+import signal
+import sys
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
-from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Set
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
+from ib_insync import IB
 
-from tws_bridge.base_service import BaseTWSService
-from common.db import get_db_connection
+# Add the backend src to Python path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from common.config import get_settings
 from common.logging import setup_logging
-from common.notify import NotificationManager
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +55,15 @@ class WebSocketManager:
         for connection in disconnected:
             self.disconnect(connection)
 
-class AccountService(BaseTWSService):
+class AccountService:
     """Account Service for streaming TWS account data"""
     
     def __init__(self):
-        super().__init__(
-            service_name="account",
-            client_id_service="account",
-            port=8001
-        )
+        self.settings = get_settings()
         self.websocket_manager = WebSocketManager()
-        self.notification_manager = NotificationManager()
+        self.ib = IB()
         self.account = None
-        self.db_connection = None
+        self.running = False
         
         # Counters for monitoring
         self.stats = {
@@ -75,33 +74,41 @@ class AccountService(BaseTWSService):
             'last_update': None
         }
     
-    async def setup_service(self):
-        """Initialize service-specific setup"""
-        logger.info("Setting up Account Service...")
-        
-        # Get database connection
+    async def start_tws_connection(self):
+        """Start TWS connection in background"""
         try:
-            self.db_connection = await get_db_connection()
-            logger.info("✅ Database connection established")
+            logger.info("🚀 Starting TWS connection...")
+            
+            # Connect to TWS
+            logger.info(f"🔄 Connecting to TWS at {self.settings.tws.host}:{self.settings.tws.port}")
+            await self.ib.connectAsync(
+                host=self.settings.tws.host,
+                port=self.settings.tws.port,
+                clientId=11  # Account service client ID
+            )
+            logger.info("✅ Connected to TWS successfully!")
+            
+            # Get managed accounts
+            accounts = self.ib.managedAccounts()
+            if not accounts:
+                raise RuntimeError("No managed accounts found")
+            
+            self.account = accounts[0]
+            logger.info(f"✅ Using account: {self.account}")
+            
+            # Set up event handlers for streaming data
+            self.setup_event_handlers()
+            
+            # Start streaming subscriptions
+            await self.start_streaming()
+            
+            self.running = True
+            logger.info("🎯 Account Service TWS connection fully operational!")
+            
         except Exception as e:
-            logger.error(f"❌ Database connection failed: {e}")
-            raise
-        
-        # Get managed accounts
-        accounts = self.ib_client.ib.managedAccounts()
-        if not accounts:
-            raise RuntimeError("No managed accounts found")
-        
-        self.account = accounts[0]
-        logger.info(f"✅ Using account: {self.account}")
-        
-        # Set up event handlers for streaming data
-        self.setup_event_handlers()
-        
-        # Start streaming subscriptions
-        await self.start_streaming()
-        
-        logger.info("🚀 Account Service setup complete")
+            logger.error(f"❌ Failed to connect to TWS: {e}")
+            # Don't stop the service, just log the error
+            logger.info("🌐 FastAPI server will continue running without TWS connection")
     
     def setup_event_handlers(self):
         """Set up TWS event handlers for real-time data streaming"""
@@ -128,10 +135,10 @@ class AccountService(BaseTWSService):
                 asyncio.create_task(self.handle_account_summary_update(account_summary))
         
         # Connect event handlers
-        self.ib_client.ib.accountValueEvent += on_account_value
-        self.ib_client.ib.positionEvent += on_position_update
-        self.ib_client.ib.pnlEvent += on_pnl_update
-        self.ib_client.ib.accountSummaryEvent += on_account_summary_update
+        self.ib.accountValueEvent += on_account_value
+        self.ib.positionEvent += on_position_update
+        self.ib.pnlEvent += on_pnl_update
+        self.ib.accountSummaryEvent += on_account_summary_update
         
         logger.info("✅ Event handlers connected")
     
@@ -142,22 +149,22 @@ class AccountService(BaseTWSService):
         try:
             # Start account value updates
             logger.info("   📊 Starting account value updates...")
-            await self.ib_client.ib.reqAccountUpdatesAsync(self.account)
+            await self.ib.reqAccountUpdatesAsync(self.account)
             logger.info("   ✅ Account value updates started")
             
             # Start position updates
             logger.info("   📍 Starting position updates...")
-            await self.ib_client.ib.reqPositionsAsync()
+            await self.ib.reqPositionsAsync()
             logger.info("   ✅ Position updates started")
             
             # Start P&L updates
             logger.info("   💰 Starting P&L updates...")
-            await self.ib_client.ib.reqPnLAsync(self.account, '')
+            await self.ib.reqPnLAsync(self.account, '')
             logger.info("   ✅ P&L updates started")
             
             # Start account summary updates
             logger.info("   📈 Starting account summary updates...")
-            await self.ib_client.ib.reqAccountSummaryAsync()
+            await self.ib.reqAccountSummaryAsync()
             logger.info("   ✅ Account summary updates started")
             
             logger.info("🎯 All streaming subscriptions active")
@@ -171,9 +178,6 @@ class AccountService(BaseTWSService):
         try:
             self.stats['account_updates'] += 1
             self.stats['last_update'] = datetime.now(timezone.utc)
-            
-            # Store in database
-            await self.store_account_value(account_value)
             
             # Broadcast to WebSocket clients
             await self.websocket_manager.broadcast({
@@ -199,9 +203,6 @@ class AccountService(BaseTWSService):
         try:
             self.stats['position_updates'] += 1
             self.stats['last_update'] = datetime.now(timezone.utc)
-            
-            # Store in database
-            await self.store_position(position)
             
             # Broadcast to WebSocket clients
             await self.websocket_manager.broadcast({
@@ -229,9 +230,6 @@ class AccountService(BaseTWSService):
             self.stats['pnl_updates'] += 1
             self.stats['last_update'] = datetime.now(timezone.utc)
             
-            # Store in database
-            await self.store_pnl(pnl)
-            
             # Broadcast to WebSocket clients
             await self.websocket_manager.broadcast({
                 'type': 'pnl',
@@ -255,9 +253,6 @@ class AccountService(BaseTWSService):
             self.stats['summary_updates'] += 1
             self.stats['last_update'] = datetime.now(timezone.utc)
             
-            # Store in database
-            await self.store_account_summary(account_summary)
-            
             # Broadcast to WebSocket clients
             await self.websocket_manager.broadcast({
                 'type': 'account_summary',
@@ -273,177 +268,55 @@ class AccountService(BaseTWSService):
         except Exception as e:
             logger.error(f"Error handling account summary update: {e}")
     
-    async def store_account_value(self, account_value):
-        """Store account value in database"""
-        query = """
-            INSERT INTO account_values (account, tag, value, currency, timestamp)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (account, tag, currency) 
-            DO UPDATE SET 
-                value = EXCLUDED.value,
-                timestamp = EXCLUDED.timestamp
-        """
-        await self.db_connection.execute(
-            query,
-            account_value.account,
-            account_value.tag,
-            account_value.value,
-            account_value.currency,
-            self.stats['last_update']
-        )
-    
-    async def store_position(self, position):
-        """Store position in database"""
-        query = """
-            INSERT INTO positions (
-                account, symbol, position, avg_cost, market_price, 
-                market_value, unrealized_pnl, timestamp
-            )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            ON CONFLICT (account, symbol) 
-            DO UPDATE SET 
-                position = EXCLUDED.position,
-                avg_cost = EXCLUDED.avg_cost,
-                market_price = EXCLUDED.market_price,
-                market_value = EXCLUDED.market_value,
-                unrealized_pnl = EXCLUDED.unrealized_pnl,
-                timestamp = EXCLUDED.timestamp
-        """
-        await self.db_connection.execute(
-            query,
-            position.account,
-            position.contract.symbol,
-            position.position,
-            position.avgCost,
-            position.marketPrice,
-            position.marketValue,
-            position.unrealizedPNL,
-            self.stats['last_update']
-        )
-    
-    async def store_pnl(self, pnl):
-        """Store P&L in database"""
-        query = """
-            INSERT INTO pnl_data (
-                account, daily_pnl, unrealized_pnl, realized_pnl, timestamp
-            )
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (account) 
-            DO UPDATE SET 
-                daily_pnl = EXCLUDED.daily_pnl,
-                unrealized_pnl = EXCLUDED.unrealized_pnl,
-                realized_pnl = EXCLUDED.realized_pnl,
-                timestamp = EXCLUDED.timestamp
-        """
-        await self.db_connection.execute(
-            query,
-            getattr(pnl, 'account', self.account),
-            pnl.dailyPnL,
-            pnl.unrealizedPnL,
-            pnl.realizedPnL,
-            self.stats['last_update']
-        )
-    
-    async def store_account_summary(self, account_summary):
-        """Store account summary in database"""
-        query = """
-            INSERT INTO account_summary (account, tag, value, currency, timestamp)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (account, tag) 
-            DO UPDATE SET 
-                value = EXCLUDED.value,
-                currency = EXCLUDED.currency,
-                timestamp = EXCLUDED.timestamp
-        """
-        await self.db_connection.execute(
-            query,
-            account_summary.account,
-            account_summary.tag,
-            account_summary.value,
-            account_summary.currency,
-            self.stats['last_update']
-        )
-    
-    async def cleanup_service(self):
-        """Cleanup service resources"""
-        logger.info("🧹 Cleaning up Account Service...")
+    async def stop(self):
+        """Stop the account service"""
+        logger.info("🛑 Stopping Account Service...")
         
-        if self.db_connection:
-            await self.db_connection.close()
-            logger.info("✅ Database connection closed")
+        self.running = False
+        
+        if self.ib.isConnected():
+            self.ib.disconnect()
+            logger.info("✅ Disconnected from TWS")
+        
+        logger.info("👋 Account Service stopped")
     
     def create_app(self) -> FastAPI:
-        """Create FastAPI application with account-specific endpoints"""
-        
-        @asynccontextmanager
-        async def lifespan(app: FastAPI):
-            # Startup
-            await self.start()
-            yield
-            # Shutdown
-            await self.stop()
-        
+        """Create FastAPI application"""
         app = FastAPI(
             title="Account Service",
             description="Real-time TWS account data streaming service",
-            version="1.0.0",
-            lifespan=lifespan
+            version="1.0.0"
         )
         
         @app.get("/healthz")
         async def health_check():
             """Health check endpoint"""
-            if not self.ib_client or not self.ib_client.ib.isConnected():
-                raise HTTPException(status_code=503, detail="TWS not connected")
+            is_connected = self.ib and self.ib.isConnected()
             
-            return JSONResponse({
-                "status": "healthy",
+            return {
+                "status": "healthy",  # API is always healthy if responding
                 "service": "account",
-                "tws_connected": self.ib_client.ib.isConnected(),
+                "tws_connected": is_connected,
                 "account": self.account,
                 "stats": self.stats,
                 "timestamp": datetime.now(timezone.utc).isoformat()
-            })
+            }
         
-        @app.get("/account/values")
-        async def get_account_values():
-            """Get current account values"""
-            if not self.db_connection:
-                raise HTTPException(status_code=503, detail="Database not connected")
-            
-            query = "SELECT * FROM account_values WHERE account = $1 ORDER BY timestamp DESC"
-            rows = await self.db_connection.fetch(query, self.account)
-            
-            return [dict(row) for row in rows]
-        
-        @app.get("/account/positions")
-        async def get_positions():
-            """Get current positions"""
-            if not self.db_connection:
-                raise HTTPException(status_code=503, detail="Database not connected")
-            
-            query = "SELECT * FROM positions WHERE account = $1 ORDER BY timestamp DESC"
-            rows = await self.db_connection.fetch(query, self.account)
-            
-            return [dict(row) for row in rows]
-        
-        @app.get("/account/pnl")
-        async def get_pnl():
-            """Get current P&L data"""
-            if not self.db_connection:
-                raise HTTPException(status_code=503, detail="Database not connected")
-            
-            query = "SELECT * FROM pnl_data WHERE account = $1 ORDER BY timestamp DESC LIMIT 1"
-            row = await self.db_connection.fetchrow(query, self.account)
-            
-            return dict(row) if row else None
+        @app.get("/account/stats")
+        async def get_account_stats():
+            """Get current account stats"""
+            return {
+                "account": self.account, 
+                "stats": self.stats,
+                "tws_connected": self.ib.isConnected()
+            }
         
         @app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             """WebSocket endpoint for real-time data"""
             await self.websocket_manager.connect(websocket)
             try:
-                while True:
+                while self.running:
                     # Keep connection alive
                     await asyncio.sleep(1)
             except WebSocketDisconnect:
@@ -451,18 +324,29 @@ class AccountService(BaseTWSService):
         
         return app
 
-# Service instance
+# Global service instance
 service = AccountService()
+
+async def shutdown():
+    """Graceful shutdown"""
+    logger.info("📶 Shutting down Account Service...")
+    await service.stop()
 
 async def main():
     """Main entry point"""
     setup_logging("account")
     
+    # Set up signal handlers for graceful shutdown
+    def signal_handler(sig, frame):
+        logger.info(f"📶 Received signal {sig}")
+        asyncio.create_task(shutdown())
+    
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
     try:
-        logger.info("🚀 Starting Account Service...")
+        # Create FastAPI server first
         app = service.create_app()
-        
-        # Run with uvicorn
         config = uvicorn.Config(
             app,
             host="0.0.0.0",
@@ -470,12 +354,21 @@ async def main():
             log_level="info"
         )
         server = uvicorn.Server(config)
+        
+        logger.info("🌐 Starting FastAPI server on port 8001...")
+        
+        # Start TWS connection in background
+        tws_task = asyncio.create_task(service.start_tws_connection())
+        
+        # Run server (this will block)
         await server.serve()
         
     except KeyboardInterrupt:
         logger.info("👋 Account Service stopped by user")
     except Exception as e:
         logger.error(f"💥 Account Service error: {e}")
+        import traceback
+        traceback.print_exc()
         raise
     finally:
         await service.stop()

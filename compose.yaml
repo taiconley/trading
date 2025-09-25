@@ -62,6 +62,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-account
+    command: python -m src.services.account.main
     environment:
       SERVICE_NAME: account
       POSTGRES_HOST: postgres

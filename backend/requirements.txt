@@ -14,6 +14,7 @@ psycopg2-binary==2.9.9
 
 # Interactive Brokers
 ib-insync==0.9.86
+tzdata==2023.3
 
 # Data Processing (will add later)
 # pandas==2.1.3
