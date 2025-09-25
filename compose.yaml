@@ -1,0 +1,243 @@
+version: '3.8'
+
+services:
+  # Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: trading-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
+      POSTGRES_DB: ${POSTGRES_DB:-trading}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bot} -d ${POSTGRES_DB:-trading}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Backend API Gateway
+  backend-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: trading-api
+    environment:
+      SERVICE_NAME: api
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
+      POSTGRES_DB: ${POSTGRES_DB:-trading}
+      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_PORT: ${TWS_PORT:-7497}
+      USE_PAPER: ${USE_PAPER:-1}
+      ENABLE_LIVE: ${ENABLE_LIVE:-0}
+      DRY_RUN: ${DRY_RUN:-1}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Account Service
+  backend-account:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: trading-account
+    environment:
+      SERVICE_NAME: account
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
+      POSTGRES_DB: ${POSTGRES_DB:-trading}
+      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_PORT: ${TWS_PORT:-7497}
+      TWS_CLIENT_ID: 11
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Market Data Service
+  backend-marketdata:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: trading-marketdata
+    environment:
+      SERVICE_NAME: marketdata
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
+      POSTGRES_DB: ${POSTGRES_DB:-trading}
+      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_PORT: ${TWS_PORT:-7497}
+      TWS_CLIENT_ID: 12
+      MAX_SUBSCRIPTIONS: ${MAX_SUBSCRIPTIONS:-50}
+      DEFAULT_SYMBOLS: ${DEFAULT_SYMBOLS:-AAPL,MSFT,SPY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Historical Data Service
+  backend-historical:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: trading-historical
+    environment:
+      SERVICE_NAME: historical
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
+      POSTGRES_DB: ${POSTGRES_DB:-trading}
+      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_PORT: ${TWS_PORT:-7497}
+      TWS_CLIENT_ID: 13
+      MAX_HIST_REQUESTS_PER_MIN: ${MAX_HIST_REQUESTS_PER_MIN:-30}
+      HIST_BAR_SIZES: ${HIST_BAR_SIZES:-1 min,5 mins,1 day}
+      LOOKBACK: ${LOOKBACK:-30 D}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Trader Service
+  backend-trader:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: trading-trader
+    environment:
+      SERVICE_NAME: trader
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
+      POSTGRES_DB: ${POSTGRES_DB:-trading}
+      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_PORT: ${TWS_PORT:-7497}
+      TWS_CLIENT_ID: 14
+      USE_PAPER: ${USE_PAPER:-1}
+      ENABLE_LIVE: ${ENABLE_LIVE:-0}
+      DRY_RUN: ${DRY_RUN:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Strategy Service
+  backend-strategy:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: trading-strategy
+    environment:
+      SERVICE_NAME: strategy
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
+      POSTGRES_DB: ${POSTGRES_DB:-trading}
+      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_PORT: ${TWS_PORT:-7497}
+      TWS_CLIENT_ID_BASE: ${TWS_CLIENT_ID_BASE:-15}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend-trader:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+  # Frontend Dashboard
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: trading-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - trading-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  trading-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
