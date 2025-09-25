@@ -209,32 +209,32 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 5) TWS Bridge & Client IDs
 ### Tasks:
-- [ ] Create `backend/src/tws_bridge/ib_client.py`
-  - [ ] Wrap ib-insync.IB connection with retry logic
-  - [ ] Implement exponential backoff with jitter for reconnections
-  - [ ] Auto-resubscribe to market data after reconnect
-  - [ ] Request throttling to avoid IB pacing violations
-  - [ ] Connection state management and health monitoring
-  - [ ] Graceful disconnect handling
-- [ ] Create `backend/src/tws_bridge/client_ids.py`
-  - [ ] Define client ID ranges for each service:
-    - [ ] account_ws: 11
-    - [ ] marketdata: 12  
-    - [ ] historical: 13
-    - [ ] trader: 14
-    - [ ] strategy runner instances: 15–29
-  - [ ] Database persistence for allocated client IDs
-  - [ ] Collision detection and next ID probing
-  - [ ] Automatic client ID reclaim on service restart
-  - [ ] Client ID allocation and deallocation functions
-- [ ] Create base TWS service class
-  - [ ] Common connection management
-  - [ ] Health check endpoints (`/healthz`)
-  - [ ] Graceful shutdown handling (SIGTERM)
-  - [ ] Error handling and logging
-- [ ] Test: Service restart automatically reclaims valid client ID
-- [ ] Test: Multiple services can connect simultaneously without conflicts
-- [ ] Test: Connection resilience during TWS restarts
+- [x] Create `backend/src/tws_bridge/ib_client.py`
+  - [x] Wrap ib-insync.IB connection with retry logic
+  - [x] Implement exponential backoff with jitter for reconnections
+  - [x] Auto-resubscribe to market data after reconnect
+  - [x] Request throttling to avoid IB pacing violations
+  - [x] Connection state management and health monitoring
+  - [x] Graceful disconnect handling
+- [x] Create `backend/src/tws_bridge/client_ids.py`
+  - [x] Define client ID ranges for each service:
+    - [x] account_ws: 11
+    - [x] marketdata: 12  
+    - [x] historical: 13
+    - [x] trader: 14
+    - [x] strategy runner instances: 15–29
+  - [x] Database persistence for allocated client IDs
+  - [x] Collision detection and next ID probing
+  - [x] Automatic client ID reclaim on service restart
+  - [x] Client ID allocation and deallocation functions
+- [x] Create base TWS service class
+  - [x] Common connection management
+  - [x] Health check endpoints (`/healthz`)
+  - [x] Graceful shutdown handling (SIGTERM)
+  - [x] Error handling and logging
+- [x] Test: Service restart automatically reclaims valid client ID
+- [x] Test: Multiple services can connect simultaneously without conflicts
+- [x] Test: Connection resilience during TWS restarts
 
 ## 6) Account Service (account_ws)
 ### Tasks:
