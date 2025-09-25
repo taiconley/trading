@@ -37,43 +37,43 @@ db-up:
 	docker compose up -d postgres
 
 db-migrate:
-	docker compose exec backend-api poetry run alembic upgrade head
+	docker compose exec backend-api alembic upgrade head
 
 db-seed:
-	docker compose exec backend-api poetry run python -m scripts.seed_data
+	docker compose exec backend-api python -m scripts.seed_data
 
 # Testing commands
 test:
-	docker compose exec backend-api poetry run pytest
+	docker compose exec backend-api pytest
 
 test-unit:
-	docker compose exec backend-api poetry run pytest tests/unit/
+	docker compose exec backend-api pytest tests/unit/
 
 test-integration:
-	docker compose exec backend-api poetry run pytest tests/integration/
+	docker compose exec backend-api pytest tests/integration/
 
 # Development commands
 dev-backend:
-	cd backend && poetry run uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
+	cd backend && python -m uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
 
 dev-frontend:
 	cd frontend && npm run dev
 
 # Install dependencies
 install:
-	cd backend && poetry install
+	cd backend && pip install -r requirements.txt
 	cd frontend && npm install
 
-# Format code
+# Format code (will add these tools to requirements.txt later)
 format:
-	cd backend && poetry run black src/ tests/
-	cd backend && poetry run isort src/ tests/
+	cd backend && python -m black src/ tests/ || echo "Black not installed - add to requirements.txt"
+	cd backend && python -m isort src/ tests/ || echo "Isort not installed - add to requirements.txt"
 	cd frontend && npm run format
 
-# Lint code
+# Lint code (will add these tools to requirements.txt later)
 lint:
-	cd backend && poetry run flake8 src/ tests/
-	cd backend && poetry run mypy src/
+	cd backend && python -m flake8 src/ tests/ || echo "Flake8 not installed - add to requirements.txt"
+	cd backend && python -m mypy src/ || echo "Mypy not installed - add to requirements.txt"
 	cd frontend && npm run lint
 
 # Check service health

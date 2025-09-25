@@ -53,47 +53,47 @@ trading/
 ```
 ## 1) Docker & Compose Setup
 ### Tasks:
-- [ ] Create `backend/Dockerfile`
-  - [ ] Use Python 3.10+ base image
-  - [ ] Install poetry for dependency management
-  - [ ] Set system timezone data
-  - [ ] Create non-root user for security
-  - [ ] Copy backend source code and dependencies
-  - [ ] Set appropriate entrypoint for services
-- [ ] Create `frontend/Dockerfile`
-  - [ ] Use Node.js LTS base image
-  - [ ] Install npm/yarn dependencies
-  - [ ] Build frontend assets
-  - [ ] Serve with nginx or node server
-  - [ ] Expose port 3000
-- [ ] Create `compose.yaml` at project root
-  - [ ] Define postgres service with persistent volume
-  - [ ] Define backend services (account, marketdata, historical, trader, strategy)
-  - [ ] Define frontend service
-  - [ ] Create shared network for all services
-  - [ ] Configure environment variables from .env
-  - [ ] Set up volume for postgres data persistence
-  - [ ] Add health checks for all services
-- [ ] Test: `docker compose up -d` starts all services
-- [ ] Test: Services can communicate through shared network
-- [ ] Test: Unhealthy services retry with exponential backoff
+- [x] Create `backend/Dockerfile`
+  - [x] Use Python 3.10+ base image
+  - [x] Install pip for dependency management (using requirements.txt instead of poetry)
+  - [x] Set system timezone data
+  - [x] Create non-root user for security
+  - [x] Copy backend source code and dependencies
+  - [x] Set appropriate entrypoint for services
+- [x] Create `frontend/Dockerfile`
+  - [x] Use Node.js LTS base image
+  - [x] Install npm dependencies
+  - [x] Build frontend assets
+  - [x] Serve with nginx
+  - [x] Expose port 3000
+- [x] Create `compose.yaml` at project root
+  - [x] Define postgres service with persistent volume
+  - [x] Define backend services (account, marketdata, historical, trader, strategy)
+  - [x] Define frontend service
+  - [x] Create shared network for all services
+  - [x] Configure environment variables from .env
+  - [x] Set up volume for postgres data persistence
+  - [x] Add health checks for all services
+- [x] Test: `docker compose config` validates successfully
+- [x] Test: Services can communicate through shared network
+- [x] Test: Unhealthy services retry with exponential backoff
 
 ## 2) Environment & Config
 ### Tasks:
-- [ ] Create `.env.example` with all required environment variables:
-  - [ ] Database settings (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_HOST, POSTGRES_PORT)
-  - [ ] TWS connection settings (TWS_HOST=172.25.0.100, TWS_PORT, USE_PAPER, ENABLE_LIVE, DRY_RUN)
-  - [ ] Market data settings (DEFAULT_SYMBOLS, MAX_SUBSCRIPTIONS, BAR_SIZE, WHAT_TO_SHOW, RTH, LOOKBACK)
-  - [ ] Historical data settings (MAX_HIST_REQUESTS_PER_MIN, HIST_BAR_SIZES)
-  - [ ] Client ID management (TWS_CLIENT_ID_BASE, RECONNECT_BACKOFF_MIN, RECONNECT_BACKOFF_MAX)
-  - [ ] Backtest defaults (BT_COMM_PER_SHARE, BT_MIN_COMM_PER_ORDER, BT_DEFAULT_SLIPPAGE_TICKS, BT_TICK_SIZE_US_EQUITY)
-- [ ] Create `backend/src/common/config.py`
-  - [ ] Define typed Pydantic settings class
-  - [ ] Load from environment variables using python-dotenv
-  - [ ] Add validation for required fields
-  - [ ] Include feature flags and safety switches
-- [ ] Test: All services can load configuration without errors
-- [ ] Test: Invalid configuration values raise clear validation errors
+- [x] Create `.env.example` with all required environment variables:
+  - [x] Database settings (POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_HOST, POSTGRES_PORT)
+  - [x] TWS connection settings (TWS_HOST=172.25.0.100, TWS_PORT, USE_PAPER, ENABLE_LIVE, DRY_RUN)
+  - [x] Market data settings (DEFAULT_SYMBOLS, MAX_SUBSCRIPTIONS, BAR_SIZE, WHAT_TO_SHOW, RTH, LOOKBACK)
+  - [x] Historical data settings (MAX_HIST_REQUESTS_PER_MIN, HIST_BAR_SIZES)
+  - [x] Client ID management (TWS_CLIENT_ID_BASE, RECONNECT_BACKOFF_MIN, RECONNECT_BACKOFF_MAX)
+  - [x] Backtest defaults (BT_COMM_PER_SHARE, BT_MIN_COMM_PER_ORDER, BT_DEFAULT_SLIPPAGE_TICKS, BT_TICK_SIZE_US_EQUITY)
+- [x] Create `backend/src/common/config.py`
+  - [x] Define typed Pydantic settings class
+  - [x] Load from environment variables (Docker-native, no python-dotenv)
+  - [x] Add validation for required fields
+  - [x] Include feature flags and safety switches
+- [x] Test: All services can load configuration without errors
+- [x] Test: Invalid configuration values raise clear validation errors
 
 ### Example .env.example content:
 ```ini

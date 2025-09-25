@@ -2,3 +2,21 @@ make up - Start all services
 make down - Stop all services
 make logs - View service logs
 make health - Check service status
+
+
+
+ssh \
+    -L 5173:localhost:5173 \
+    -L 8000:localhost:8000 \
+    -L 8001:localhost:8001 \
+    -L 5432:localhost:5432 \
+    -L 5433:localhost:5433 \
+    -L 6379:localhost:6379 \
+    -L 5678:localhost:5678 \
+    -L 5679:localhost:5679 \
+    -L 5680:localhost:5680 \
+    -L 9229:localhost:9229 \
+    -L 8082:localhost:8082 \
+    -L 54320:localhost:54320 \
+    -L 3000:localhost:3000 \
+    taiconley@aiunlocked.zapto.org
