@@ -209,13 +209,21 @@ def get_database_info() -> dict:
             db_result = session.execute(text("SELECT current_database()"))
             database = db_result.fetchone()[0]
             
+            pool_info = {}
+            try:
+                pool_info = {
+                    "pool_size": engine.pool.size(),
+                    "checked_out_connections": engine.pool.checkedout(),
+                    "overflow_connections": engine.pool.overflow(),
+                }
+            except AttributeError:
+                # Some pool implementations don't have all methods
+                pool_info = {"pool_type": str(type(engine.pool))}
+            
             return {
                 "database": database,
                 "version": version,
-                "pool_size": engine.pool.size(),
-                "checked_out_connections": engine.pool.checkedout(),
-                "overflow_connections": engine.pool.overflow(),
-                "invalid_connections": engine.pool.invalidated(),
+                **pool_info
             }
         
         return execute_with_retry(get_info, max_retries=1)

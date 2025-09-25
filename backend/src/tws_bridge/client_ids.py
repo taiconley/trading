@@ -5,14 +5,19 @@ This module handles client ID allocation, collision detection, database persiste
 and automatic reclaim for TWS service connections.
 """
 
+import os
+import sys
 import time
 from typing import Dict, List, Optional, Set
 from datetime import datetime, timezone
 from dataclasses import dataclass
 
-from ..common.config import get_settings
-from ..common.db import get_db_session, execute_with_retry
-from ..common.logging import get_logger
+# Add the src directory to Python path for module imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from common.config import get_settings
+from common.db import get_db_session, execute_with_retry
+from common.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -91,7 +96,7 @@ class ClientIdManager:
         try:
             def _release_id(session):
                 # Update database record
-                from ..common.models import Base
+                from common.models import Base
                 # We'll create a ClientIdAllocation model later if needed
                 # For now, just remove from local tracking
                 pass

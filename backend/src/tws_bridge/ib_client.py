@@ -6,6 +6,8 @@ auto-resubscription, request throttling, and connection state management.
 """
 
 import asyncio
+import os
+import sys
 import time
 import random
 from typing import Any, Dict, List, Optional, Callable, Set
@@ -13,11 +15,14 @@ from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
+# Add the src directory to Python path for module imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
 from ib_insync import IB, Contract, Order
 from ib_insync.objects import ConnectionStats
 
-from ..common.config import get_settings
-from ..common.logging import get_logger
+from common.config import get_settings
+from common.logging import get_logger
 
 logger = get_logger(__name__)
 

@@ -278,7 +278,7 @@ def listen_for_watchlist_updates(handler: Callable[[str, Dict], None]):
         handler: Function to call when watchlist notification received
     """
     manager = get_notification_manager()
-    manager.add_handler("watchlist.update", handler)
+    manager.add_handler("watchlist_update", handler)
     if not manager.running:
         manager.start_listening()
 
@@ -346,7 +346,7 @@ def notify_watchlist_update(action: str, symbol: str, **kwargs):
     }
     
     manager = get_notification_manager()
-    manager.notify("watchlist.update", data)
+    manager.notify("watchlist_update", data)
 
 
 # Context manager for temporary notifications

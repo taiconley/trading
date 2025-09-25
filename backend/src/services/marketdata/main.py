@@ -1,19 +1,591 @@
 """
-marketdata Service - Placeholder Implementation
-"""
-import asyncio
-import logging
+Market Data Service - Real-time market data streaming and processing.
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+This service subscribes to market data for symbols in the watchlist table,
+processes tick data, writes to the database, and handles dynamic subscription updates.
+Uses event-driven streaming following TWS best practices.
+"""
+
+import asyncio
+import signal
+import sys
+import time
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Set
+from decimal import Decimal
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
+import uvicorn
+from ib_insync import IB, Stock, Ticker
+
+# Import our common modules
+# Add the src directory to Python path for Docker compatibility
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from common.config import get_settings
+from common.db import get_db_session, execute_with_retry, initialize_database
+from common.models import WatchlistEntry, Tick, Symbol, HealthStatus
+from common.logging import configure_service_logging, log_market_data_event, log_system_event
+from common.notify import listen_for_watchlist_updates, get_notification_manager, initialize_notifications
+from tws_bridge.ib_client import create_ib_client
+from tws_bridge.client_ids import allocate_service_client_id, heartbeat_service_client_id, release_service_client_id
+
+
+class MarketDataService:
+    """Market data streaming service with event-driven architecture."""
+    
+    def __init__(self):
+        self.settings = get_settings()
+        self.logger = configure_service_logging("marketdata")
+        self.app = FastAPI(title="Market Data Service")
+        
+        # TWS connection
+        self.client_id = None
+        self.ib_client = None
+        self.connected = False
+        
+        # Subscription management
+        self.subscribed_symbols: Dict[str, Ticker] = {}
+        self.watchlist_symbols: Set[str] = set()
+        self.max_subscriptions = self.settings.market_data.max_subscriptions
+        
+        # WebSocket connections for real-time updates
+        self.websocket_connections: List[WebSocket] = []
+        
+        # Service state
+        self.running = False
+        self.last_heartbeat = time.time()
+        
+        # Setup FastAPI routes
+        self._setup_routes()
+        
+        # Setup signal handlers
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+    
+    def _setup_routes(self):
+        """Setup FastAPI routes."""
+        
+        @self.app.get("/healthz")
+        async def health_check():
+            """Health check endpoint."""
+            return {
+                "status": "healthy" if self.connected else "unhealthy",
+                "service": "marketdata",
+                "client_id": self.client_id,
+                "connected": self.connected,
+                "subscriptions": len(self.subscribed_symbols),
+                "max_subscriptions": self.max_subscriptions,
+                "watchlist_size": len(self.watchlist_symbols),
+                "last_heartbeat": self.last_heartbeat
+            }
+        
+        @self.app.get("/subscriptions")
+        async def get_subscriptions():
+            """Get current market data subscriptions."""
+            subscriptions = []
+            for symbol, ticker in self.subscribed_symbols.items():
+                subscriptions.append({
+                    "symbol": symbol,
+                    "bid": float(ticker.bid) if ticker.bid and ticker.bid > 0 else None,
+                    "ask": float(ticker.ask) if ticker.ask and ticker.ask > 0 else None,
+                    "last": float(ticker.last) if ticker.last and ticker.last > 0 else None,
+                    "bid_size": ticker.bidSize if ticker.bidSize else None,
+                    "ask_size": ticker.askSize if ticker.askSize else None,
+                    "last_size": ticker.lastSize if ticker.lastSize else None
+                })
+            return {
+                "subscriptions": subscriptions,
+                "count": len(subscriptions),
+                "max_allowed": self.max_subscriptions
+            }
+        
+        @self.app.websocket("/ws")
+        async def websocket_endpoint(websocket: WebSocket):
+            """WebSocket endpoint for real-time market data."""
+            await websocket.accept()
+            self.websocket_connections.append(websocket)
+            
+            try:
+                # Send current subscription data
+                await self._send_websocket_update(websocket, {
+                    "type": "subscription_status",
+                    "data": {
+                        "subscribed_symbols": list(self.subscribed_symbols.keys()),
+                        "count": len(self.subscribed_symbols)
+                    }
+                })
+                
+                # Keep connection alive
+                while True:
+                    try:
+                        await websocket.receive_text()
+                    except WebSocketDisconnect:
+                        break
+                        
+            except WebSocketDisconnect:
+                pass
+            finally:
+                if websocket in self.websocket_connections:
+                    self.websocket_connections.remove(websocket)
+    
+    async def start(self):
+        """Start the market data service."""
+        try:
+            log_system_event(self.logger, "service_start", service="marketdata")
+            
+            # Initialize database
+            initialize_database()
+            
+            # Initialize notifications
+            initialize_notifications()
+            
+            # Allocate client ID
+            self.client_id = allocate_service_client_id("marketdata")
+            self.logger.info(f"Allocated TWS client ID: {self.client_id}")
+            
+            # Create IB client
+            self.ib_client = create_ib_client(self.client_id)
+            
+            # Setup event handlers (following notes.md best practices)
+            self._setup_event_handlers()
+            
+            # Connect to TWS
+            await self._connect_to_tws()
+            
+            # Load watchlist and start subscriptions
+            await self._load_watchlist()
+            await self._subscribe_to_watchlist()
+            
+            # Setup watchlist update notifications
+            self._setup_watchlist_notifications()
+            
+            # Update health status
+            await self._update_health_status("healthy")
+            
+            # Start heartbeat task
+            asyncio.create_task(self._heartbeat_loop())
+            
+            self.running = True
+            self.logger.info("Market data service started successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to start market data service: {e}")
+            await self._update_health_status("unhealthy")
+            raise
+    
+    async def stop(self):
+        """Stop the market data service."""
+        try:
+            log_system_event(self.logger, "service_stop", service="marketdata")
+            
+            self.running = False
+            
+            # Cancel all subscriptions
+            await self._unsubscribe_all()
+            
+            # Disconnect from TWS
+            if self.ib_client:
+                await self.ib_client.disconnect()
+                self.connected = False
+            
+            # Release client ID
+            if self.client_id:
+                release_service_client_id(self.client_id, "marketdata")
+            
+            # Update health status
+            await self._update_health_status("stopping")
+            
+            self.logger.info("Market data service stopped")
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping market data service: {e}")
+    
+    def _setup_event_handlers(self):
+        """Setup TWS event handlers following notes.md best practices."""
+        
+        # Store the ticker update handler for later use
+        def on_ticker_update(ticker: Ticker):
+            """Handle real-time ticker updates (event-driven streaming)."""
+            try:
+                symbol = ticker.contract.symbol
+                
+                # Log market data event
+                log_market_data_event(
+                    self.logger, "tick_update", symbol,
+                    bid=ticker.bid, ask=ticker.ask, last=ticker.last,
+                    bid_size=ticker.bidSize, ask_size=ticker.askSize, last_size=ticker.lastSize
+                )
+                
+                # Process tick data asynchronously
+                asyncio.create_task(self._process_tick_data(ticker))
+                
+            except Exception as e:
+                self.logger.error(f"Error in ticker update handler: {e}")
+        
+        # Store the handler for use when subscribing to individual tickers
+        self._ticker_update_handler = on_ticker_update
+        
+        def on_error(req_id, error_code, error_string, contract):
+            """Handle TWS errors."""
+            if error_code == 200:  # No security definition found
+                symbol = contract.symbol if contract else "unknown"
+                self.logger.warning(f"No security definition for {symbol}")
+            elif error_code in [162, 300]:  # Historical data errors
+                self.logger.warning(f"Market data error {error_code}: {error_string}")
+            elif error_code in [2104, 2106, 2158]:  # Connection OK messages
+                self.logger.info(f"TWS connection info {error_code}: {error_string}")
+            elif error_code >= 2000:  # Other informational messages
+                self.logger.info(f"TWS info {error_code}: {error_string}")
+            else:
+                self.logger.error(f"TWS error {error_code}: {error_string}")
+        
+        def on_disconnect():
+            """Handle TWS disconnection."""
+            self.connected = False
+            self.logger.warning("TWS connection lost")
+            # Reconnection will be handled by heartbeat loop
+        
+        def on_connect():
+            """Handle TWS connection."""
+            self.connected = True
+            self.logger.info("TWS connection established")
+        
+        # Connect event handlers
+        self.ib_client.add_error_handler(on_error)
+        self.ib_client.add_disconnection_handler(on_disconnect)
+        self.ib_client.add_connection_handler(on_connect)
+    
+    async def _connect_to_tws(self):
+        """Connect to TWS with retry logic."""
+        connected = await self.ib_client.connect()
+        if not connected:
+            raise ConnectionError("Failed to connect to TWS")
+        
+        self.connected = True
+        self.logger.info(f"Connected to TWS on {self.settings.tws.host}:{self.settings.tws.port}")
+    
+    async def _load_watchlist(self):
+        """Load symbols from watchlist table."""
+        def _get_watchlist(session):
+            entries = session.query(WatchlistEntry).all()
+            return [entry.symbol for entry in entries]
+        
+        try:
+            symbols = execute_with_retry(_get_watchlist)
+            self.watchlist_symbols = set(symbols)
+            self.logger.info(f"Loaded {len(symbols)} symbols from watchlist: {symbols}")
+        except Exception as e:
+            self.logger.error(f"Failed to load watchlist: {e}")
+            self.watchlist_symbols = set()
+    
+    async def _subscribe_to_watchlist(self):
+        """Subscribe to market data for all watchlist symbols."""
+        if not self.connected:
+            self.logger.warning("Not connected to TWS, skipping subscriptions")
+            return
+        
+        # Enforce subscription limit
+        symbols_to_subscribe = list(self.watchlist_symbols)[:self.max_subscriptions]
+        
+        if len(self.watchlist_symbols) > self.max_subscriptions:
+            self.logger.warning(
+                f"Watchlist has {len(self.watchlist_symbols)} symbols, "
+                f"limiting to {self.max_subscriptions} due to MAX_SUBSCRIPTIONS"
+            )
+        
+        for symbol in symbols_to_subscribe:
+            try:
+                await self._subscribe_to_symbol(symbol)
+            except Exception as e:
+                self.logger.error(f"Failed to subscribe to {symbol}: {e}")
+        
+        self.logger.info(f"Subscribed to {len(self.subscribed_symbols)} symbols")
+    
+    async def _subscribe_to_symbol(self, symbol: str):
+        """Subscribe to market data for a single symbol."""
+        if symbol in self.subscribed_symbols:
+            self.logger.debug(f"Already subscribed to {symbol}")
+            return
+        
+        if len(self.subscribed_symbols) >= self.max_subscriptions:
+            self.logger.warning(f"Max subscriptions ({self.max_subscriptions}) reached")
+            return
+        
+        try:
+            # Create contract
+            contract = Stock(symbol, 'SMART', 'USD')
+            
+            # Request market data (event-driven streaming)
+            ticker = await self.ib_client.req_market_data_with_retry(
+                contract=contract,
+                generic_tick_list="",
+                snapshot=False,  # Streaming, not snapshot
+                regulatory_snapshot=False,
+                market_data_type=1  # Live data
+            )
+            
+            # Attach event handler to this ticker
+            ticker.updateEvent += self._ticker_update_handler
+            
+            self.subscribed_symbols[symbol] = ticker
+            
+            log_market_data_event(self.logger, "subscription_added", symbol)
+            
+            # Broadcast to WebSocket clients
+            await self._broadcast_websocket_update({
+                "type": "subscription_added",
+                "data": {"symbol": symbol}
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to {symbol}: {e}")
+            raise
+    
+    async def _unsubscribe_from_symbol(self, symbol: str):
+        """Unsubscribe from market data for a single symbol."""
+        if symbol not in self.subscribed_symbols:
+            return
+        
+        try:
+            ticker = self.subscribed_symbols[symbol]
+            contract = ticker.contract
+            
+            # Remove event handler
+            ticker.updateEvent -= self._ticker_update_handler
+            
+            await self.ib_client.cancel_market_data(contract)
+            
+            del self.subscribed_symbols[symbol]
+            
+            log_market_data_event(self.logger, "subscription_removed", symbol)
+            
+            # Broadcast to WebSocket clients
+            await self._broadcast_websocket_update({
+                "type": "subscription_removed",
+                "data": {"symbol": symbol}
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Failed to unsubscribe from {symbol}: {e}")
+    
+    async def _unsubscribe_all(self):
+        """Unsubscribe from all market data."""
+        symbols = list(self.subscribed_symbols.keys())
+        for symbol in symbols:
+            await self._unsubscribe_from_symbol(symbol)
+        
+        self.logger.info("Unsubscribed from all market data")
+    
+    async def _process_tick_data(self, ticker: Ticker):
+        """Process and store tick data in database."""
+        try:
+            symbol = ticker.contract.symbol
+            
+            # Extract tick data
+            tick_data = {
+                'symbol': symbol,
+                'ts': datetime.now(timezone.utc),
+                'bid': Decimal(str(ticker.bid)) if ticker.bid and ticker.bid > 0 else None,
+                'ask': Decimal(str(ticker.ask)) if ticker.ask and ticker.ask > 0 else None,
+                'last': Decimal(str(ticker.last)) if ticker.last and ticker.last > 0 else None,
+                'bid_size': ticker.bidSize if ticker.bidSize else None,
+                'ask_size': ticker.askSize if ticker.askSize else None,
+                'last_size': ticker.lastSize if ticker.lastSize else None
+            }
+            
+            # Only store if we have meaningful data
+            if not any([tick_data['bid'], tick_data['ask'], tick_data['last']]):
+                return
+            
+            # Store in database
+            def _store_tick(session):
+                tick = Tick(**tick_data)
+                session.add(tick)
+                session.commit()
+                return tick
+            
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: execute_with_retry(_store_tick)
+            )
+            
+            # Broadcast to WebSocket clients
+            await self._broadcast_websocket_update({
+                "type": "tick_update",
+                "data": {
+                    "symbol": symbol,
+                    "bid": float(tick_data['bid']) if tick_data['bid'] else None,
+                    "ask": float(tick_data['ask']) if tick_data['ask'] else None,
+                    "last": float(tick_data['last']) if tick_data['last'] else None,
+                    "bid_size": tick_data['bid_size'],
+                    "ask_size": tick_data['ask_size'],
+                    "last_size": tick_data['last_size'],
+                    "timestamp": tick_data['ts'].isoformat()
+                }
+            })
+            
+        except Exception as e:
+            self.logger.error(f"Error processing tick data for {ticker.contract.symbol}: {e}")
+    
+    def _setup_watchlist_notifications(self):
+        """Setup listener for watchlist update notifications."""
+        def on_watchlist_update(channel: str, data: dict):
+            """Handle watchlist update notifications."""
+            try:
+                action = data.get('action')
+                symbol = data.get('symbol')
+                
+                if not action or not symbol:
+                    return
+                
+                self.logger.info(f"Watchlist update: {action} {symbol}")
+                
+                # Schedule the update in the event loop
+                asyncio.create_task(self._handle_watchlist_update(action, symbol))
+                
+            except Exception as e:
+                self.logger.error(f"Error handling watchlist update: {e}")
+        
+        # Listen for watchlist updates
+        listen_for_watchlist_updates(on_watchlist_update)
+    
+    async def _handle_watchlist_update(self, action: str, symbol: str):
+        """Handle dynamic watchlist updates."""
+        try:
+            if action == "add":
+                if symbol not in self.watchlist_symbols:
+                    self.watchlist_symbols.add(symbol)
+                    await self._subscribe_to_symbol(symbol)
+                    self.logger.info(f"Added subscription for {symbol}")
+                    
+            elif action == "remove":
+                if symbol in self.watchlist_symbols:
+                    self.watchlist_symbols.discard(symbol)
+                    await self._unsubscribe_from_symbol(symbol)
+                    self.logger.info(f"Removed subscription for {symbol}")
+                    
+        except Exception as e:
+            self.logger.error(f"Error handling watchlist update {action} {symbol}: {e}")
+    
+    async def _heartbeat_loop(self):
+        """Heartbeat loop for health monitoring and reconnection."""
+        while self.running:
+            try:
+                # Send heartbeat
+                if self.client_id:
+                    heartbeat_service_client_id(self.client_id)
+                
+                self.last_heartbeat = time.time()
+                
+                # Check TWS connection
+                if not self.connected:
+                    self.logger.warning("TWS connection lost, attempting reconnection")
+                    try:
+                        await self._connect_to_tws()
+                        # Resubscribe to watchlist after reconnection
+                        await self._subscribe_to_watchlist()
+                    except Exception as e:
+                        self.logger.error(f"Reconnection failed: {e}")
+                
+                # Update health status
+                status = "healthy" if self.connected else "unhealthy"
+                await self._update_health_status(status)
+                
+                await asyncio.sleep(30)  # Heartbeat every 30 seconds
+                
+            except Exception as e:
+                self.logger.error(f"Error in heartbeat loop: {e}")
+                await asyncio.sleep(30)
+    
+    async def _update_health_status(self, status: str):
+        """Update service health status in database."""
+        try:
+            def _update_health(session):
+                health_record = session.query(HealthStatus).filter(
+                    HealthStatus.service == "marketdata"
+                ).first()
+                
+                if health_record:
+                    health_record.status = status
+                    health_record.updated_at = datetime.now(timezone.utc)
+                else:
+                    health_record = HealthStatus(
+                        service="marketdata",
+                        status=status
+                    )
+                    session.add(health_record)
+                
+                session.commit()
+                return health_record
+            
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: execute_with_retry(_update_health)
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Failed to update health status: {e}")
+    
+    async def _broadcast_websocket_update(self, message: dict):
+        """Broadcast update to all WebSocket connections."""
+        if not self.websocket_connections:
+            return
+        
+        disconnected = []
+        for websocket in self.websocket_connections:
+            try:
+                await self._send_websocket_update(websocket, message)
+            except Exception:
+                disconnected.append(websocket)
+        
+        # Remove disconnected clients
+        for websocket in disconnected:
+            self.websocket_connections.remove(websocket)
+    
+    async def _send_websocket_update(self, websocket: WebSocket, message: dict):
+        """Send update to a single WebSocket connection."""
+        try:
+            await websocket.send_json(message)
+        except Exception as e:
+            self.logger.debug(f"Failed to send WebSocket message: {e}")
+            raise
+    
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals."""
+        self.logger.info(f"Received signal {signum}, shutting down...")
+        asyncio.create_task(self.stop())
+
 
 async def main():
-    """Main marketdata service loop"""
-    logger.info("marketdata service starting...")
+    """Main entry point for the market data service."""
+    service = MarketDataService()
     
-    while True:
-        logger.info("marketdata service running...")
-        await asyncio.sleep(30)
+    try:
+        # Start the service
+        await service.start()
+        
+        # Start FastAPI server
+        config = uvicorn.Config(
+            service.app,
+            host="0.0.0.0",
+            port=8002,
+            log_level="info",
+            access_log=True
+        )
+        server = uvicorn.Server(config)
+        
+        # Run server
+        await server.serve()
+        
+    except KeyboardInterrupt:
+        service.logger.info("Received keyboard interrupt")
+    except Exception as e:
+        service.logger.error(f"Service error: {e}")
+        raise
+    finally:
+        await service.stop()
+
 
 if __name__ == "__main__":
     asyncio.run(main())
