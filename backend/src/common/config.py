@@ -34,7 +34,7 @@ class DatabaseSettings(BaseSettings):
 class TWSSettings(BaseSettings):
     """Interactive Brokers TWS connection configuration."""
     
-    host: str = Field(default="172.25.0.100", env="TWS_HOST")
+    host: str = Field(default="172.17.0.1", env="TWS_HOST")
     port: int = Field(default=7497, env="TWS_PORT")
     use_paper: bool = Field(default=True, env="USE_PAPER")
     enable_live: bool = Field(default=False, env="ENABLE_LIVE")

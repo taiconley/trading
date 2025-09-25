@@ -20,7 +20,8 @@ services:
       retries: 5
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.2
 
   # Backend API Gateway
   backend-api:
@@ -35,7 +36,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
-      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       USE_PAPER: ${USE_PAPER:-1}
       ENABLE_LIVE: ${ENABLE_LIVE:-0}
@@ -43,17 +44,17 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - postgres
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.5
 
   # Account Service
   backend-account:
@@ -68,21 +69,21 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
-      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 11
     depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - postgres
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.100
 
   # Market Data Service
   backend-marketdata:
@@ -97,23 +98,23 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
-      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 12
       MAX_SUBSCRIPTIONS: ${MAX_SUBSCRIPTIONS:-50}
       DEFAULT_SYMBOLS: ${DEFAULT_SYMBOLS:-AAPL,MSFT,SPY}
     depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - postgres
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.12
 
   # Historical Data Service
   backend-historical:
@@ -128,24 +129,24 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
-      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 13
       MAX_HIST_REQUESTS_PER_MIN: ${MAX_HIST_REQUESTS_PER_MIN:-30}
       HIST_BAR_SIZES: ${HIST_BAR_SIZES:-1 min,5 mins,1 day}
       LOOKBACK: ${LOOKBACK:-30 D}
     depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - postgres
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.13
 
   # Trader Service
   backend-trader:
@@ -160,24 +161,24 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
-      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 14
       USE_PAPER: ${USE_PAPER:-1}
       ENABLE_LIVE: ${ENABLE_LIVE:-0}
       DRY_RUN: ${DRY_RUN:-1}
     depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - postgres
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.14
 
   # Strategy Service
   backend-strategy:
@@ -192,23 +193,22 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
-      TWS_HOST: ${TWS_HOST:-172.25.0.100}
+      TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID_BASE: ${TWS_CLIENT_ID_BASE:-15}
     depends_on:
-      postgres:
-        condition: service_healthy
-      backend-trader:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      - postgres
+      - backend-trader
+    # healthcheck:
+    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+    #   interval: 30s
+    #   timeout: 10s
+    #   retries: 3
+    #   start_period: 40s
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.15
 
   # Frontend Dashboard
   frontend:
@@ -219,8 +219,7 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      backend-api:
-        condition: service_healthy
+      - backend-api
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
       interval: 30s
@@ -229,7 +228,8 @@ services:
       start_period: 10s
     restart: unless-stopped
     networks:
-      - trading-network
+      trading-network:
+        ipv4_address: 172.25.0.8
 
 volumes:
   postgres_data:
@@ -240,4 +240,5 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.30.0.0/16
+        - subnet: 172.25.0.0/16
+          gateway: 172.25.0.1

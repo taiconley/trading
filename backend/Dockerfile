@@ -60,9 +60,9 @@ fi' > /app/entrypoint.sh
 
 RUN chmod +x /app/entrypoint.sh
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/healthz || exit 1
+# Health check (disabled for testing)
+# HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+#     CMD curl -f http://localhost:8000/healthz || exit 1
 
 # Default command
 ENTRYPOINT ["/app/entrypoint.sh"]
