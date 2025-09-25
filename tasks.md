@@ -1,70 +1,81 @@
-.
-├─ docker/
-│  ├─ base.Dockerfile
-│  ├─ service.Dockerfile
-│  └─ dashboard.Dockerfile
+# Project Structure
+
+```
+trading/
+├─ backend/
+│  ├─ src/
+│  │  ├─ common/
+│  │  │  ├─ config.py
+│  │  │  ├─ db.py
+│  │  │  ├─ models.py
+│  │  │  ├─ schemas.py
+│  │  │  ├─ logging.py
+│  │  │  └─ notify.py
+│  │  ├─ tws_bridge/
+│  │  │  ├─ ib_client.py
+│  │  │  └─ client_ids.py
+│  │  ├─ services/
+│  │  │  ├─ account/        # account summary/positions into DB
+│  │  │  ├─ marketdata/     # live quotes -> ticks table
+│  │  │  ├─ historical/     # batched historical pulls -> candles
+│  │  │  ├─ trader/         # order routing + risk + executions
+│  │  │  ├─ strategy/       # live bar-driven runner
+│  │  │  └─ backtester/     # offline runs over candles
+│  │  ├─ strategy_lib/
+│  │  │  ├─ base.py
+│  │  │  ├─ registry.py
+│  │  │  └─ examples/
+│  │  │     ├─ sma_cross.py
+│  │  │     └─ mean_revert.py
+│  │  └─ api/              # REST API gateway (optional)
+│  ├─ tests/
+│  │  ├─ unit/
+│  │  └─ integration/
+│  ├─ migrations/
+│  ├─ Dockerfile
+│  ├─ pyproject.toml
+│  └─ alembic.ini
+├─ frontend/
+│  ├─ src/
+│  │  ├─ components/       # UI components
+│  │  ├─ pages/           # Dashboard pages  
+│  │  ├─ services/        # API client
+│  │  └─ utils/
+│  ├─ public/
+│  ├─ Dockerfile
+│  └─ package.json
 ├─ compose.yaml
 ├─ .env.example
-├─ alembic.ini
-├─ migrations/
-├─ src/
-│  ├─ common/
-│  │  ├─ config.py
-│  │  ├─ db.py
-│  │  ├─ models.py
-│  │  ├─ schemas.py
-│  │  ├─ logging.py
-│  │  └─ notify.py
-│  ├─ tws_bridge/
-│  │  ├─ ib_client.py
-│  │  └─ client_ids.py
-│  ├─ services/
-│  │  ├─ account_ws/    # account summary/positions into DB + local WS
-│  │  ├─ marketdata/    # live quotes -> ticks table
-│  │  ├─ historical/    # batched historical pulls -> candles
-│  │  ├─ trader/        # order routing + risk + executions
-│  │  ├─ strategy/      # live bar-driven runner
-│  │  └─ backtester/    # offline runs over candles
-│  ├─ strategy_lib/
-│  │  ├─ base.py
-│  │  ├─ registry.py
-│  │  └─ examples/
-│  │     ├─ sma_cross.py
-│  │     └─ mean_revert.py
-│  └─ dashboard/
-│     └─ app.py
-├─ tests/
-│  ├─ unit/
-│  └─ integration/
 ├─ Makefile
+├─ README.md
+├─ architecture.md
 └─ tasks.md
-## 1) Docker & Compose
+```
+## 1) Docker & Compose Setup
 ### Tasks:
-- [ ] Create `docker/base.Dockerfile`
+- [ ] Create `backend/Dockerfile`
   - [ ] Use Python 3.10+ base image
-  - [ ] Install poetry or pip for dependency management
+  - [ ] Install poetry for dependency management
   - [ ] Set system timezone data
   - [ ] Create non-root user for security
-- [ ] Create `docker/service.Dockerfile` 
-  - [ ] Extend base.Dockerfile
-  - [ ] Copy common libraries and service code
-  - [ ] Set appropriate entrypoint
-- [ ] Create `docker/dashboard.Dockerfile`
-  - [ ] Extend base.Dockerfile (or reuse service image)
-  - [ ] Install FastAPI, Jinja2, HTMX dependencies
-  - [ ] Expose port 8000
-- [ ] Create `compose.yaml`
+  - [ ] Copy backend source code and dependencies
+  - [ ] Set appropriate entrypoint for services
+- [ ] Create `frontend/Dockerfile`
+  - [ ] Use Node.js LTS base image
+  - [ ] Install npm/yarn dependencies
+  - [ ] Build frontend assets
+  - [ ] Serve with nginx or node server
+  - [ ] Expose port 3000
+- [ ] Create `compose.yaml` at project root
   - [ ] Define postgres service with persistent volume
-  - [ ] Define account_ws service with healthcheck
-  - [ ] Define marketdata service with healthcheck
-  - [ ] Define historical service with healthcheck  
-  - [ ] Define trader service with healthcheck
-  - [ ] Define strategy service with healthcheck
-  - [ ] Define dashboard service with healthcheck
+  - [ ] Define backend services (account, marketdata, historical, trader, strategy)
+  - [ ] Define frontend service
   - [ ] Create shared network for all services
   - [ ] Configure environment variables from .env
   - [ ] Set up volume for postgres data persistence
+  - [ ] Add health checks for all services
 - [ ] Test: `docker compose up -d` starts all services
+- [ ] Test: Services can communicate through shared network
 - [ ] Test: Unhealthy services retry with exponential backoff
 
 ## 2) Environment & Config
@@ -76,7 +87,7 @@
   - [ ] Historical data settings (MAX_HIST_REQUESTS_PER_MIN, HIST_BAR_SIZES)
   - [ ] Client ID management (TWS_CLIENT_ID_BASE, RECONNECT_BACKOFF_MIN, RECONNECT_BACKOFF_MAX)
   - [ ] Backtest defaults (BT_COMM_PER_SHARE, BT_MIN_COMM_PER_ORDER, BT_DEFAULT_SLIPPAGE_TICKS, BT_TICK_SIZE_US_EQUITY)
-- [ ] Create `src/common/config.py`
+- [ ] Create `backend/src/common/config.py`
   - [ ] Define typed Pydantic settings class
   - [ ] Load from environment variables using python-dotenv
   - [ ] Add validation for required fields
@@ -122,10 +133,10 @@ BT_TICK_SIZE_US_EQUITY=0.01
 ## 3) Database & Migrations
 ### Tasks:
 - [ ] Set up Alembic configuration
-  - [ ] Create `alembic.ini` configuration file
-  - [ ] Create `migrations/` directory structure
+  - [ ] Create `backend/alembic.ini` configuration file
+  - [ ] Create `backend/migrations/` directory structure
   - [ ] Configure database connection string
-- [ ] Create `src/common/models.py` with SQLAlchemy models:
+- [ ] Create `backend/src/common/models.py` with SQLAlchemy models:
   - [ ] **Reference & Control tables:**
     - [ ] `symbols(symbol, conid, primary_exchange, currency, active, updated_at)`
     - [ ] `watchlist(id, symbol, added_at)` — live subs choose from here
@@ -158,7 +169,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
   - [ ] Generate migration: `alembic revision --autogenerate -m "Initial schema"`
   - [ ] Review and edit migration file
   - [ ] Test migration: `alembic upgrade head`
-- [ ] Create `src/common/db.py` for database utilities:
+- [ ] Create `backend/src/common/db.py` for database utilities:
   - [ ] SQLAlchemy engine creation with connection pooling
   - [ ] Session factory with proper cleanup
   - [ ] Retry logic for transient database errors
@@ -169,27 +180,27 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 4) Common Libraries
 ### Tasks:
-- [ ] Create `src/common/config.py` (if not done in task 2)
+- [ ] Create `backend/src/common/config.py` (if not done in task 2)
   - [ ] Typed Pydantic settings class for environment variables
   - [ ] Feature flags and validation logic
   - [ ] Safety switch validation functions
-- [ ] Create `src/common/db.py` (if not done in task 3)
+- [ ] Create `backend/src/common/db.py` (if not done in task 3)
   - [ ] SQLAlchemy engine creation with connection pooling
   - [ ] Session factory with proper cleanup and context management
   - [ ] Retry logic for transient database errors
   - [ ] Database health check utilities
-- [ ] Create `src/common/logging.py`
+- [ ] Create `backend/src/common/logging.py`
   - [ ] Structured JSON logging configuration
   - [ ] Log to stdout for Docker container logs
   - [ ] Optional database log sampling functionality
   - [ ] Service-specific logger creation
   - [ ] Log level configuration from environment
-- [ ] Create `src/common/notify.py`
+- [ ] Create `backend/src/common/notify.py`
   - [ ] Postgres LISTEN/NOTIFY wrapper functions
   - [ ] Event types: `signals.new`, `orders.new`, `watchlist.update`
   - [ ] Async notification handlers
   - [ ] Connection management for notification channels
-- [ ] Create `src/common/schemas.py`
+- [ ] Create `backend/src/common/schemas.py`
   - [ ] Pydantic models for API requests/responses
   - [ ] Data validation schemas for orders, signals, etc.
   - [ ] Type definitions for common data structures
@@ -198,14 +209,14 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 5) TWS Bridge & Client IDs
 ### Tasks:
-- [ ] Create `src/tws_bridge/ib_client.py`
+- [ ] Create `backend/src/tws_bridge/ib_client.py`
   - [ ] Wrap ib-insync.IB connection with retry logic
   - [ ] Implement exponential backoff with jitter for reconnections
   - [ ] Auto-resubscribe to market data after reconnect
   - [ ] Request throttling to avoid IB pacing violations
   - [ ] Connection state management and health monitoring
   - [ ] Graceful disconnect handling
-- [ ] Create `src/tws_bridge/client_ids.py`
+- [ ] Create `backend/src/tws_bridge/client_ids.py`
   - [ ] Define client ID ranges for each service:
     - [ ] account_ws: 11
     - [ ] marketdata: 12  
@@ -227,7 +238,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 6) Account Service (account_ws)
 ### Tasks:
-- [ ] Create `src/services/account_ws/main.py`
+- [ ] Create `backend/src/services/account/main.py`
   - [ ] Use TWS client ID 11
   - [ ] Connect to TWS and request account summary stream
   - [ ] Request positions stream
@@ -250,7 +261,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 7) Market Data Service (marketdata)
 ### Tasks:
-- [ ] Create `src/services/marketdata/main.py`
+- [ ] Create `backend/src/services/marketdata/main.py`
   - [ ] Use TWS client ID 12
   - [ ] Subscribe only to symbols in `watchlist` table
   - [ ] Enforce MAX_SUBSCRIPTIONS limit from config
@@ -275,7 +286,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 8) Historical Data Service (historical)
 ### Tasks:
-- [ ] Create `src/services/historical/main.py`
+- [ ] Create `backend/src/services/historical/main.py`
   - [ ] Use TWS client ID 13
   - [ ] Implement batched historical data pulls
   - [ ] Support configurable barSize, whatToShow, RTH, lookback
@@ -302,7 +313,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 9) Trader Service (trader)
 ### Tasks:
-- [ ] Create `src/services/trader/main.py`
+- [ ] Create `backend/src/services/trader/main.py`
   - [ ] Use TWS client ID 14
   - [ ] FastAPI application with REST endpoints
 - [ ] REST API endpoints:
@@ -335,22 +346,22 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 10) Strategy Interface & Live Runner (strategy)
 ### Tasks:
-- [ ] Create strategy interface in `src/strategy_lib/base.py`:
+- [ ] Create strategy interface in `backend/src/strategy_lib/base.py`:
   - [ ] Define base `Strategy` class with required methods:
     - [ ] `on_start(self, config, instruments)` - Initialize strategy
     - [ ] `on_bar(self, symbol, tf, bar_df)` - Process latest N bars
     - [ ] `on_stop(self)` - Cleanup on strategy stop
   - [ ] Signal generation interface
   - [ ] Configuration and parameter management
-- [ ] Create example strategies in `src/strategy_lib/examples/`:
+- [ ] Create example strategies in `backend/src/strategy_lib/examples/`:
   - [ ] `sma_cross.py` - Simple moving average crossover
   - [ ] `mean_revert.py` - Mean reversion strategy
   - [ ] Parameter validation and defaults
-- [ ] Create strategy registry in `src/strategy_lib/registry.py`:
+- [ ] Create strategy registry in `backend/src/strategy_lib/registry.py`:
   - [ ] Dynamic strategy loading
   - [ ] Strategy validation and registration
   - [ ] Parameter schema definitions
-- [ ] Create strategy runner in `src/services/strategy/main.py`:
+- [ ] Create strategy runner in `backend/src/services/strategy/main.py`:
   - [ ] Use TWS client IDs 15-29 for strategy instances
   - [ ] Scheduled bar-driven event loop
   - [ ] Fetch latest bars from `candles` table
@@ -377,7 +388,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 11) Backtester Service (backtester)
 ### Tasks:
-- [ ] Create `src/services/backtester/main.py`
+- [ ] Create `backend/src/services/backtester/main.py`
   - [ ] CLI interface for command-line backtesting
   - [ ] REST API for web-triggered backtests
   - [ ] On-demand service (not always running)
@@ -410,13 +421,40 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] Test: Backtest uses only local candles data
 - [ ] Test: Results are properly stored in database
 
-## 12) Dashboard Service (dashboard)
+## 12) Backend API Gateway
 ### Tasks:
-- [ ] Create `src/dashboard/app.py`
-  - [ ] FastAPI application with Jinja2 templates
-  - [ ] HTMX for dynamic updates
-  - [ ] No authentication (LAN-only deployment)
-  - [ ] Static file serving for CSS/JS
+- [ ] Create `backend/src/api/main.py`
+  - [ ] FastAPI application as API gateway
+  - [ ] CORS configuration for frontend
+  - [ ] Route aggregation from all services
+  - [ ] Authentication middleware (if needed later)
+- [ ] API endpoints for frontend:
+  - [ ] `GET /api/account` - Account summary data
+  - [ ] `GET /api/positions` - Current positions
+  - [ ] `GET /api/orders` - Order history and status
+  - [ ] `GET /api/ticks?symbol=&limit=` - Recent tick data
+  - [ ] `POST /api/strategies/{id}/enable` - Enable/disable strategy
+  - [ ] `PUT /api/strategies/{id}/params` - Update strategy parameters
+  - [ ] `POST /api/backtests` - Trigger new backtest
+  - [ ] `POST /api/watchlist` - Add/remove symbols from watchlist
+  - [ ] `GET /api/health` - Service health status
+- [ ] WebSocket endpoints:
+  - [ ] `/ws/account` - Real-time account updates
+  - [ ] `/ws/market` - Live market data
+  - [ ] `/ws/orders` - Order status updates
+- [ ] Test: All API endpoints return correct data
+- [ ] Test: WebSocket connections work properly
+
+## 13) Frontend Dashboard
+### Tasks:
+- [ ] Set up frontend structure in `frontend/`
+  - [ ] Choose framework (React/Vue/Vanilla JS + HTMX)
+  - [ ] Set up build system (Vite/Webpack)
+  - [ ] Configure development server
+- [ ] Create `frontend/src/services/api.js`
+  - [ ] HTTP client for backend API calls
+  - [ ] WebSocket client for real-time updates
+  - [ ] Error handling and retry logic
 - [ ] Web pages:
   - [ ] **Overview page**: equity/PnL, positions, recent orders/executions, service health
   - [ ] **Market page**: live quotes from watchlist
@@ -446,7 +484,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] Test: Toggling strategy affects runner within seconds
 - [ ] Test: All API endpoints return correct data
 
-## 13) Risk Management & Safety
+## 14) Risk Management & Safety
 ### Tasks:
 - [ ] Define risk limit types in database:
   - [ ] `max_notional_per_order` - Maximum dollar amount per single order
@@ -475,7 +513,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] Test: Risk decisions are properly audited in logs
 - [ ] Test: Emergency stops work immediately
 
-## 14) Multiple Concurrent Strategies
+## 15) Multiple Concurrent Strategies
 ### Tasks:
 - [ ] Strategy scheduling system:
   - [ ] Query `strategies` table for enabled strategies
@@ -504,7 +542,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] Test: Strategies can be enabled/disabled independently
 - [ ] Test: Strategy failures don't affect other strategies
 
-## 15) Observability & Resilience
+## 16) Observability & Resilience
 ### Tasks:
 - [ ] Connection resilience:
   - [ ] Exponential backoff with jitter for TWS reconnections
@@ -534,7 +572,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] Test: Database connection failures are handled gracefully
 - [ ] Test: Graceful shutdown completes within timeout
 
-## 16) Build System & Testing
+## 17) Build System & Testing
 ### Tasks:
 - [ ] Create `Makefile` with common targets:
   - [ ] `make up` - Start all services with docker compose
@@ -547,14 +585,14 @@ BT_TICK_SIZE_US_EQUITY=0.01
   - [ ] `make test.integration` - Run integration tests
   - [ ] `make logs` - Follow service logs
   - [ ] `make clean` - Clean up containers and volumes
-- [ ] Unit test suite in `tests/unit/`:
+- [ ] Unit test suite in `backend/tests/unit/`:
   - [ ] Configuration loading and validation tests
   - [ ] Client ID allocation and collision tests
   - [ ] Risk checking logic tests
   - [ ] Database model and schema tests
   - [ ] Idempotent upsert operation tests
   - [ ] Strategy interface and example tests
-- [ ] Integration test suite in `tests/integration/`:
+- [ ] Integration test suite in `backend/tests/integration/`:
   - [ ] End-to-end order placement and fill lifecycle
   - [ ] TWS connection and reconnection tests
   - [ ] Market data subscription and processing
@@ -568,7 +606,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] Test: `pytest -q` runs green (integration skipped if TWS absent)
 - [ ] Test: All Make targets work correctly
 
-## 17) Live Trading Safety Switches
+## 18) Live Trading Safety Switches
 ### Tasks:
 - [ ] Implement safety switch validation:
   - [ ] Check `ENABLE_LIVE=1` environment variable
@@ -593,7 +631,7 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] Test: All safety switches work independently
 - [ ] Test: Emergency stop functions work immediately
 
-## 18) Future Enhancements (Post-MVP)
+## 19) Future Enhancements (Post-MVP)
 ### Backlog Items:
 - [ ] **Advanced Order Types**:
   - [ ] Bracket/OCO helpers in Trader payloads

@@ -4,22 +4,27 @@
 
 This is a microservices-based algorithmic trading system built with Docker Compose, designed to connect to Interactive Brokers TWS API for paper and live trading. The system is optimized for local deployment with PostgreSQL persistence and focuses on safety, observability, and multi-strategy support.
 
-## System Components
+## System Architecture
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Dashboard     │    │   TWS/IB API    │    │   PostgreSQL    │
-│   (Web UI)      │    │ (172.25.0.100)  │    │   (Database)    │
+│   Frontend      │    │   TWS/IB API    │    │   PostgreSQL    │
+│ (React/Vue/JS)  │    │ (172.25.0.100)  │    │   (Database)    │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
-         └───────────────────────┼───────────────────────┘
-                                 │
-┌────────────────────────────────┼────────────────────────────────┐
-│                    Docker Network                                │
-│                                                                  │
+         │              ┌────────┼───────────────────────┘
+         │              │        │
+         │    ┌─────────────┐    │
+         └────│ Backend API │    │
+              │  Gateway    │    │
+              └─────────────┘    │
+                       │         │
+┌──────────────────────┼─────────┼──────────────────────────────────┐
+│              Docker Network    │                                  │
+│                      │         │                                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│  │ Account WS  │  │ Market Data │  │ Historical  │  │   Trader    │
-│  │ Service     │  │  Service    │  │  Service    │  │  Service    │
+│  │  Account    │  │ Market Data │  │ Historical  │  │   Trader    │
+│  │  Service    │  │  Service    │  │  Service    │  │  Service    │
 │  │ (Client 11) │  │ (Client 12) │  │ (Client 13) │  │ (Client 14) │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘
 │                                                                  │
@@ -31,17 +36,50 @@ This is a microservices-based algorithmic trading system built with Docker Compo
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+## Project Structure
+
+```
+trading/
+├── backend/                    # Python microservices
+│   ├── src/
+│   │   ├── common/            # Shared libraries
+│   │   ├── tws_bridge/        # Interactive Brokers integration
+│   │   ├── services/          # Microservices
+│   │   ├── strategy_lib/      # Strategy implementations
+│   │   └── api/              # REST API gateway
+│   ├── tests/
+│   ├── migrations/           # Database migrations
+│   ├── Dockerfile
+│   └── pyproject.toml
+├── frontend/                  # Web dashboard
+│   ├── src/
+│   ├── public/
+│   ├── Dockerfile
+│   └── package.json
+└── compose.yaml              # Docker orchestration
+```
+
 ## Core Services
 
-### 1. Account WebSocket Service (`account_ws`)
+### 0. Backend API Gateway (`api`)
+- **Purpose**: Central API endpoint for frontend communication
+- **Port**: 8000
+- **Data Flow**: Frontend ↔ API Gateway ↔ Backend Services ↔ Database
+- **Responsibilities**:
+  - REST API endpoints for frontend
+  - WebSocket connections for real-time updates
+  - CORS configuration
+  - Request routing to backend services
+  - Response aggregation and formatting
+
+### 1. Account Service (`account`)
 - **Purpose**: Monitors account summary, positions, and P&L
 - **TWS Client ID**: 11
 - **Data Flow**: TWS → DB (account_summary, positions tables)
 - **Responsibilities**:
   - Real-time account data streaming
   - Position tracking
-  - Optional WebSocket endpoint for dashboard
-  - Health monitoring
+  - Account health monitoring
 
 ### 2. Market Data Service (`marketdata`)
 - **Purpose**: Live market data ingestion
@@ -95,15 +133,17 @@ This is a microservices-based algorithmic trading system built with Docker Compo
   - Generate performance metrics (Sharpe, MaxDD)
   - Store results in backtest_runs/backtest_trades
 
-### 7. Dashboard Service (`dashboard`)
+### 7. Frontend Dashboard (`frontend`)
 - **Purpose**: Web-based monitoring and control interface
-- **Stack**: FastAPI + Jinja2 + HTMX
+- **Stack**: React/Vue/Vanilla JS + Modern Build Tools
+- **Port**: 3000
 - **Authentication**: None (local LAN deployment)
 - **Responsibilities**:
-  - Real-time system monitoring
-  - Strategy management (enable/disable, parameter editing)
-  - Backtest execution and results
+  - Real-time system monitoring via WebSocket
+  - Strategy management interface
+  - Backtest execution and results visualization
   - Order and position monitoring
+  - Market data visualization
 
 ## Data Architecture
 
@@ -138,11 +178,13 @@ backtest_trades(id, run_id, symbol, side, qty, entry_ts, entry_px, exit_ts, exit
 
 ### Communication Patterns
 
-1. **Service-to-TWS**: Direct ib-insync connections with dedicated client IDs
-2. **Service-to-DB**: SQLAlchemy with connection pooling and retry logic
-3. **Inter-service**: Postgres LISTEN/NOTIFY for event-driven updates
-4. **Dashboard-to-Services**: REST API calls and WebSocket connections
-5. **Strategy-to-Trader**: HTTP REST API for order placement
+1. **Frontend-to-Backend**: HTTP REST API calls via API Gateway
+2. **Frontend-to-Backend (Real-time)**: WebSocket connections via API Gateway
+3. **API Gateway-to-Services**: Internal HTTP calls and database queries
+4. **Service-to-TWS**: Direct ib-insync connections with dedicated client IDs
+5. **Service-to-DB**: SQLAlchemy with connection pooling and retry logic
+6. **Inter-service**: Postgres LISTEN/NOTIFY for event-driven updates
+7. **Strategy-to-Trader**: HTTP REST API for order placement
 
 ## Client ID Management
 
