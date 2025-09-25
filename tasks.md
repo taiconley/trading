@@ -180,32 +180,32 @@ BT_TICK_SIZE_US_EQUITY=0.01
 
 ## 4) Common Libraries
 ### Tasks:
-- [ ] Create `backend/src/common/config.py` (if not done in task 2)
-  - [ ] Typed Pydantic settings class for environment variables
-  - [ ] Feature flags and validation logic
-  - [ ] Safety switch validation functions
-- [ ] Create `backend/src/common/db.py` (if not done in task 3)
-  - [ ] SQLAlchemy engine creation with connection pooling
-  - [ ] Session factory with proper cleanup and context management
-  - [ ] Retry logic for transient database errors
-  - [ ] Database health check utilities
-- [ ] Create `backend/src/common/logging.py`
-  - [ ] Structured JSON logging configuration
-  - [ ] Log to stdout for Docker container logs
-  - [ ] Optional database log sampling functionality
-  - [ ] Service-specific logger creation
-  - [ ] Log level configuration from environment
-- [ ] Create `backend/src/common/notify.py`
-  - [ ] Postgres LISTEN/NOTIFY wrapper functions
-  - [ ] Event types: `signals.new`, `orders.new`, `watchlist.update`
-  - [ ] Async notification handlers
-  - [ ] Connection management for notification channels
-- [ ] Create `backend/src/common/schemas.py`
-  - [ ] Pydantic models for API requests/responses
-  - [ ] Data validation schemas for orders, signals, etc.
-  - [ ] Type definitions for common data structures
-- [ ] Test: All services can import and use common libraries
-- [ ] Test: No code duplication across services
+- [x] Create `backend/src/common/config.py` (completed in task 2)
+  - [x] Typed Pydantic settings class for environment variables
+  - [x] Feature flags and validation logic
+  - [x] Safety switch validation functions
+- [x] Create `backend/src/common/db.py` (completed in task 3)
+  - [x] SQLAlchemy engine creation with connection pooling
+  - [x] Session factory with proper cleanup and context management
+  - [x] Retry logic for transient database errors
+  - [x] Database health check utilities
+- [x] Create `backend/src/common/logging.py`
+  - [x] Structured JSON logging configuration
+  - [x] Log to stdout for Docker container logs
+  - [x] Optional database log sampling functionality
+  - [x] Service-specific logger creation
+  - [x] Log level configuration from environment
+- [x] Create `backend/src/common/notify.py`
+  - [x] Postgres LISTEN/NOTIFY wrapper functions
+  - [x] Event types: `signals.new`, `orders.new`, `watchlist.update`
+  - [x] Async notification handlers
+  - [x] Connection management for notification channels
+- [x] Create `backend/src/common/schemas.py`
+  - [x] Pydantic models for API requests/responses
+  - [x] Data validation schemas for orders, signals, etc.
+  - [x] Type definitions for common data structures
+- [x] Test: All services can import and use common libraries
+- [x] Test: No code duplication across services
 
 ## 5) TWS Bridge & Client IDs
 ### Tasks:
