@@ -323,8 +323,8 @@ class MarketDataService:
                 contract=contract,
                 generic_tick_list="",
                 snapshot=False,  # Streaming, not snapshot
-                regulatory_snapshot=False,
-                market_data_type=1  # Live data
+                regulatory_snapshot=False
+                # Note: market_data_type parameter removed as it's not supported by ib-insync
             )
             
             # Attach event handler to this ticker

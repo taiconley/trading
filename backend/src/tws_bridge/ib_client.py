@@ -209,8 +209,7 @@ class EnhancedIBClient:
         contract: Contract,
         generic_tick_list: str = "",
         snapshot: bool = False,
-        regulatory_snapshot: bool = False,
-        market_data_type: int = 1  # 1 = Live, 2 = Frozen, 3 = Delayed, 4 = Delayed-Frozen
+        regulatory_snapshot: bool = False
     ):
         """Request market data with retry logic."""
         await self.throttler.wait_if_needed("market_data")
@@ -223,8 +222,7 @@ class EnhancedIBClient:
                 contract=contract,
                 genericTickList=generic_tick_list,
                 snapshot=snapshot,
-                regulatorySnapshot=regulatory_snapshot,
-                mktDataType=market_data_type
+                regulatorySnapshot=regulatory_snapshot
             )
             
             if contract.conId:
