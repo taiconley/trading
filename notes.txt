@@ -1,0 +1,4 @@
+make up - Start all services
+make down - Stop all services
+make logs - View service logs
+make health - Check service status

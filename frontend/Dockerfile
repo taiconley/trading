@@ -1,5 +1,5 @@
 # Frontend Dockerfile for Trading Dashboard
-FROM node:18-alpine AS builder
+FROM registry.hub.docker.com/library/node:18-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -7,19 +7,20 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (including dev deps for build)
+RUN npm install
 
 # Copy source code
 COPY src/ ./src/
 COPY public/ ./public/
+COPY index.html ./
 COPY *.json *.js *.ts ./
 
 # Build the application
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM registry.hub.docker.com/library/nginx:alpine
 
 # Copy built assets from builder stage
 COPY --from=builder /app/dist /usr/share/nginx/html

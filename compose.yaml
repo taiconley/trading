@@ -3,7 +3,7 @@ version: '3.8'
 services:
   # Database
   postgres:
-    image: postgres:15-alpine
+    image: registry.hub.docker.com/library/postgres:15-alpine
     container_name: trading-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
