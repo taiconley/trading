@@ -189,6 +189,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-strategy
+    command: python -m src.services.strategy.main
+    ports:
+      - "8005:8005"
     environment:
       SERVICE_NAME: strategy
       POSTGRES_HOST: postgres
@@ -202,12 +205,12 @@ services:
     depends_on:
       - postgres
       - backend-trader
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 40s
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8005/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     restart: unless-stopped
     networks:
       trading-network:
