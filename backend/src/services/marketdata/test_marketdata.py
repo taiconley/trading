@@ -88,11 +88,11 @@ def test_watchlist_operations():
         def _test_watchlist(session):
             # Clear existing test symbols
             session.query(WatchlistEntry).filter(
-                WatchlistEntry.symbol.in_(['TEST1', 'TEST2', 'TEST3'])
+                WatchlistEntry.symbol.in_(['GOOG', 'AMZN', 'META'])
             ).delete()
             
             # Add test symbols to watchlist
-            test_symbols = ['TEST1', 'TEST2', 'TEST3']
+            test_symbols = ['GOOG', 'AMZN', 'META']
             for symbol in test_symbols:
                 # Ensure symbol exists
                 existing_symbol = session.query(Symbol).filter(Symbol.symbol == symbol).first()
