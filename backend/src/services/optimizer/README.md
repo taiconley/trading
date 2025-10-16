@@ -4,7 +4,7 @@ Automated parameter optimization for trading strategies using various search alg
 
 ## Features
 
-### Phase 1 (Current Implementation) ✅
+### Phase 1 ✅
 - **Grid Search**: Exhaustive search over parameter grid
 - **Random Search**: Random sampling of parameter space
 - **Parallel Execution**: Multi-core backtest execution
@@ -14,8 +14,13 @@ Automated parameter optimization for trading strategies using various search alg
 - **CLI Interface**: Command-line optimization tool
 - **REST API**: Web-triggered optimizations
 
+### Phase 2 ✅
+- **Bayesian Optimization**: Intelligent parameter search using Optuna
+- **Walk-Forward Analysis**: Rolling window optimization with out-of-sample validation
+- **Out-of-Sample Testing**: Train/test split to detect overfitting
+- **Cross-Validation**: K-fold time series validation with purging and embargoes
+
 ### Coming Soon
-- **Phase 2**: Bayesian optimization, walk-forward analysis, out-of-sample validation
 - **Phase 3**: Parameter sensitivity analysis, Pareto frontiers, advanced analytics
 
 ## Quick Start
@@ -49,6 +54,54 @@ python main.py optimize \
   --objective sharpe_ratio \
   --max-iterations 50 \
   --constraints "short_period < long_period"
+
+# Bayesian Optimization - Intelligent parameter search  
+python main.py optimize \
+  --strategy SMA_Crossover \
+  --symbols AAPL \
+  --timeframe "1 day" \
+  --lookback 180 \
+  --params '{"short_period": [3,5,7,10,12,15,20], "long_period": [20,25,30,35,40,45,50,60]}' \
+  --algorithm bayesian \
+  --objective sharpe_ratio \
+  --constraints "short_period < long_period" \
+  --max-iterations 20 \
+  --seed 42
+
+# Walk-Forward Analysis - Rolling window validation
+python main.py walk-forward \
+  --strategy SMA_Crossover \
+  --symbols AAPL \
+  --timeframe "1 day" \
+  --params '{"short_period": [5,10,15], "long_period": [20,30,40]}' \
+  --window-size 180 \
+  --step-size 30 \
+  --algorithm grid_search \
+  --objective sharpe_ratio \
+  --constraints "short_period < long_period"
+
+# Out-of-Sample Testing - Train/test split
+python main.py out-of-sample \
+  --strategy SMA_Crossover \
+  --symbols AAPL \
+  --timeframe "1 day" \
+  --params '{"short_period": [5,10], "long_period": [20,30]}' \
+  --train-ratio 0.7 \
+  --lookback 100 \
+  --algorithm grid_search \
+  --objective sharpe_ratio \
+  --constraints "short_period < long_period"
+
+# Cross-Validation - K-fold validation
+python main.py cross-validate \
+  --strategy SMA_Crossover \
+  --symbols AAPL \
+  --timeframe "1 day" \
+  --params '{"short_period": [5,10], "long_period": [20,30]}' \
+  --n-splits 5 \
+  --lookback 50 \
+  --algorithm grid_search \
+  --objective sharpe_ratio
 ```
 
 ### REST API Usage
@@ -164,6 +217,35 @@ Randomly samples parameter combinations.
 - When grid search is too expensive
 
 **Example:** Test 100 random combinations instead of 625 grid combinations
+
+### Bayesian Optimization (Optuna)
+Uses past results to intelligently suggest promising parameters.
+
+**Pros:**
+- Much more efficient than random/grid search
+- Learns from each iteration to focus on promising regions
+- Excellent for expensive objective functions (like backtests)
+- Handles constraints intelligently
+- Often finds near-optimal solutions in far fewer iterations
+
+**Cons:**
+- Results vary between runs (use --seed for reproducibility)
+- Slightly more overhead per iteration
+- No guarantee of finding global optimum
+
+**Best For:**
+- Expensive objective functions (backtesting)
+- Limited iteration budget (10-50 iterations)
+- Many parameters with large ranges
+- When you need good results quickly
+
+**Example:** Find near-optimal parameters in 20-30 iterations instead of 625 grid combinations
+
+**How It Works:**
+- Builds a probabilistic model of the objective function
+- Uses acquisition functions to balance exploration vs exploitation
+- Automatically prunes unpromising trials early
+- Handles discrete and continuous parameters
 
 ## Objective Functions
 
@@ -350,6 +432,115 @@ Pass custom commission/slippage settings:
 }'
 ```
 
+## Validation Methods (Phase 2)
+
+### Walk-Forward Analysis
+
+Tests strategy robustness by optimizing on rolling time windows and validating on future out-of-sample periods.
+
+**How It Works:**
+1. Split data into overlapping windows (e.g., 6 months each)
+2. For each window:
+   - Optimize on first 70% (in-sample)
+   - Validate on last 30% (out-of-sample)
+3. Step forward by a fixed period (e.g., 1 month)
+4. Repeat until end of data
+
+**Benefits:**
+- Simulates real trading where you periodically re-optimize
+- Detects overfitting by comparing in-sample vs out-of-sample performance
+- Shows stability of parameters over time
+- More realistic than single train/test split
+
+**Usage:**
+```bash
+python main.py walk-forward \
+  --strategy SMA_Crossover \
+  --symbols AAPL \
+  --timeframe "1 day" \
+  --params '{"short_period": [5,10,15], "long_period": [20,30,40]}' \
+  --window-size 180 \
+  --step-size 30 \
+  --train-ratio 0.7 \
+  --algorithm grid_search
+```
+
+**Output:**
+- Per-window best parameters and scores
+- In-sample vs out-of-sample performance
+- Stability score (consistency of parameters across windows)
+- Average degradation (performance drop on out-of-sample data)
+
+### Out-of-Sample Testing
+
+Simple train/test split to validate if optimized parameters generalize to unseen data.
+
+**How It Works:**
+1. Split data into training (e.g., 70%) and testing (30%) sets
+2. Optimize parameters on training data
+3. Test best parameters on held-out testing data
+4. Compare training vs testing performance
+
+**Benefits:**
+- Quick validation of overfitting
+- Standard machine learning approach
+- Easy to understand and interpret
+
+**Usage:**
+```bash
+python main.py out-of-sample \
+  --strategy SMA_Crossover \
+  --symbols AAPL \
+  --timeframe "1 day" \
+  --params '{"short_period": [5,10], "long_period": [20,30]}' \
+  --train-ratio 0.7 \
+  --algorithm grid_search
+```
+
+**Output:**
+- Best parameters from training data
+- Training score vs testing score
+- Score degradation (percentage drop)
+- Overfitting detected flag (if degradation > threshold)
+
+### Cross-Validation
+
+K-fold validation adapted for time series data with purging and embargoes to prevent lookahead bias.
+
+**How It Works:**
+1. Split data into K consecutive folds
+2. For each fold:
+   - Train on fold data
+   - Test on next fold
+   - Apply purging (remove overlapping data)
+   - Apply embargo (skip period after training)
+3. Aggregate results across folds
+
+**Benefits:**
+- More robust than single train/test split
+- Uses all data for both training and testing
+- Purging prevents information leakage
+- Embargo simulates real-world trading lag
+
+**Usage:**
+```bash
+python main.py cross-validate \
+  --strategy SMA_Crossover \
+  --symbols AAPL \
+  --timeframe "1 day" \
+  --params '{"short_period": [5,10], "long_period": [20,30]}' \
+  --n-splits 5 \
+  --purge-pct 0.01 \
+  --embargo-pct 0.01 \
+  --algorithm grid_search
+```
+
+**Output:**
+- Per-fold best parameters and scores
+- Mean and standard deviation of scores
+- Consistency of parameters across folds
+- Overall validation score
+
 ## Performance Tips
 
 1. **Start Small**: Test with a small parameter space first
@@ -377,21 +568,17 @@ Pass custom commission/slippage settings:
 - Try different objective functions
 - Check constraint definitions
 
-## Future Enhancements (Phase 2 & 3)
+## Future Enhancements (Phase 3)
 
-Coming in Phase 2:
-- Bayesian optimization with Optuna
-- Walk-forward analysis
-- Out-of-sample validation
-- Cross-validation with time series splits
-
-Coming in Phase 3:
-- Parameter sensitivity analysis
-- Pareto frontier visualization
+Planned features:
+- Parameter sensitivity analysis and importance ranking
+- Pareto frontier visualization for multi-objective optimization
 - Real-time progress WebSocket updates
 - Result caching to avoid redundant backtests
-- Export to CSV/JSON
-- Performance reports and charts
+- Export optimization results to CSV/JSON
+- Performance reports with charts and visualizations
+- Strategy comparison across multiple optimizations
+- Hyperparameter importance plots
 
 ## Database Queries
 

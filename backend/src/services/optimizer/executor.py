@@ -26,12 +26,13 @@ def run_backtest_task(args: tuple) -> TaskResult:
     This function runs in a separate process.
     
     Args:
-        args: Tuple of (params, strategy_name, symbols, timeframe, lookback, objective, config)
+        args: Tuple of (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data)
+              bars_data is optional - if None, data will be loaded from database
     
     Returns:
         TaskResult with backtest results or error
     """
-    params, strategy_name, symbols, timeframe, lookback, objective, config = args
+    params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data_arg = args
     
     try:
         # Import here to avoid pickling issues with multiprocessing
@@ -54,53 +55,57 @@ def run_backtest_task(args: tuple) -> TaskResult:
         if not isinstance(symbols, list):
             symbols = [symbols]
         
-        # Create a NEW database engine for THIS worker process
-        # This is critical - each process needs its own connection pool
-        engine = create_database_engine()
-        SessionLocal = sessionmaker(bind=engine)
-        
-        # Load historical data from database
-        bars_data = {}
-        session = SessionLocal()
-        try:
-            for symbol in symbols:
-                candles_list = session.query(
-                    Candle.ts,
-                    Candle.open,
-                    Candle.high,
-                    Candle.low,
-                    Candle.close,
-                    Candle.volume
-                ).filter(
-                    Candle.symbol == symbol,
-                    Candle.tf == timeframe
-                ).order_by(Candle.ts).all()
-                
-                if not candles_list:
-                    return TaskResult(
-                        params=params,
-                        success=False,
-                        error=f"No historical data found for {symbol} {timeframe}"
-                    )
-                
-                # Convert to DataFrame immediately (while still in session)
-                df = pd.DataFrame([
-                    {
-                        'timestamp': candle.ts,
-                        'open': float(candle.open),
-                        'high': float(candle.high),
-                        'low': float(candle.low),
-                        'close': float(candle.close),
-                        'volume': candle.volume
-                    }
-                    for candle in candles_list
-                ])
-                # Don't set index - keep timestamp as a column
-                bars_data[symbol] = df
-        finally:
-            # Close session and dispose of engine for this worker
-            session.close()
-            engine.dispose()
+        # Use pre-loaded data if provided, otherwise load from database
+        if bars_data_arg is not None:
+            bars_data = bars_data_arg
+        else:
+            # Create a NEW database engine for THIS worker process
+            # This is critical - each process needs its own connection pool
+            engine = create_database_engine()
+            SessionLocal = sessionmaker(bind=engine)
+            
+            # Load historical data from database
+            bars_data = {}
+            session = SessionLocal()
+            try:
+                for symbol in symbols:
+                    candles_list = session.query(
+                        Candle.ts,
+                        Candle.open,
+                        Candle.high,
+                        Candle.low,
+                        Candle.close,
+                        Candle.volume
+                    ).filter(
+                        Candle.symbol == symbol,
+                        Candle.tf == timeframe
+                    ).order_by(Candle.ts).all()
+                    
+                    if not candles_list:
+                        return TaskResult(
+                            params=params,
+                            success=False,
+                            error=f"No historical data found for {symbol} {timeframe}"
+                        )
+                    
+                    # Convert to DataFrame immediately (while still in session)
+                    df = pd.DataFrame([
+                        {
+                            'timestamp': candle.ts,
+                            'open': float(candle.open),
+                            'high': float(candle.high),
+                            'low': float(candle.low),
+                            'close': float(candle.close),
+                            'volume': candle.volume
+                        }
+                        for candle in candles_list
+                    ])
+                    # Don't set index - keep timestamp as a column
+                    bars_data[symbol] = df
+            finally:
+                # Close session and dispose of engine for this worker
+                session.close()
+                engine.dispose()
         
         # Get strategy class from registry
         registry = get_strategy_registry()
@@ -229,7 +234,8 @@ class ParallelExecutor:
         lookback: int,
         objective: str,
         config: Dict[str, Any] = None,
-        callback: Callable[[TaskResult], None] = None
+        callback: Callable[[TaskResult], None] = None,
+        bars_data: Dict[str, Any] = None
     ) -> List[TaskResult]:
         """
         Execute a batch of backtests in parallel.
@@ -243,6 +249,7 @@ class ParallelExecutor:
             objective: Objective function ('sharpe_ratio', 'total_return', etc.)
             config: Additional configuration (commission, slippage, etc.)
             callback: Optional callback function called for each completed task
+            bars_data: Optional pre-loaded bars data (for validation methods)
         
         Returns:
             List of TaskResult objects
@@ -261,7 +268,7 @@ class ParallelExecutor:
         
         # Prepare tasks
         tasks = [
-            (params, strategy_name, symbols, timeframe, lookback, objective, config)
+            (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data)
             for params in param_combinations
         ]
         
@@ -303,7 +310,8 @@ class ParallelExecutor:
         lookback: int,
         objective: str,
         config: Dict[str, Any] = None,
-        callback: Callable[[TaskResult], None] = None
+        callback: Callable[[TaskResult], None] = None,
+        bars_data: Dict[str, Any] = None
     ) -> List[TaskResult]:
         """
         Execute backtests sequentially (for debugging or single-core machines).
@@ -323,7 +331,7 @@ class ParallelExecutor:
         
         results = []
         for i, params in enumerate(param_combinations):
-            task = (params, strategy_name, symbols, timeframe, lookback, objective, config)
+            task = (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data)
             result = run_backtest_task(task)
             results.append(result)
             

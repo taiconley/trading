@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm import Session
+import pandas as pd
 
 from common.db import get_db_session
 from common.models import OptimizationRun, OptimizationResult
@@ -346,4 +347,81 @@ class OptimizationEngine:
         )
         if best:
             logger.info(f"Current best: {best.score:.4f} with params {best.params}")
+    
+    async def _run_optimization_direct(
+        self,
+        db: Session,
+        bars_data: Dict[str, pd.DataFrame],
+        window_id: str = None
+    ) -> Optional[AlgoResult]:
+        """
+        Run optimization directly on provided data without full database storage.
+        
+        This is used internally by validation methods like walk-forward analysis.
+        Results are not stored in optimization_runs table.
+        
+        Args:
+            db: Database session
+            bars_data: Historical bars data
+            window_id: Optional window identifier for logging
+            
+        Returns:
+            Best optimization result or None
+        """
+        logger.info(f"Running direct optimization{f' for {window_id}' if window_id else ''}")
+        
+        # Generate and evaluate all candidates
+        batch_size = 50
+        batch = []
+        
+        for params in self.optimizer.generate_candidates():
+            batch.append(params)
+            
+            if len(batch) >= batch_size:
+                self._eval_batch_direct(batch, bars_data)
+                batch = []
+        
+        # Process remaining batch
+        if batch:
+            self._eval_batch_direct(batch, bars_data)
+        
+        # Return best result
+        best = self.optimizer.get_best()
+        if best:
+            logger.info(
+                f"Direct optimization complete{f' for {window_id}' if window_id else ''}: "
+                f"Best score={best.score:.4f}, params={best.params}"
+            )
+        else:
+            logger.warning(f"Direct optimization{f' for {window_id}' if window_id else ''}: No valid results")
+        
+        return best
+    
+    def _eval_batch_direct(
+        self,
+        batch: List[Dict[str, Any]],
+        bars_data: Dict[str, pd.DataFrame]
+    ):
+        """Evaluate a batch of parameters directly without database storage."""
+        results = self.executor.execute_batch(
+            param_combinations=batch,
+            strategy_name=self.strategy_name,
+            symbols=self.symbols,
+            timeframe=self.timeframe,
+            lookback=self.lookback,
+            objective=self.objective,
+            config=self.config,
+            bars_data=bars_data
+        )
+        
+        # Update optimizer with results
+        for task_result in results:
+            if task_result.success:
+                algo_result = AlgoResult(
+                    params=task_result.params,
+                    score=task_result.result['score'],
+                    metrics=task_result.result['metrics'],
+                    backtest_run_id=task_result.result.get('backtest_run_id')
+                )
+                self.optimizer.update(algo_result)
 
