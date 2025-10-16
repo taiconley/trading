@@ -551,10 +551,42 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - **Metrics**: Comprehensive performance metrics (PnL, Sharpe, MaxDD, win rate, profit factor)
 - **Database Integration**: Results stored in `backtest_runs` and `backtest_trades` tables
 - **Strategy Integration**: Works with all strategies from `strategy_lib`
-- **Testing**: Successfully tested with SMA Crossover strategy on AAPL daily data
-  - Run ID 17: 1 trade, -3.89% return, 129 day duration
-  - Proven to work end-to-end from data loading to results storage
-- **Documentation**: Complete README.md with CLI/API usage examples
+- **Multi-Symbol Support**: ✨ NEW - Full support for pairs trading and multi-symbol strategies
+  - Added `on_bar_multi()` method to `BaseStrategy` for analyzing multiple symbols together
+  - Backtester detects and uses multi-symbol mode when `supports_multi_symbol = True`
+  - Backward compatible - existing single-symbol strategies work unchanged
+  - Implemented `Pairs_Trading` strategy as reference implementation
+- **Testing**: Successfully tested with multiple strategies
+  - Single-symbol: SMA Crossover on AAPL (Run ID 17: 1 trade, -3.89% return)
+  - Pairs trading: Pairs_Trading on AAPL/MSFT (Run ID 18: 12 trades, +3.32% return, 66.67% win rate)
+  - Proven to handle simultaneous long/short positions across multiple symbols
+- **Documentation**: Complete README.md with CLI/API usage examples and pairs trading guide
+
+### Enhancement: Multi-Symbol and Pairs Trading (Completed)
+
+**Files Modified:**
+- `backend/src/strategy_lib/base.py` - Added `on_bar_multi()` method and `supports_multi_symbol` property
+- `backend/src/services/backtester/engine.py` - Enhanced to detect and use multi-symbol mode
+- `backend/src/services/backtester/README.md` - Added pairs trading documentation and examples
+
+**Files Created:**
+- `backend/src/strategy_lib/pairs_trade.py` - Reference implementation of statistical arbitrage pairs trading strategy
+  - Z-score based entry/exit
+  - Configurable thresholds (entry_threshold, exit_threshold, stop_loss_zscore)
+  - Position sizing and risk management (max_hold_days)
+  - Full state tracking and logging
+
+**Key Features:**
+- **Backward Compatible**: Existing single-symbol strategies (SMA, Mean Reversion) work unchanged
+- **Flexible Architecture**: Strategies opt-in to multi-symbol mode via `supports_multi_symbol` property
+- **Clean API**: Multi-symbol strategies receive all symbols' data in one call via `on_bar_multi()`
+- **Proper Trade Tracking**: Each leg of a pair is tracked independently with separate P&L
+
+**Use Cases Enabled:**
+- Pairs trading (long/short correlated stocks)
+- Spread trading (futures spreads, ETF arbitrage)
+- Portfolio strategies (sector rotation, multi-asset allocation)
+- Statistical arbitrage strategies
 
 ## 12) Strategy Parameter Optimizer (optimizer)
 ### Tasks:

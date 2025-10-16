@@ -5,11 +5,67 @@ On-demand backtesting service that simulates strategy execution on historical da
 ## Features
 
 - **Strategy Support**: Works with all strategies from `strategy_lib`
+- **Multi-Symbol Support**: Full support for pairs trading, spread strategies, and portfolio strategies
 - **Realistic Simulation**: Includes commission, slippage, and realistic order fills
 - **Performance Metrics**: Comprehensive metrics including Sharpe ratio, max drawdown, win rate, profit factor
 - **Database Storage**: Stores all results and trades for later analysis
 - **Flexible Interface**: Both CLI tool and REST API
 - **Historical Data**: Uses only local candles data (no external fetching)
+
+## Multi-Symbol and Pairs Trading Support
+
+The backtester fully supports strategies that need to analyze multiple symbols simultaneously, such as:
+- **Pairs Trading**: Long one stock, short another based on ratio deviations
+- **Spread Trading**: Trade spreads between related instruments
+- **Portfolio Strategies**: Analyze and trade multiple symbols as a portfolio
+
+### How It Works
+
+1. **Traditional Single-Symbol Strategies**: Call `on_bar()` for each symbol individually
+2. **Multi-Symbol Strategies**: Call `on_bar_multi()` with all symbols' data together
+
+### Example: Pairs Trading
+
+```python
+class PairsTradingStrategy(BaseStrategy):
+    @property
+    def supports_multi_symbol(self) -> bool:
+        return True  # Enable multi-symbol mode
+    
+    async def on_bar_multi(self, symbols, timeframe, bars_data):
+        # Access both symbols together
+        stock_a = symbols[0]
+        stock_b = symbols[1]
+        
+        # Calculate price ratio
+        ratio = bars_data[stock_a]['close'].iloc[-1] / bars_data[stock_b]['close'].iloc[-1]
+        
+        # Generate paired signals
+        if ratio > threshold:
+            return [
+                self.create_signal(stock_a, SignalType.SELL, quantity=100),
+                self.create_signal(stock_b, SignalType.BUY, quantity=100)
+            ]
+        return []
+```
+
+### Running Pairs Backtests
+
+```bash
+# CLI
+python main.py cli \
+  --strategy Pairs_Trading \
+  --symbols AAPL MSFT \
+  --timeframe "1 day" \
+  --params '{"lookback_window": 20, "entry_threshold": 2.0}'
+
+# Results show paired trades
+# Trade 1: BUY 100 AAPL, P&L: $1,418.00
+# Trade 2: SELL 100 MSFT, P&L: $-1,174.00
+# Net Pair P&L: $244.00
+```
+
+The backtester tracks both legs independently and calculates individual P&L for each symbol, allowing you to analyze the performance of each leg of the pair.
 
 ## Architecture
 
@@ -158,6 +214,36 @@ Backtester uses settings from `common.config.BacktestSettings`:
 - `BT_DEFAULT_SLIPPAGE_TICKS`: Slippage in ticks (default: 1)
 - `BT_TICK_SIZE_US_EQUITY`: Tick size for US equities (default: 0.01)
 
+## Available Strategies
+
+The backtester includes several pre-built strategies and supports custom strategy development:
+
+### Single-Symbol Strategies
+
+1. **SMA_Crossover** - Simple Moving Average crossover strategy
+   - Configurable short/long periods
+   - Volume filtering
+   - Multiple position sizing methods
+   - Example: `--strategy SMA_Crossover --symbols AAPL --params '{"short_period": 10, "long_period": 20}'`
+
+2. **Mean_Reversion** - Mean reversion strategy with Bollinger Bands
+   - Trades oversold/overbought conditions
+   - Configurable lookback and standard deviation bands
+   - Example: `--strategy Mean_Reversion --symbols SPY`
+
+### Multi-Symbol Strategies
+
+3. **Pairs_Trading** - Statistical arbitrage between two correlated stocks
+   - Requires exactly 2 symbols
+   - Z-score based entry/exit
+   - Configurable thresholds and position sizing
+   - Tracks both legs independently
+   - Example: `--strategy Pairs_Trading --symbols AAPL MSFT --params '{"entry_threshold": 2.0, "position_size": 100}'`
+
+### Creating Custom Strategies
+
+All strategies inherit from `BaseStrategy` and can be easily added to the `strategy_lib` directory. See the strategy documentation for implementation details.
+
 ## Performance Metrics
 
 The backtester calculates comprehensive performance metrics:
@@ -212,6 +298,8 @@ The backtester calculates comprehensive performance metrics:
 
 ## Example Output
 
+### Single-Symbol Strategy (SMA Crossover)
+
 ```
 ================================================================================
 Running Backtest: SMA_Crossover
@@ -257,6 +345,61 @@ Costs:
 
 ================================================================================
 ```
+
+### Pairs Trading Strategy (Multi-Symbol)
+
+```
+================================================================================
+Running Backtest: Pairs_Trading
+================================================================================
+Symbols: AAPL, MSFT
+Timeframe: 1 day
+Initial Capital: $100,000.00
+================================================================================
+
+Progress: 0/250 bars, Equity: $100,000.00
+Progress: 50/250 bars, Equity: $100,000.00
+Progress: 100/250 bars, Equity: $177,094.00
+Progress: 150/250 bars, Equity: $191,067.00
+Progress: 200/250 bars, Equity: $101,061.00
+
+Closed trade: BUY 100 AAPL, P&L: $1,418.00
+Closed trade: SELL 100 MSFT, P&L: $-1,174.00
+Closed trade: BUY 100 AAPL, P&L: $1,156.00
+Closed trade: SELL 100 MSFT, P&L: $-143.00
+
+================================================================================
+Backtest Results (Run ID: 18)
+================================================================================
+
+Performance:
+  Total P&L:        $       3,323.00
+  Total Return:                3.32%
+  Sharpe Ratio:                0.92
+  Max Drawdown:               50.94%
+
+Trades:
+  Total Trades:                  12
+  Winning Trades:                 8
+  Losing Trades:                  4
+  Win Rate:                   66.67%
+
+Trade Statistics:
+  Avg Win:          $         944.38
+  Avg Loss:         $      -1,058.00
+  Largest Win:      $       1,782.00
+  Largest Loss:     $      -2,716.00
+  Profit Factor:               1.79
+  Avg Duration:                13.3 days
+
+Costs:
+  Total Commission: $          12.00
+  Total Slippage:   $          12.00
+
+================================================================================
+```
+
+Note: In pairs trading, trades are shown individually for each leg. The 12 total trades represent 6 pairs (each pair has 2 legs).
 
 ## Testing
 

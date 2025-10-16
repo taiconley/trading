@@ -188,6 +188,65 @@ class BaseStrategy(ABC):
     
     # Optional lifecycle methods that strategies can override
     
+    async def on_bar_multi(self, symbols: List[str], timeframe: str, 
+                          bars_data: Dict[str, pd.DataFrame]) -> List[StrategySignal]:
+        """
+        Process new bar data for multiple symbols simultaneously (OPTIONAL).
+        
+        This method is for strategies that need to analyze multiple symbols together,
+        such as pairs trading, spread trading, or portfolio strategies. If implemented,
+        it will be called instead of on_bar() for each symbol individually.
+        
+        To use this method:
+        1. Implement this method in your strategy
+        2. Set supports_multi_symbol = True in your strategy class
+        
+        Args:
+            symbols: List of symbols with new data
+            timeframe: The timeframe of the bars (e.g., "1 min", "5 mins")
+            bars_data: Dictionary mapping symbol -> DataFrame with OHLCV data
+                      Each DataFrame is sorted by timestamp ascending
+                      Columns: ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        
+        Returns:
+            List of StrategySignal objects (can be empty if no signals)
+            Signals can be for any of the symbols (or all of them)
+        
+        Example:
+            async def on_bar_multi(self, symbols, timeframe, bars_data):
+                # Pairs trading example
+                stock_a = symbols[0]
+                stock_b = symbols[1]
+                
+                ratio = bars_data[stock_a]['close'].iloc[-1] / bars_data[stock_b]['close'].iloc[-1]
+                
+                if ratio > upper_threshold:
+                    # Short A, Long B
+                    return [
+                        self.create_signal(stock_a, SignalType.SELL, quantity=100),
+                        self.create_signal(stock_b, SignalType.BUY, quantity=100)
+                    ]
+                
+                return []
+        """
+        # Default implementation: call on_bar() for each symbol (backward compatibility)
+        all_signals = []
+        for symbol in symbols:
+            if symbol in bars_data:
+                signals = await self.on_bar(symbol, timeframe, bars_data[symbol])
+                all_signals.extend(signals)
+        return all_signals
+    
+    @property
+    def supports_multi_symbol(self) -> bool:
+        """
+        Return True if this strategy implements on_bar_multi() for analyzing
+        multiple symbols together (pairs trading, spread strategies, etc.).
+        
+        Override this property in your strategy if you implement on_bar_multi().
+        """
+        return False
+    
     async def on_signal_executed(self, signal: StrategySignal, success: bool, 
                                 execution_price: Optional[Decimal] = None) -> None:
         """

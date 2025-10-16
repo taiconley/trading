@@ -250,19 +250,48 @@ class BacktestEngine:
             # Process fills for pending orders
             self._process_pending_orders(current_bars, timestamp)
             
-            # Generate signals for each symbol
-            for symbol, bars_df in current_bars.items():
-                if len(bars_df) >= self.strategy.config.lookback_periods:
-                    # Call strategy with historical bars
-                    signals = await self.strategy.on_bar(
-                        symbol=symbol,
+            # Generate signals - use multi-symbol mode if strategy supports it
+            if self.strategy.supports_multi_symbol:
+                # Multi-symbol mode: pass all symbols' data together
+                symbols_ready = [
+                    symbol for symbol, bars_df in current_bars.items()
+                    if len(bars_df) >= self.strategy.config.lookback_periods
+                ]
+                
+                if symbols_ready:
+                    # Prepare bars data with only lookback period
+                    bars_data_limited = {
+                        symbol: current_bars[symbol].tail(self.strategy.config.lookback_periods)
+                        for symbol in symbols_ready
+                    }
+                    
+                    # Call multi-symbol strategy method
+                    signals = await self.strategy.on_bar_multi(
+                        symbols=symbols_ready,
                         timeframe=self.strategy.config.bar_timeframe,
-                        bars=bars_df.tail(self.strategy.config.lookback_periods)
+                        bars_data=bars_data_limited
                     )
                     
-                    # Process signals
+                    # Process all signals
                     for signal in signals:
-                        await self._process_signal(signal, bars_df, timestamp)
+                        # Get bars for the signal's symbol
+                        signal_bars = current_bars.get(signal.symbol)
+                        if signal_bars is not None:
+                            await self._process_signal(signal, signal_bars, timestamp)
+            else:
+                # Single-symbol mode: call strategy for each symbol individually
+                for symbol, bars_df in current_bars.items():
+                    if len(bars_df) >= self.strategy.config.lookback_periods:
+                        # Call strategy with historical bars
+                        signals = await self.strategy.on_bar(
+                            symbol=symbol,
+                            timeframe=self.strategy.config.bar_timeframe,
+                            bars=bars_df.tail(self.strategy.config.lookback_periods)
+                        )
+                        
+                        # Process signals
+                        for signal in signals:
+                            await self._process_signal(signal, bars_df, timestamp)
             
             # Update positions and equity
             self._update_positions(current_bars, timestamp)

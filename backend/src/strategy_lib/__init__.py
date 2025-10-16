@@ -34,6 +34,7 @@ from .registry import (
 # Import strategies to register them (they auto-register via decorators)
 from . import sma_cross
 from . import mean_revert
+from . import pairs_trade
 
 __all__ = [
     # Base classes and types
