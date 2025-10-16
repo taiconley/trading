@@ -20,3 +20,8 @@ ssh \
     -L 54320:localhost:54320 \
     -L 3000:localhost:3000 \
     taiconley@aiunlocked.zapto.org
+
+
+
+To get historical data:
+$ docker compose exec backend-historical curl -s -X POST "http://localhost:8003/historical/request?symbol=AAPL&bar_size=1%20day&duration=1%20Y&use_rth=true" | python3 -m json.tool
