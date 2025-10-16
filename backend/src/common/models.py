@@ -393,6 +393,75 @@ class BacktestTrade(Base):
     )
 
 
+class OptimizationRun(Base):
+    """Parameter optimization run tracking."""
+    __tablename__ = 'optimization_runs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_name = Column(String(100), nullable=False)
+    algorithm = Column(String(50), nullable=False)  # 'grid_search', 'random_search', 'bayesian', etc.
+    symbols = Column(JSON, nullable=False)  # List of symbols
+    timeframe = Column(String(20), nullable=False)  # Bar timeframe
+    param_ranges = Column(JSON, nullable=False)  # Parameter space definition
+    objective = Column(String(50), nullable=False)  # 'sharpe_ratio', 'total_return', 'profit_factor', etc.
+    status = Column(String(20), nullable=False, default='pending')  # 'pending', 'running', 'completed', 'failed', 'stopped'
+    start_time = Column(DateTime(timezone=True), nullable=True)
+    end_time = Column(DateTime(timezone=True), nullable=True)
+    total_combinations = Column(Integer, nullable=True)
+    completed_combinations = Column(Integer, nullable=False, default=0)
+    best_params = Column(JSON, nullable=True)  # Best parameter combination found
+    best_score = Column(Numeric(15, 6), nullable=True)  # Best objective score
+    error_message = Column(Text, nullable=True)  # Error details if failed
+    config = Column(JSON, nullable=True)  # Additional configuration (cores, constraints, etc.)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    results = relationship("OptimizationResult", back_populates="run", cascade="all, delete-orphan")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_optimization_runs_status_created', 'status', 'created_at'),
+        Index('ix_optimization_runs_strategy_created', 'strategy_name', 'created_at'),
+        CheckConstraint("status IN ('pending', 'running', 'completed', 'failed', 'stopped')", 
+                       name='ck_optimization_runs_status'),
+        CheckConstraint("completed_combinations >= 0", 
+                       name='ck_optimization_runs_completed_positive'),
+        CheckConstraint("total_combinations IS NULL OR total_combinations > 0", 
+                       name='ck_optimization_runs_total_positive'),
+    )
+
+
+class OptimizationResult(Base):
+    """Individual parameter combination result from optimization."""
+    __tablename__ = 'optimization_results'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey('optimization_runs.id'), nullable=False)
+    params_json = Column(JSON, nullable=False)  # The specific parameters tested
+    backtest_run_id = Column(Integer, ForeignKey('backtest_runs.id'), nullable=True)  # Link to backtest
+    
+    # Performance metrics (duplicated from backtest for quick access)
+    score = Column(Numeric(15, 6), nullable=False)  # Objective function value
+    sharpe_ratio = Column(Numeric(8, 4), nullable=True)
+    total_return = Column(Numeric(15, 2), nullable=True)
+    max_drawdown = Column(Numeric(8, 4), nullable=True)
+    win_rate = Column(Numeric(8, 4), nullable=True)
+    profit_factor = Column(Numeric(8, 4), nullable=True)
+    total_trades = Column(Integer, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    run = relationship("OptimizationRun", back_populates="results")
+    backtest_run_ref = relationship("BacktestRun")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_optimization_results_run_score', 'run_id', 'score'),
+        Index('ix_optimization_results_run_created', 'run_id', 'created_at'),
+    )
+
+
 # =============================================================================
 # Additional Indexes for Performance
 # =============================================================================

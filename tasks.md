@@ -589,71 +589,164 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - Statistical arbitrage strategies
 
 ## 12) Strategy Parameter Optimizer (optimizer)
-### Tasks:
-- [ ] Create `backend/src/services/optimizer/main.py`
-  - [ ] CLI interface for command-line optimization
-  - [ ] REST API for web-triggered optimizations
-  - [ ] On-demand service (not always running)
-  - [ ] Multi-processing coordinator for parallel execution
-- [ ] Core optimization engine:
-  - [ ] Parameter space definition from strategy schemas
-  - [ ] Multi-objective optimization support (Sharpe, drawdown, return, etc.)
-  - [ ] Constraint handling (e.g., short_period < long_period)
-  - [ ] Integration with backtester service for evaluation
-- [ ] Optimization algorithms:
-  - [ ] Grid Search - exhaustive search over parameter grid
-  - [ ] Random Search - random sampling of parameter space
-  - [ ] Bayesian Optimization (Optuna) - intelligent parameter selection
-  - [ ] Genetic Algorithm - evolutionary optimization
-  - [ ] Particle Swarm Optimization - swarm intelligence
-  - [ ] Hyperband - early stopping for efficient search
-- [ ] Advanced features:
-  - [ ] Walk-forward analysis - rolling optimization windows
-  - [ ] Out-of-sample testing - validation on unseen data
-  - [ ] Cross-validation - multiple train/test splits
-  - [ ] Overfitting detection - stability analysis
-  - [ ] Multi-symbol optimization - optimize across symbol portfolios
-- [ ] Performance optimization:
-  - [ ] Multiprocessing pool (32 cores) - parallel backtest execution
-  - [ ] Memory management - efficient data sharing between processes
-  - [ ] Caching - avoid redundant backtests
-  - [ ] GPU acceleration (optional) - for compute-intensive algorithms
-  - [ ] Database connection pooling - efficient result storage
-- [ ] Results analysis:
-  - [ ] Pareto frontier analysis - trade-off visualization
-  - [ ] Parameter sensitivity analysis - identify critical parameters
-  - [ ] Correlation analysis - parameter interaction effects
-  - [ ] Stability metrics - robustness across time periods
-  - [ ] Visualization - 3D parameter surfaces, heatmaps
-- [ ] Database extensions:
-  - [ ] `optimization_runs` table - track optimization jobs
-  - [ ] `optimization_results` table - store parameter combinations and metrics
-  - [ ] `parameter_sensitivity` table - sensitivity analysis results
-  - [ ] Indexes for efficient querying of optimization history
-- [ ] API endpoints:
-  - [ ] `POST /optimizations` - Start new optimization
-  - [ ] `GET /optimizations/{id}` - Get optimization status/results
-  - [ ] `GET /optimizations` - List all optimizations
-  - [ ] `POST /optimizations/{id}/stop` - Stop running optimization
-  - [ ] `GET /optimizations/{id}/results` - Get detailed results
-  - [ ] `GET /optimizations/{id}/analysis` - Get sensitivity analysis
-- [ ] Configuration options:
-  - [ ] Strategy name and parameter ranges
-  - [ ] Optimization algorithm selection
-  - [ ] Objective function weights (multi-objective)
-  - [ ] Time period splits (in-sample/out-of-sample)
-  - [ ] Parallel execution settings (number of cores)
-  - [ ] Early stopping criteria
-- [ ] Monitoring and control:
-  - [ ] Progress tracking - completion percentage
-  - [ ] Resource monitoring - CPU/memory usage
-  - [ ] Intermediate results - best parameters found so far
-  - [ ] Graceful cancellation - stop optimization cleanly
-- [ ] Test: Grid search optimization completes successfully
-- [ ] Test: Bayesian optimization finds better parameters than random
+
+**Overview**: Build a parameter optimization framework in three phases, starting with core functionality and progressively adding advanced features.
+
+### Phase 1: Core Optimization Engine (MVP) 🎯
+**Goal**: Basic working optimizer with grid/random search and parallel execution
+
+#### Database Schema (Phase 1):
+- [x] Create database migration for optimizer tables
+  - [x] `optimization_runs` table - Track optimization jobs
+    - Fields: id, strategy_name, algorithm, symbols, timeframe, param_ranges (JSON), objective, status, start_time, end_time, total_combinations, completed_combinations, best_params (JSON), best_score, created_at
+  - [x] `optimization_results` table - Store parameter combinations tested
+    - Fields: id, run_id (FK), params_json, backtest_run_id (FK), score, sharpe_ratio, total_return, max_drawdown, win_rate, profit_factor, total_trades, created_at
+  - [x] Add indexes for efficient querying (run_id, score, created_at)
+
+#### Core Engine:
+- [x] Create `backend/src/services/optimizer/engine.py`
+  - [x] Parameter space definition and validation
+  - [x] Objective function calculation (Sharpe, return, profit factor, etc.)
+  - [x] Integration with backtester service
+  - [x] Result storage and tracking
+  - [x] Progress monitoring
+- [x] Create `backend/src/services/optimizer/algorithms/`
+  - [x] Base optimizer class
+  - [x] Grid Search implementation - exhaustive parameter grid search
+  - [x] Random Search implementation - random sampling of parameter space
+
+#### Parallel Execution:
+- [x] Create `backend/src/services/optimizer/executor.py`
+  - [x] Multiprocessing pool setup (configurable cores)
+  - [x] Task distribution and result collection
+  - [x] Error handling for failed backtests
+  - [x] Resource management and cleanup
+  - [x] Fixed database connection handling for multiprocessing
+
+#### Service Layer:
+- [x] Create `backend/src/services/optimizer/main.py`
+  - [x] CLI interface for command-line optimization
+  - [x] REST API with FastAPI
+  - [x] On-demand service (not continuously running)
+  - [x] Configuration management
+
+#### API Endpoints (Phase 1):
+- [x] `POST /optimizations` - Start new optimization
+- [x] `GET /optimizations/{id}` - Get optimization status/results
+- [x] `GET /optimizations` - List all optimizations
+- [x] `GET /optimizations/{id}/results` - Get detailed results (top N combinations)
+
+#### Testing (Phase 1):
+- [x] Test: Grid search optimization completes successfully on SMA strategy ✅
+- [x] Test: Random search explores parameter space effectively ✅
+- [x] Test: Multi-processing utilizes multiple cores efficiently ✅
+- [x] Test: Results are properly stored in database with backtest links ✅
+- [x] Test: CLI interface works correctly ✅
+
+### Phase 2: Advanced Algorithms & Validation 🚀
+**Goal**: Add intelligent optimization and overfitting prevention
+
+#### Advanced Algorithms:
+- [ ] Bayesian Optimization (Optuna)
+  - [ ] Install and integrate Optuna library
+  - [ ] Implement Bayesian optimizer class
+  - [ ] Support multi-objective optimization (Sharpe vs Drawdown)
+  - [ ] Implement early stopping based on convergence
+
+#### Validation Features:
+- [ ] Walk-forward analysis
+  - [ ] Rolling optimization windows
+  - [ ] In-sample optimization + out-of-sample validation
+  - [ ] Stability scoring across time periods
+  - [ ] Store walk-forward results separately
+- [ ] Out-of-sample testing
+  - [ ] Train/test split functionality
+  - [ ] Overfitting detection metrics
+  - [ ] Validation on unseen data
+- [ ] Cross-validation
+  - [ ] K-fold cross-validation for time series
+  - [ ] Purged/embargoed splits (prevent lookahead bias)
+
+#### API Enhancements:
+- [ ] `POST /optimizations/{id}/stop` - Stop running optimization
+- [ ] `GET /optimizations/{id}/walk-forward` - Walk-forward analysis results
+
+#### Testing (Phase 2):
+- [ ] Test: Bayesian optimization finds better parameters than random search
 - [ ] Test: Walk-forward analysis produces stable results
-- [ ] Test: Multi-processing utilizes all CPU cores efficiently
 - [ ] Test: Out-of-sample validation detects overfitting
+
+### Phase 3: Analytics & Production Features 📊
+**Goal**: Add analytics, visualizations, and production-ready features
+
+#### Database Extensions:
+- [ ] `parameter_sensitivity` table - Sensitivity analysis results
+  - Fields: id, run_id (FK), parameter_name, sensitivity_score, correlation_with_objective, analysis_data (JSON)
+
+#### Advanced Analytics:
+- [ ] Parameter sensitivity analysis
+  - [ ] Identify critical parameters
+  - [ ] Parameter interaction effects
+  - [ ] Correlation with objective function
+- [ ] Pareto frontier analysis
+  - [ ] Multi-objective trade-off visualization
+  - [ ] Identify non-dominated solutions
+- [ ] Stability metrics
+  - [ ] Robustness across time periods
+  - [ ] Parameter stability scoring
+
+#### Performance Optimizations:
+- [ ] Result caching
+  - [ ] Cache identical parameter combinations
+  - [ ] Avoid redundant backtests
+- [ ] Memory management
+  - [ ] Efficient data sharing between processes
+  - [ ] Chunked result processing
+- [ ] Database connection pooling
+  - [ ] Optimize for parallel writes
+  - [ ] Batch insert optimizations
+
+#### Monitoring & Control:
+- [ ] Real-time progress tracking
+  - [ ] WebSocket updates for progress
+  - [ ] Estimated time remaining
+  - [ ] Current best parameters
+- [ ] Resource monitoring
+  - [ ] CPU/memory usage tracking
+  - [ ] Performance bottleneck detection
+- [ ] Graceful cancellation
+  - [ ] Stop optimization cleanly
+  - [ ] Save partial results
+
+#### Visualization & Export:
+- [ ] Generate optimization reports
+  - [ ] Parameter surface plots
+  - [ ] Convergence charts
+  - [ ] Performance distributions
+- [ ] Export functionality
+  - [ ] CSV export of all results
+  - [ ] JSON export for external analysis
+  - [ ] Summary report generation
+
+#### API Enhancements:
+- [ ] `GET /optimizations/{id}/analysis` - Sensitivity and correlation analysis
+- [ ] `GET /optimizations/{id}/pareto` - Pareto frontier data
+- [ ] `GET /optimizations/{id}/export` - Export results as CSV/JSON
+
+#### Testing (Phase 3):
+- [ ] Test: Sensitivity analysis identifies important parameters
+- [ ] Test: Caching prevents redundant backtests
+- [ ] Test: Progress monitoring works in real-time
+- [ ] Test: Export functionality produces valid outputs
+
+### Future Enhancements (Beyond Phase 3):
+- [ ] Genetic Algorithm implementation
+- [ ] Particle Swarm Optimization
+- [ ] Hyperband with early stopping
+- [ ] GPU acceleration for objective function calculation
+- [ ] Multi-symbol portfolio optimization
+- [ ] Ensemble optimization (combine multiple algorithms)
+- [ ] Automated parameter range suggestion based on strategy
 
 ## 13) Backend API Gateway
 ### Tasks:
