@@ -23,6 +23,10 @@ numpy==1.25.2
 # HTTP client (required for strategy service to call trader API)
 aiohttp==3.9.1
 
+# Optimization (for parameter optimization service)
+optuna==3.4.0
+scipy==1.11.4
+
 # Additional deps (will add as needed)
 # httpx==0.25.2
 # websockets==12.0

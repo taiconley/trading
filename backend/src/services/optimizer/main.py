@@ -355,10 +355,10 @@ def main():
     optimize_parser.add_argument('--strategy', required=True, help='Strategy name')
     optimize_parser.add_argument('--symbols', required=True, help='Comma-separated symbols')
     optimize_parser.add_argument('--timeframe', default='1 day', help='Timeframe')
-    optimize_parser.add_argument('--lookback', type=int, default=365, help='Lookback days')
+    optimize_parser.add_argument('--lookback', type=int, default=100, help='Lookback days')
     optimize_parser.add_argument('--params', required=True, help='Parameter ranges (JSON)')
     optimize_parser.add_argument('--algorithm', default='grid_search', 
-                                help='Algorithm (grid_search, random_search)')
+                                help='Algorithm (grid_search, random_search, bayesian)')
     optimize_parser.add_argument('--objective', default='sharpe_ratio',
                                 help='Objective function (sharpe_ratio, total_return, profit_factor, win_rate)')
     optimize_parser.add_argument('--constraints', help='Comma-separated constraints')

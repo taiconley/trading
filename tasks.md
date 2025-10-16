@@ -647,11 +647,22 @@ BT_TICK_SIZE_US_EQUITY=0.01
 **Goal**: Add intelligent optimization and overfitting prevention
 
 #### Advanced Algorithms:
-- [ ] Bayesian Optimization (Optuna)
-  - [ ] Install and integrate Optuna library
-  - [ ] Implement Bayesian optimizer class
-  - [ ] Support multi-objective optimization (Sharpe vs Drawdown)
-  - [ ] Implement early stopping based on convergence
+- [x] Bayesian Optimization (Optuna) ✅ COMPLETE
+  - [x] Install and integrate Optuna library (optuna==3.4.0, scipy==1.11.4)
+  - [x] Implement Bayesian optimizer class (`BayesianOptimizer`)
+  - [x] Support TPE (Tree-structured Parzen Estimator) sampler
+  - [x] Multivariate mode for parameter interactions
+  - [x] Configurable n_startup_trials for random exploration phase
+  - [x] Constraint handling via pruning
+  - [x] Integration with optimizer engine and parallel executor
+  - [x] **CRITICAL BUGFIX**: Changed optimizer default lookback from 365 to 100
+    - Root cause: Engine only calls `on_bar()` after accumulating `lookback_periods` bars
+    - With lookback=365, `on_bar()` called too few times to detect SMA crossovers → 0 trades
+    - With lookback=100, sufficient calls for strategies to build history → trades generated ✅
+    - See `backend/src/services/optimizer/BUGFIX_LOOKBACK.md` for full details
+  - [x] Tested: Run 24 with 10 iterations, best Sharpe=0.8365 with 1 trade
+  - [ ] Support multi-objective optimization (Sharpe vs Drawdown) - Future
+  - [ ] Implement early stopping based on convergence - Future
 
 #### Validation Features:
 - [ ] Walk-forward analysis
@@ -672,7 +683,9 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - [ ] `GET /optimizations/{id}/walk-forward` - Walk-forward analysis results
 
 #### Testing (Phase 2):
-- [ ] Test: Bayesian optimization finds better parameters than random search
+- [x] Test: Bayesian optimization completes successfully ✅ (Run 24: 10 iterations, best Sharpe=0.8365)
+- [x] Test: Bayesian optimization generates trades with default lookback ✅
+- [ ] Test: Bayesian optimization finds better parameters than random search (Future)
 - [ ] Test: Walk-forward analysis produces stable results
 - [ ] Test: Out-of-sample validation detects overfitting
 

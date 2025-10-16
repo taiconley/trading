@@ -11,6 +11,7 @@ from .algorithms import (
     BaseOptimizer,
     GridSearchOptimizer,
     RandomSearchOptimizer,
+    BayesianOptimizer,
     ParameterSpace,
     OptimizationResult as AlgoResult
 )
@@ -107,10 +108,21 @@ class OptimizationEngine:
                 max_iterations=self.max_iterations,
                 random_seed=self.random_seed
             )
+        elif self.algorithm == 'bayesian':
+            if self.max_iterations is None:
+                self.max_iterations = 50  # Default for Bayesian optimization
+            return BayesianOptimizer(
+                param_space=self.param_space,
+                constraints=self.constraints,
+                max_iterations=self.max_iterations,
+                random_seed=self.random_seed,
+                n_startup_trials=min(10, self.max_iterations // 5),  # 20% random trials
+                multivariate=True  # Consider parameter interactions
+            )
         else:
             raise ValueError(
                 f"Unknown algorithm: {self.algorithm}. "
-                "Supported: grid_search, random_search"
+                "Supported: grid_search, random_search, bayesian"
             )
     
     def _create_run_record(self, db: Session) -> OptimizationRun:
@@ -213,14 +225,29 @@ class OptimizationEngine:
                 for params in self.optimizer.generate_candidates():
                     batch.append(params)
                     
-                    # Process batch when full
-                    if len(batch) >= batch_size:
+                    # Check if we should stop adding to batch (respecting max_iterations)
+                    # Don't let batch grow beyond what we need
+                    if self.max_iterations is not None:
+                        remaining = self.max_iterations - self.optimizer.iteration
+                        if len(batch) >= min(batch_size, remaining):
+                            self._process_batch(db, run, batch)
+                            batch = []
+                            # Stop if we've reached the limit
+                            if self.optimizer.iteration >= self.max_iterations:
+                                break
+                    elif len(batch) >= batch_size:
+                        # No iteration limit, just use batch_size
                         self._process_batch(db, run, batch)
                         batch = []
                 
-                # Process remaining batch
-                if batch:
-                    self._process_batch(db, run, batch)
+                # Process remaining batch (only if we haven't exceeded limit)
+                if batch and (self.max_iterations is None or self.optimizer.iteration < self.max_iterations):
+                    # Trim batch if it would exceed max_iterations
+                    if self.max_iterations is not None:
+                        remaining = self.max_iterations - self.optimizer.iteration
+                        batch = batch[:remaining]
+                    if batch:  # Only process if there's anything left
+                        self._process_batch(db, run, batch)
                 
                 # Mark as completed
                 run.status = 'completed'
