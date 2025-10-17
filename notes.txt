@@ -25,3 +25,9 @@ ssh \
 
 To get historical data:
 $ docker compose exec backend-historical curl -s -X POST "http://localhost:8003/historical/request?symbol=AAPL&bar_size=1%20day&duration=1%20Y&use_rth=true" | python3 -m json.tool
+
+
+
+To run the backtester:
+docker compose exec backend-strategy python /app/src/services/backtester/main.py cli --strategy SMA_Crossover --symbols AAPL --params '{"short_period": 5, "long_period": 20}' --timeframe "1 day" --lookback 100 2>&1 | tail -40
+
