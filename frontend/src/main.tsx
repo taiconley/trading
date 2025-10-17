@@ -1,18 +1,32 @@
-import React from 'react'
-import ReactDOM from 'react-dom/client'
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { Layout } from './components/Layout';
+import { Overview } from './pages/Overview';
+import { MarketData } from './pages/MarketData';
+import { Strategies } from './pages/Strategies';
+import { Backtests } from './pages/Backtests';
+import { Optimizer } from './pages/Optimizer';
+import './index.css';
 
 function App() {
   return (
-    <div style={{ padding: '2rem', fontFamily: 'Arial, sans-serif' }}>
-      <h1>Trading Bot Dashboard</h1>
-      <p>React frontend is running!</p>
-      <p>This is a placeholder that will be replaced with the full dashboard.</p>
-    </div>
-  )
+    <BrowserRouter>
+      <Layout>
+        <Routes>
+          <Route path="/" element={<Overview />} />
+          <Route path="/market" element={<MarketData />} />
+          <Route path="/strategies" element={<Strategies />} />
+          <Route path="/backtests" element={<Backtests />} />
+          <Route path="/optimizer" element={<Optimizer />} />
+        </Routes>
+      </Layout>
+    </BrowserRouter>
+  );
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <App />
-  </React.StrictMode>,
-)
+  </React.StrictMode>
+);

@@ -29,7 +29,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-api
-    command: python -m src.api.main
+    command: sh -c "cd /app && PYTHONPATH=/app/src python -m src.api.main"
     environment:
       SERVICE_NAME: api
       POSTGRES_HOST: postgres
@@ -37,6 +37,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
+      PYTHONPATH: /app/src
     ports:
       - "8000:8000"
     depends_on:

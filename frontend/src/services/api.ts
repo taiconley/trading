@@ -1,0 +1,299 @@
+/**
+ * API Client for Trading Bot Backend
+ * 
+ * Provides typed methods for all backend API endpoints
+ */
+
+import axios, { AxiosInstance } from 'axios';
+
+// Use relative URLs - nginx will proxy /api/ to backend-api:8000
+const API_BASE_URL = '';
+
+class ApiClient {
+  private client: AxiosInstance;
+
+  constructor() {
+    this.client = axios.create({
+      baseURL: API_BASE_URL,
+      timeout: 30000,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    // Response interceptor for error handling
+    this.client.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        console.error('API Error:', error.response?.data || error.message);
+        return Promise.reject(error);
+      }
+    );
+  }
+
+  // ============================================================================
+  // Health & Status
+  // ============================================================================
+
+  async healthCheck() {
+    const response = await this.client.get('/healthz');
+    return response.data;
+  }
+
+  async getAggregateHealth() {
+    const response = await this.client.get('/api/health');
+    return response.data;
+  }
+
+  // ============================================================================
+  // Account & Positions
+  // ============================================================================
+
+  async getAccountStats() {
+    const response = await this.client.get('/api/account');
+    return response.data;
+  }
+
+  async getPositions() {
+    const response = await this.client.get('/api/positions');
+    return response.data;
+  }
+
+  // ============================================================================
+  // Orders
+  // ============================================================================
+
+  async getOrders(params?: { status?: string; symbol?: string; limit?: number }) {
+    const response = await this.client.get('/api/orders', { params });
+    return response.data;
+  }
+
+  async getOrder(orderId: number) {
+    const response = await this.client.get(`/api/orders/${orderId}`);
+    return response.data;
+  }
+
+  async placeOrder(order: {
+    symbol: string;
+    side: 'BUY' | 'SELL';
+    qty: number;
+    order_type: 'MKT' | 'LMT' | 'STP' | 'STP-LMT';
+    limit_price?: number;
+    stop_price?: number;
+    tif?: string;
+  }) {
+    const response = await this.client.post('/api/orders', order);
+    return response.data;
+  }
+
+  async cancelOrder(orderId: number) {
+    const response = await this.client.post(`/api/orders/${orderId}/cancel`);
+    return response.data;
+  }
+
+  // ============================================================================
+  // Market Data
+  // ============================================================================
+
+  async getTicks(symbol: string, limit: number = 100) {
+    const response = await this.client.get('/api/ticks', {
+      params: { symbol, limit },
+    });
+    return response.data;
+  }
+
+  async getSubscriptions() {
+    const response = await this.client.get('/api/subscriptions');
+    return response.data;
+  }
+
+  async getWatchlist() {
+    const response = await this.client.get('/api/watchlist');
+    return response.data;
+  }
+
+  async updateWatchlist(action: 'add' | 'remove', symbol: string) {
+    const response = await this.client.post('/api/watchlist', {
+      action,
+      symbol,
+    });
+    return response.data;
+  }
+
+  // ============================================================================
+  // Historical Data
+  // ============================================================================
+
+  async requestHistoricalData(request: {
+    symbol: string;
+    bar_size: string;
+    lookback: string;
+  }) {
+    const response = await this.client.post('/api/historical/request', request);
+    return response.data;
+  }
+
+  async bulkHistoricalRequest() {
+    const response = await this.client.post('/api/historical/bulk');
+    return response.data;
+  }
+
+  async getHistoricalQueue() {
+    const response = await this.client.get('/api/historical/queue');
+    return response.data;
+  }
+
+  // ============================================================================
+  // Strategies
+  // ============================================================================
+
+  async getStrategies() {
+    const response = await this.client.get('/api/strategies');
+    return response.data;
+  }
+
+  async enableStrategy(strategyId: number, enabled: boolean) {
+    const response = await this.client.post(
+      `/api/strategies/${strategyId}/enable`,
+      { enabled }
+    );
+    return response.data;
+  }
+
+  async updateStrategyParams(strategyId: number, params: Record<string, any>) {
+    const response = await this.client.put(
+      `/api/strategies/${strategyId}/params`,
+      params
+    );
+    return response.data;
+  }
+
+  // ============================================================================
+  // Backtests
+  // ============================================================================
+
+  async getBacktests(limit: number = 50) {
+    const response = await this.client.get('/api/backtests', {
+      params: { limit },
+    });
+    return response.data;
+  }
+
+  async getBacktest(runId: number) {
+    const response = await this.client.get(`/api/backtests/${runId}`);
+    return response.data;
+  }
+
+  async getBacktestTrades(runId: number) {
+    const response = await this.client.get(`/api/backtests/${runId}/trades`);
+    return response.data;
+  }
+
+  // ============================================================================
+  // Optimizations
+  // ============================================================================
+
+  async getOptimizations(limit: number = 50) {
+    const response = await this.client.get('/api/optimizations', {
+      params: { limit },
+    });
+    return response.data;
+  }
+
+  async getOptimization(runId: number) {
+    const response = await this.client.get(`/api/optimizations/${runId}`);
+    return response.data;
+  }
+
+  async getOptimizationResults(runId: number, topN: number = 20) {
+    const response = await this.client.get(`/api/optimizations/${runId}/results`, {
+      params: { top_n: topN },
+    });
+    return response.data;
+  }
+
+  async getOptimizationAnalysis(runId: number) {
+    const response = await this.client.get(`/api/optimizations/${runId}/analysis`);
+    return response.data;
+  }
+
+  // ============================================================================
+  // Signals & Executions
+  // ============================================================================
+
+  async getSignals(params?: {
+    strategy_id?: number;
+    symbol?: string;
+    limit?: number;
+  }) {
+    const response = await this.client.get('/api/signals', { params });
+    return response.data;
+  }
+
+  async getExecutions(limit: number = 100) {
+    const response = await this.client.get('/api/executions', {
+      params: { limit },
+    });
+    return response.data;
+  }
+}
+
+// Export singleton instance
+export const api = new ApiClient();
+
+// Export types
+export interface Order {
+  id: number;
+  symbol: string;
+  side: 'BUY' | 'SELL';
+  qty: number;
+  order_type: string;
+  limit_price?: number;
+  stop_price?: number;
+  status: string;
+  placed_at: string;
+  updated_at: string;
+}
+
+export interface Position {
+  symbol: string;
+  qty: number;
+  avg_price: number;
+  market_value?: number;
+  unrealized_pnl?: number;
+}
+
+export interface Backtest {
+  id: number;
+  strategy_name: string;
+  params: Record<string, any>;
+  start_ts?: string;
+  end_ts?: string;
+  pnl?: number;
+  sharpe?: number;
+  maxdd?: number;
+  trades: number;
+  created_at: string;
+}
+
+export interface Optimization {
+  id: number;
+  strategy_name: string;
+  algorithm: string;
+  symbols: string[];
+  status: string;
+  total_combinations: number;
+  completed_combinations: number;
+  best_params?: Record<string, any>;
+  best_score?: number;
+  created_at: string;
+}
+
+export interface Strategy {
+  id: number;
+  name: string;
+  enabled: boolean;
+  params: Record<string, any>;
+  created_at: string;
+}
+

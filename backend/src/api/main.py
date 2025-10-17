@@ -15,6 +15,7 @@ Service Ports:
 """
 import httpx
 import asyncio
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 import json
 import logging
+from sqlalchemy import desc, asc
+
+# Import common modules at the top
+from common.db import get_db_session
+from common.models import (
+    Tick, WatchlistEntry, Strategy, BacktestRun, BacktestTrade,
+    OptimizationRun, OptimizationResult, ParameterSensitivity,
+    Signal, Execution, Order
+)
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
@@ -257,11 +267,6 @@ async def cancel_order(order_id: int):
 @app.get("/api/ticks")
 async def get_recent_ticks(symbol: str, limit: int = 100):
     """Get recent tick data for a symbol."""
-    # Query database directly through common module
-    from common.db import get_db_session
-    from common.models import Tick
-    from sqlalchemy import desc
-    
     with get_db_session() as db:
         ticks = db.query(Tick).filter(
             Tick.symbol == symbol
@@ -295,8 +300,6 @@ async def get_subscriptions():
 async def update_watchlist(data: Dict = Body(...)):
     """Add or remove symbols from watchlist."""
     # Direct database update
-    from common.db import get_db_session
-    from common.models import Watchlist
     from datetime import datetime, timezone
     
     action = data.get("action")  # "add" or "remove"
@@ -308,16 +311,16 @@ async def update_watchlist(data: Dict = Body(...)):
     with get_db_session() as db:
         if action == "add":
             # Check if already exists
-            existing = db.query(Watchlist).filter(Watchlist.symbol == symbol).first()
+            existing = db.query(WatchlistEntry).filter(WatchlistEntry.symbol == symbol).first()
             if not existing:
-                watchlist_entry = Watchlist(symbol=symbol, added_at=datetime.now(timezone.utc))
+                watchlist_entry = WatchlistEntry(symbol=symbol, added_at=datetime.now(timezone.utc))
                 db.add(watchlist_entry)
                 db.commit()
                 return {"message": f"Added {symbol} to watchlist"}
             else:
                 return {"message": f"{symbol} already in watchlist"}
         else:  # remove
-            deleted = db.query(Watchlist).filter(Watchlist.symbol == symbol).delete()
+            deleted = db.query(WatchlistEntry).filter(WatchlistEntry.symbol == symbol).delete()
             db.commit()
             if deleted:
                 return {"message": f"Removed {symbol} from watchlist"}
@@ -328,11 +331,9 @@ async def update_watchlist(data: Dict = Body(...)):
 @app.get("/api/watchlist")
 async def get_watchlist():
     """Get all symbols in watchlist."""
-    from common.db import get_db_session
-    from common.models import Watchlist
     
     with get_db_session() as db:
-        watchlist = db.query(Watchlist).all()
+        watchlist = db.query(WatchlistEntry).all()
         return {
             "symbols": [w.symbol for w in watchlist],
             "count": len(watchlist)
@@ -368,8 +369,6 @@ async def get_historical_queue():
 @app.get("/api/strategies")
 async def get_strategies():
     """Get all strategies from database."""
-    from common.db import get_db_session
-    from common.models import Strategy
     
     with get_db_session() as db:
         strategies = db.query(Strategy).all()
@@ -390,8 +389,6 @@ async def get_strategies():
 @app.post("/api/strategies/{strategy_id}/enable")
 async def enable_strategy(strategy_id: int, data: Dict = Body(...)):
     """Enable or disable a strategy."""
-    from common.db import get_db_session
-    from common.models import Strategy
     
     enabled = data.get("enabled", True)
     
@@ -413,8 +410,6 @@ async def enable_strategy(strategy_id: int, data: Dict = Body(...)):
 @app.put("/api/strategies/{strategy_id}/params")
 async def update_strategy_params(strategy_id: int, params: Dict = Body(...)):
     """Update strategy parameters."""
-    from common.db import get_db_session
-    from common.models import Strategy
     
     with get_db_session() as db:
         strategy = db.query(Strategy).filter(Strategy.strategy_id == strategy_id).first()
@@ -450,9 +445,6 @@ async def run_backtest(config: Dict = Body(...)):
 @app.get("/api/backtests")
 async def list_backtests(limit: int = 50):
     """List recent backtests from database."""
-    from common.db import get_db_session
-    from common.models import BacktestRun
-    from sqlalchemy import desc
     
     with get_db_session() as db:
         runs = db.query(BacktestRun).order_by(desc(BacktestRun.created_at)).limit(limit).all()
@@ -479,8 +471,6 @@ async def list_backtests(limit: int = 50):
 @app.get("/api/backtests/{run_id}")
 async def get_backtest(run_id: int):
     """Get backtest results from database."""
-    from common.db import get_db_session
-    from common.models import BacktestRun
     
     with get_db_session() as db:
         run = db.query(BacktestRun).filter(BacktestRun.id == run_id).first()
@@ -504,8 +494,6 @@ async def get_backtest(run_id: int):
 @app.get("/api/backtests/{run_id}/trades")
 async def get_backtest_trades(run_id: int):
     """Get trades from a backtest."""
-    from common.db import get_db_session
-    from common.models import BacktestTrade
     
     with get_db_session() as db:
         trades = db.query(BacktestTrade).filter(BacktestTrade.run_id == run_id).all()
@@ -547,9 +535,6 @@ async def run_optimization(config: Dict = Body(...)):
 @app.get("/api/optimizations")
 async def list_optimizations(limit: int = 50):
     """List recent optimizations from database."""
-    from common.db import get_db_session
-    from common.models import OptimizationRun
-    from sqlalchemy import desc
     
     with get_db_session() as db:
         runs = db.query(OptimizationRun).order_by(desc(OptimizationRun.created_at)).limit(limit).all()
@@ -576,8 +561,6 @@ async def list_optimizations(limit: int = 50):
 @app.get("/api/optimizations/{run_id}")
 async def get_optimization(run_id: int):
     """Get optimization status and results from database."""
-    from common.db import get_db_session
-    from common.models import OptimizationRun
     
     with get_db_session() as db:
         run = db.query(OptimizationRun).filter(OptimizationRun.id == run_id).first()
@@ -609,9 +592,6 @@ async def get_optimization(run_id: int):
 @app.get("/api/optimizations/{run_id}/results")
 async def get_optimization_results(run_id: int, top_n: int = 20):
     """Get top parameter combinations from optimization."""
-    from common.db import get_db_session
-    from common.models import OptimizationResult
-    from sqlalchemy import desc
     
     with get_db_session() as db:
         results = db.query(OptimizationResult).filter(
@@ -638,9 +618,6 @@ async def get_optimization_results(run_id: int, top_n: int = 20):
 @app.get("/api/optimizations/{run_id}/analysis")
 async def get_sensitivity_analysis(run_id: int):
     """Get parameter sensitivity analysis from database."""
-    from common.db import get_db_session
-    from common.models import ParameterSensitivity
-    from sqlalchemy import asc
     
     with get_db_session() as db:
         sensitivity = db.query(ParameterSensitivity).filter(
@@ -703,9 +680,6 @@ async def get_signals(
     limit: int = 100
 ):
     """Get recent strategy signals."""
-    from common.db import get_db_session
-    from common.models import Signal
-    from sqlalchemy import desc
     
     with get_db_session() as db:
         query = db.query(Signal)
@@ -737,9 +711,6 @@ async def get_signals(
 @app.get("/api/executions")
 async def get_executions(limit: int = 100):
     """Get recent trade executions."""
-    from common.db import get_db_session
-    from common.models import Execution
-    from sqlalchemy import desc
     
     with get_db_session() as db:
         executions = db.query(Execution).order_by(desc(Execution.ts)).limit(limit).all()
@@ -806,12 +777,10 @@ async def websocket_market(websocket: WebSocket):
     try:
         while True:
             # Poll recent ticks from database
-            from common.db import get_db_session
-            from common.models import Tick, Watchlist
             from sqlalchemy import desc
             
             with get_db_session() as db:
-                watchlist = db.query(Watchlist).all()
+                watchlist = db.query(WatchlistEntry).all()
                 market_data = {}
                 
                 for watch in watchlist[:10]:  # Limit to 10 symbols
@@ -845,8 +814,6 @@ async def websocket_orders(websocket: WebSocket):
     try:
         while True:
             # Poll recent orders
-            from common.db import get_db_session
-            from common.models import Order
             from sqlalchemy import desc
             
             with get_db_session() as db:
