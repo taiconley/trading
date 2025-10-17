@@ -29,6 +29,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-api
+    command: python -m src.api.main
     environment:
       SERVICE_NAME: api
       POSTGRES_HOST: postgres
@@ -36,21 +37,21 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
-      TWS_HOST: 172.17.0.1
-      TWS_PORT: ${TWS_PORT:-7497}
-      USE_PAPER: ${USE_PAPER:-1}
-      ENABLE_LIVE: ${ENABLE_LIVE:-0}
-      DRY_RUN: ${DRY_RUN:-1}
     ports:
       - "8000:8000"
     depends_on:
       - postgres
-    # healthcheck:
-    #   test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
-    #   interval: 30s
-    #   timeout: 10s
-    #   retries: 3
-    #   start_period: 40s
+      - backend-account
+      - backend-marketdata
+      - backend-historical
+      - backend-trader
+      - backend-strategy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
     networks:
       trading-network:
