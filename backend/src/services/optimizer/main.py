@@ -16,6 +16,7 @@ import logging
 import sys
 from pathlib import Path
 from typing import Dict, Any, List, Optional
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -249,6 +250,134 @@ def get_optimization_results(run_id: int, top_n: int = 20):
             )
             for result in results
         ]
+
+
+@app.get("/optimizations/{run_id}/analysis")
+def get_sensitivity_analysis(run_id: int):
+    """
+    Get parameter sensitivity analysis for an optimization run.
+    
+    Analyzes which parameters have the most impact on the objective function.
+    """
+    try:
+        from services.optimizer.analytics import analyze_parameter_sensitivity
+        
+        analysis = analyze_parameter_sensitivity(run_id)
+        return analysis
+    except Exception as e:
+        logger.error(f"Failed to analyze sensitivity: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/optimizations/{run_id}/pareto")
+def get_pareto_frontier(
+    run_id: int,
+    objectives: str = "sharpe_ratio,max_drawdown",
+    maximize: str = "true,false"
+):
+    """
+    Get Pareto frontier analysis for multi-objective optimization.
+    
+    Args:
+        objectives: Comma-separated list of objective names
+        maximize: Comma-separated list of true/false for each objective
+    """
+    try:
+        from services.optimizer.analytics import analyze_pareto_frontier
+        
+        obj_list = [o.strip() for o in objectives.split(',')]
+        max_list = [m.strip().lower() == 'true' for m in maximize.split(',')]
+        
+        analysis = analyze_pareto_frontier(run_id, obj_list, max_list)
+        return analysis
+    except Exception as e:
+        logger.error(f"Failed to analyze Pareto frontier: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/optimizations/{run_id}/export/csv")
+def export_csv(run_id: int, top_n: Optional[int] = None):
+    """Export optimization results as CSV."""
+    try:
+        from services.optimizer.export import export_results_csv
+        from fastapi.responses import Response
+        
+        csv_data = export_results_csv(run_id, top_n=top_n)
+        
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename=optimization_{run_id}_results.csv"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to export CSV: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/optimizations/{run_id}/export/json")
+def export_json_endpoint(run_id: int, top_n: Optional[int] = None):
+    """Export optimization results as JSON."""
+    try:
+        from services.optimizer.export import export_results_json
+        
+        return export_results_json(run_id, top_n=top_n, include_metadata=True)
+    except Exception as e:
+        logger.error(f"Failed to export JSON: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/optimizations/{run_id}/report")
+def get_summary_report(run_id: int):
+    """Get human-readable summary report."""
+    try:
+        from services.optimizer.export import generate_summary_report
+        from fastapi.responses import Response
+        
+        report = generate_summary_report(run_id)
+        
+        return Response(
+            content=report,
+            media_type="text/plain",
+            headers={
+                "Content-Disposition": f"attachment; filename=optimization_{run_id}_report.txt"
+            }
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate report: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/optimizations/{run_id}/stop")
+def stop_optimization(run_id: int):
+    """
+    Stop a running optimization.
+    
+    Note: This is a placeholder for graceful cancellation.
+    Full implementation requires tracking and signaling running processes.
+    """
+    with get_db_session() as db:
+        run = db.query(OptimizationRun).filter(OptimizationRun.id == run_id).first()
+        if not run:
+            raise HTTPException(status_code=404, detail="Optimization run not found")
+        
+        if run.status not in ['pending', 'running']:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot stop optimization in status '{run.status}'"
+            )
+        
+        # Mark as stopped
+        run.status = 'stopped'
+        run.end_time = datetime.now(timezone.utc)
+        db.commit()
+        
+        return {
+            "run_id": run_id,
+            "status": "stopped",
+            "message": "Optimization stop requested. Running backtests will complete."
+        }
 
 
 # =============================================================================
@@ -661,7 +790,7 @@ def main():
     optimize_parser.add_argument('--lookback', type=int, default=100, help='Lookback days')
     optimize_parser.add_argument('--params', required=True, help='Parameter ranges (JSON)')
     optimize_parser.add_argument('--algorithm', default='grid_search', 
-                                help='Algorithm (grid_search, random_search, bayesian)')
+                                help='Algorithm (grid_search, random_search, bayesian, genetic)')
     optimize_parser.add_argument('--objective', default='sharpe_ratio',
                                 help='Objective function (sharpe_ratio, total_return, profit_factor, win_rate)')
     optimize_parser.add_argument('--constraints', help='Comma-separated constraints')

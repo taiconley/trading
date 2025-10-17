@@ -13,6 +13,7 @@ from .algorithms import (
     GridSearchOptimizer,
     RandomSearchOptimizer,
     BayesianOptimizer,
+    GeneticAlgorithmOptimizer,
     ParameterSpace,
     OptimizationResult as AlgoResult
 )
@@ -120,10 +121,36 @@ class OptimizationEngine:
                 n_startup_trials=min(10, self.max_iterations // 5),  # 20% random trials
                 multivariate=True  # Consider parameter interactions
             )
+        elif self.algorithm == 'genetic':
+            if self.max_iterations is None:
+                self.max_iterations = 100  # Default for genetic algorithm
+            
+            # Extract GA-specific config
+            population_size = self.config.get('population_size', 50)
+            elite_size = self.config.get('elite_size', 5)
+            mutation_rate = self.config.get('mutation_rate', 0.1)
+            crossover_rate = self.config.get('crossover_rate', 0.8)
+            tournament_size = self.config.get('tournament_size', 3)
+            selection_method = self.config.get('selection_method', 'tournament')
+            crossover_method = self.config.get('crossover_method', 'uniform')
+            
+            return GeneticAlgorithmOptimizer(
+                param_space=self.param_space,
+                constraints=self.constraints,
+                max_iterations=self.max_iterations,
+                random_seed=self.random_seed,
+                population_size=population_size,
+                elite_size=elite_size,
+                mutation_rate=mutation_rate,
+                crossover_rate=crossover_rate,
+                tournament_size=tournament_size,
+                selection_method=selection_method,
+                crossover_method=crossover_method
+            )
         else:
             raise ValueError(
                 f"Unknown algorithm: {self.algorithm}. "
-                "Supported: grid_search, random_search, bayesian"
+                "Supported: grid_search, random_search, bayesian, genetic"
             )
     
     def _create_run_record(self, db: Session) -> OptimizationRun:

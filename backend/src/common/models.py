@@ -462,6 +462,46 @@ class OptimizationResult(Base):
     )
 
 
+class ParameterSensitivity(Base):
+    """Parameter sensitivity analysis results."""
+    __tablename__ = 'parameter_sensitivity'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey('optimization_runs.id'), nullable=False)
+    parameter_name = Column(String(100), nullable=False)
+    
+    # Sensitivity metrics
+    sensitivity_score = Column(Numeric(15, 6), nullable=False)  # Overall sensitivity measure
+    correlation_with_objective = Column(Numeric(8, 6), nullable=True)  # Correlation coefficient
+    importance_rank = Column(Integer, nullable=True)  # Ranking by importance (1=most important)
+    
+    # Statistical measures
+    mean_score = Column(Numeric(15, 6), nullable=True)  # Mean objective value for this parameter
+    std_score = Column(Numeric(15, 6), nullable=True)  # Standard deviation
+    min_score = Column(Numeric(15, 6), nullable=True)  # Minimum objective value
+    max_score = Column(Numeric(15, 6), nullable=True)  # Maximum objective value
+    
+    # Interaction effects (stored as JSON)
+    # Format: {"param1": correlation, "param2": correlation, ...}
+    interactions = Column(JSON, nullable=True)
+    
+    # Raw analysis data (stored as JSON for detailed drill-down)
+    # Format: {"values": [...], "scores": [...], "statistics": {...}}
+    analysis_data = Column(JSON, nullable=True)
+    
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Relationships
+    run = relationship("OptimizationRun")
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_parameter_sensitivity_run_param', 'run_id', 'parameter_name'),
+        Index('ix_parameter_sensitivity_run_importance', 'run_id', 'importance_rank'),
+        UniqueConstraint('run_id', 'parameter_name', name='uq_parameter_sensitivity_run_param'),
+    )
+
+
 # =============================================================================
 # Additional Indexes for Performance
 # =============================================================================

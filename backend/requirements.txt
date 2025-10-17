@@ -26,6 +26,7 @@ aiohttp==3.9.1
 # Optimization (for parameter optimization service)
 optuna==3.4.0
 scipy==1.11.4
+psutil==5.9.6
 
 # Additional deps (will add as needed)
 # httpx==0.25.2

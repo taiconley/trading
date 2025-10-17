@@ -16,12 +16,18 @@ Automated parameter optimization for trading strategies using various search alg
 
 ### Phase 2 ✅
 - **Bayesian Optimization**: Intelligent parameter search using Optuna
+- **Genetic Algorithm**: Evolutionary optimization with selection, crossover, and mutation
 - **Walk-Forward Analysis**: Rolling window optimization with out-of-sample validation
 - **Out-of-Sample Testing**: Train/test split to detect overfitting
 - **Cross-Validation**: K-fold time series validation with purging and embargoes
 
-### Coming Soon
-- **Phase 3**: Parameter sensitivity analysis, Pareto frontiers, advanced analytics
+### Phase 3 ✅
+- **Parameter Sensitivity Analysis**: Identify which parameters have the most impact
+- **Pareto Frontier Analysis**: Multi-objective optimization trade-offs
+- **Result Caching**: Avoid redundant backtests with smart caching
+- **Export Functionality**: Export results to CSV, JSON, or text reports
+- **Resource Monitoring**: Track CPU and memory usage during optimization
+- **Graceful Cancellation**: Stop running optimizations cleanly
 
 ## Quick Start
 
@@ -247,6 +253,52 @@ Uses past results to intelligently suggest promising parameters.
 - Automatically prunes unpromising trials early
 - Handles discrete and continuous parameters
 
+### Genetic Algorithm (NEW!)
+Uses evolutionary principles to search parameter space.
+
+**Pros:**
+- Excellent for complex parameter interactions
+- Balances exploration and exploitation naturally
+- Provides multiple good solutions
+- Transparent and interpretable
+- Works well with constraints
+- Handles large discrete spaces efficiently
+
+**Cons:**
+- Requires tuning hyperparameters (population size, mutation rate)
+- Results vary between runs (use --seed for reproducibility)
+- Slower per iteration than random search
+
+**Best For:**
+- Complex parameter interactions
+- Large discrete parameter spaces (1000+ combinations)
+- When you want multiple good solutions
+- Problems where parameters interact in non-linear ways
+- Exploring trade-offs between objectives
+
+**Example:** Evolve optimal parameters through 100 generations
+
+**How It Works:**
+- Initialize random population of parameter combinations
+- Evaluate fitness (run backtests)
+- Select best individuals (tournament or roulette)
+- Create offspring via crossover (combine parameters)
+- Apply mutations (random changes)
+- Preserve elite (best solutions)
+- Repeat until convergence
+
+**Configuration:**
+```bash
+--config '{
+  "population_size": 50,
+  "elite_size": 5,
+  "mutation_rate": 0.1,
+  "crossover_rate": 0.8,
+  "selection_method": "tournament",
+  "crossover_method": "uniform"
+}'
+```
+
 ## Objective Functions
 
 Choose what to optimize for:
@@ -400,6 +452,33 @@ python main.py optimize \
   --max-iterations 30 \
   --objective sharpe_ratio \
   --seed 42  # Reproducible results
+```
+
+### Example 5: Genetic Algorithm Evolution
+
+```bash
+# Evolve optimal parameters using genetic algorithm
+python main.py optimize \
+  --strategy Mean_Reversion \
+  --symbols SPY \
+  --params '{
+    "lookback": [10,15,20,25,30],
+    "entry_threshold": [1.5,2.0,2.5,3.0],
+    "exit_threshold": [0.0,0.5,1.0],
+    "stop_loss": [2.0,3.0,4.0]
+  }' \
+  --algorithm genetic \
+  --max-iterations 200 \
+  --objective sharpe_ratio \
+  --seed 42 \
+  --config '{
+    "population_size": 50,
+    "elite_size": 5,
+    "mutation_rate": 0.1,
+    "crossover_rate": 0.8,
+    "selection_method": "tournament",
+    "crossover_method": "uniform"
+  }'
 ```
 
 ## Configuration Options
@@ -568,17 +647,168 @@ python main.py cross-validate \
 - Try different objective functions
 - Check constraint definitions
 
-## Future Enhancements (Phase 3)
+## Phase 3 Features (Analytics & Production)
+
+### Parameter Sensitivity Analysis
+
+Identify which parameters have the greatest impact on strategy performance.
+
+**API Usage:**
+```bash
+# Run sensitivity analysis
+curl http://localhost:8006/optimizations/1/analysis
+```
+
+**Response includes:**
+- Sensitivity scores (how much variance each parameter explains)
+- Correlation with objective function
+- Parameter importance ranking
+- Interaction effects between parameters
+- Statistical measures (mean, std, min, max)
+
+**Example:**
+```json
+{
+  "run_id": 1,
+  "parameters": {
+    "short_period": {
+      "sensitivity_score": 0.45,
+      "correlation": -0.32,
+      "importance_rank": 1,
+      "interactions": {"long_period": 0.65}
+    },
+    "long_period": {
+      "sensitivity_score": 0.28,
+      "correlation": 0.18,
+      "importance_rank": 2
+    }
+  },
+  "top_parameters": [
+    {"name": "short_period", "sensitivity_score": 0.45, "rank": 1},
+    {"name": "long_period", "sensitivity_score": 0.28, "rank": 2}
+  ]
+}
+```
+
+### Pareto Frontier Analysis
+
+Find optimal trade-offs between competing objectives (e.g., maximizing returns while minimizing drawdown).
+
+**API Usage:**
+```bash
+# Analyze Pareto frontier for two objectives
+curl "http://localhost:8006/optimizations/1/pareto?objectives=sharpe_ratio,max_drawdown&maximize=true,false"
+```
+
+**Use Cases:**
+- Maximize Sharpe ratio while minimizing max drawdown
+- Maximize win rate while minimizing number of trades
+- Balance return vs risk across multiple dimensions
+
+**Example Response:**
+```json
+{
+  "run_id": 1,
+  "objectives": ["sharpe_ratio", "max_drawdown"],
+  "n_solutions": 5,
+  "pareto_solutions": [
+    {
+      "id": 42,
+      "params": {"short_period": 10, "long_period": 40},
+      "objectives": {"sharpe_ratio": 1.8, "max_drawdown": 0.12}
+    }
+  ]
+}
+```
+
+### Export Functionality
+
+Export optimization results in various formats.
+
+**CSV Export:**
+```bash
+# Export top 20 results as CSV
+curl http://localhost:8006/optimizations/1/export/csv?top_n=20 -o results.csv
+```
+
+**JSON Export:**
+```bash
+# Export full results as JSON
+curl http://localhost:8006/optimizations/1/export/json > results.json
+```
+
+**Summary Report:**
+```bash
+# Get human-readable text report
+curl http://localhost:8006/optimizations/1/report -o report.txt
+```
+
+The summary report includes:
+- Run metadata (strategy, algorithm, symbols, timing)
+- Best parameters found
+- Top 10 results
+- Parameter sensitivity analysis (if available)
+- Execution statistics
+
+### Result Caching
+
+Automatically caches backtest results to avoid redundant computation.
+
+**How It Works:**
+- Results are cached by parameter combination hash
+- Cache checks include strategy, symbols, timeframe, lookback, and config
+- Reuses results from previous optimizations with identical conditions
+- Configurable cache age limit
+
+**Benefits:**
+- Significantly faster for repeated optimizations
+- Useful when tweaking optimization settings (algorithm, objective)
+- Saves computational resources
+
+**Performance:** Can achieve 80%+ cache hit rates when refining optimizations.
+
+### Resource Monitoring
+
+Track CPU and memory usage during optimization runs.
+
+**System Info:**
+```bash
+# Get current system resource info
+curl http://localhost:8006/healthz
+```
+
+**Features:**
+- Real-time CPU and memory tracking
+- Per-process resource usage
+- Thread and subprocess counting
+- Performance statistics (min, max, avg)
+- Resource limit checking
+
+### Graceful Cancellation
+
+Stop running optimizations cleanly without losing partial results.
+
+**Usage:**
+```bash
+# Stop a running optimization
+curl -X POST http://localhost:8006/optimizations/1/stop
+```
+
+**Behavior:**
+- Marks optimization as "stopped" in database
+- Currently running backtests complete normally
+- Partial results are saved
+- No data loss or corruption
+
+## Future Enhancements (Beyond Phase 3)
 
 Planned features:
-- Parameter sensitivity analysis and importance ranking
-- Pareto frontier visualization for multi-objective optimization
 - Real-time progress WebSocket updates
-- Result caching to avoid redundant backtests
-- Export optimization results to CSV/JSON
 - Performance reports with charts and visualizations
 - Strategy comparison across multiple optimizations
-- Hyperparameter importance plots
+- Hyperparameter importance plots with visualizations
+- Automated parameter range suggestions
+- GPU acceleration for objective function calculation
 
 ## Database Queries
 
