@@ -2,11 +2,13 @@
 Database utilities and connection management.
 
 This module provides SQLAlchemy engine creation, session management,
-connection pooling, retry logic, and health checks for the trading bot database.
+connection pooling, retry logic, circuit breaker, and health checks 
+for the trading bot database.
 """
 
 import time
 import logging
+import asyncio
 from contextlib import contextmanager
 from typing import Generator, Optional
 from sqlalchemy import create_engine, text, event
@@ -15,6 +17,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.exc import SQLAlchemyError, DisconnectionError, OperationalError
 from .config import get_settings
+from .circuit_breaker import get_database_circuit_breaker, CircuitBreakerError
 
 logger = logging.getLogger(__name__)
 
@@ -279,6 +282,56 @@ def close_database_connections():
             logger.info("Database connections closed successfully")
     except Exception as e:
         logger.error(f"Error closing database connections: {e}")
+
+
+async def execute_with_circuit_breaker(operation_func, **kwargs):
+    """
+    Execute database operation with circuit breaker protection.
+    
+    This provides an additional layer of protection against database failures
+    by using the circuit breaker pattern. If the database is consistently
+    failing, the circuit breaker will "open" and reject requests immediately
+    rather than waiting for timeouts.
+    
+    Args:
+        operation_func: Function to execute (should take a session parameter)
+        **kwargs: Additional arguments passed to operation_func
+        
+    Returns:
+        Result of operation_func
+        
+    Raises:
+        CircuitBreakerError: If circuit breaker is open
+        SQLAlchemyError: If database operation fails
+    """
+    circuit_breaker = get_database_circuit_breaker()
+    
+    def _operation():
+        """Wrapper for circuit breaker (must be sync)"""
+        with get_db_session() as session:
+            return operation_func(session, **kwargs)
+    
+    try:
+        # Circuit breaker will handle retries and state management
+        result = await circuit_breaker.call(_operation)
+        return result
+    except CircuitBreakerError:
+        logger.error("Database circuit breaker is OPEN - rejecting request")
+        raise
+    except (OperationalError, DisconnectionError) as e:
+        logger.error(f"Database operation failed: {e}")
+        raise
+
+
+def get_circuit_breaker_status() -> dict:
+    """
+    Get the current status of the database circuit breaker.
+    
+    Returns:
+        Dictionary with circuit breaker state and statistics
+    """
+    circuit_breaker = get_database_circuit_breaker()
+    return circuit_breaker.get_state()
 
 
 # Utility functions for common database operations

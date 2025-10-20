@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card } from '../components/Card';
 import { api, Order, Position } from '../services/api';
-import { RefreshCw, TrendingUp, TrendingDown, AlertCircle, Activity, CheckCircle, XCircle } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, AlertCircle, Activity, CheckCircle, XCircle, Clock, AlertTriangle, Shield } from 'lucide-react';
 
 export function Overview() {
   const [loading, setLoading] = useState(true);
@@ -275,10 +275,171 @@ export function Overview() {
         )}
       </Card>
 
-      {/* Service Health */}
+      {/* System Health Overview */}
+      {health?.status && (
+        <div className={`rounded-xl p-4 flex items-center justify-between border-2 ${
+          health.status === 'healthy' 
+            ? 'bg-green-50 border-green-200' 
+            : health.status === 'degraded'
+            ? 'bg-yellow-50 border-yellow-200'
+            : health.status === 'unhealthy'
+            ? 'bg-red-50 border-red-200'
+            : 'bg-gray-50 border-gray-200'
+        }`}>
+          <div className="flex items-center">
+            <div className={`w-3 h-3 rounded-full mr-3 ${
+              health.status === 'healthy' 
+                ? 'bg-green-500' 
+                : health.status === 'degraded'
+                ? 'bg-yellow-500'
+                : health.status === 'unhealthy'
+                ? 'bg-red-500'
+                : 'bg-gray-500'
+            }`}></div>
+            <div>
+              <p className={`text-sm font-bold uppercase tracking-wide ${
+                health.status === 'healthy' 
+                  ? 'text-green-900' 
+                  : health.status === 'degraded'
+                  ? 'text-yellow-900'
+                  : health.status === 'unhealthy'
+                  ? 'text-red-900'
+                  : 'text-gray-900'
+              }`}>
+                System Status: {health.status}
+              </p>
+              <p className={`text-sm ${
+                health.status === 'healthy' 
+                  ? 'text-green-700' 
+                  : health.status === 'degraded'
+                  ? 'text-yellow-700'
+                  : health.status === 'unhealthy'
+                  ? 'text-red-700'
+                  : 'text-gray-700'
+              }`}>
+                {health.message || 'All services operational'}
+              </p>
+            </div>
+          </div>
+          {health.summary && (
+            <div className="flex items-center space-x-6 text-sm">
+              <div className="text-center">
+                <p className="font-bold text-slate-900 text-lg">{health.summary.total}</p>
+                <p className="text-slate-600 text-xs">Total</p>
+              </div>
+              <div className="text-center">
+                <p className="font-bold text-green-600 text-lg">{health.summary.healthy}</p>
+                <p className="text-slate-600 text-xs">Healthy</p>
+              </div>
+              {health.summary.stale > 0 && (
+                <div className="text-center">
+                  <p className="font-bold text-yellow-600 text-lg">{health.summary.stale}</p>
+                  <p className="text-slate-600 text-xs">Stale</p>
+                </div>
+              )}
+              {health.summary.unhealthy > 0 && (
+                <div className="text-center">
+                  <p className="font-bold text-red-600 text-lg">{health.summary.unhealthy}</p>
+                  <p className="text-slate-600 text-xs">Unhealthy</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Service Health Details */}
       <Card title="Service Health">
-        {health?.services ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+        {health?.services && Array.isArray(health.services) ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {health.services.map((service: any) => {
+              const isStale = service.is_stale;
+              const isHealthy = service.is_healthy;
+              const isCritical = service.is_critical;
+              
+              return (
+                <div
+                  key={service.service}
+                  className={`p-4 border-2 rounded-lg transition-all duration-200 ${
+                    isStale
+                      ? 'border-yellow-300 bg-yellow-50 hover:border-yellow-400'
+                      : isHealthy
+                      ? 'border-green-200 bg-white hover:border-green-300'
+                      : 'border-red-300 bg-red-50 hover:border-red-400'
+                  }`}
+                >
+                  <div className="flex flex-col">
+                    {/* Header with icon and badges */}
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="relative">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                          isStale
+                            ? 'bg-yellow-100'
+                            : isHealthy 
+                            ? 'bg-green-100' 
+                            : 'bg-red-100'
+                        }`}>
+                          {isStale ? (
+                            <Clock className="w-6 h-6 text-yellow-600" />
+                          ) : isHealthy ? (
+                            <CheckCircle className="w-6 h-6 text-green-600" />
+                          ) : (
+                            <XCircle className="w-6 h-6 text-red-600" />
+                          )}
+                        </div>
+                        {isHealthy && !isStale && (
+                          <div className="absolute inset-0 w-12 h-12 bg-green-500 rounded-full pulse-ring"></div>
+                        )}
+                      </div>
+                      
+                      {/* Critical badge */}
+                      {isCritical && (
+                        <span className="px-2 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-700 flex items-center">
+                          <Shield className="w-3 h-3 mr-1" />
+                          Critical
+                        </span>
+                      )}
+                    </div>
+                    
+                    {/* Service name */}
+                    <p className="font-bold text-slate-900 capitalize mb-2 text-lg">{service.service}</p>
+                    
+                    {/* Status badge */}
+                    <div className="flex items-center justify-between mb-2">
+                      <span className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+                        isStale
+                          ? 'bg-yellow-200 text-yellow-800'
+                          : isHealthy
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}>
+                        {isStale ? 'Stale' : service.status}
+                      </span>
+                    </div>
+                    
+                    {/* Age indicator */}
+                    <div className="flex items-center text-xs text-slate-600 mt-2">
+                      <Clock className="w-3 h-3 mr-1" />
+                      <span>Updated {service.age_seconds}s ago</span>
+                    </div>
+                    
+                    {/* Stale warning */}
+                    {isStale && (
+                      <div className="mt-3 p-2 bg-yellow-100 rounded-md flex items-start">
+                        <AlertTriangle className="w-4 h-4 text-yellow-600 mr-2 mt-0.5 flex-shrink-0" />
+                        <p className="text-xs text-yellow-800">
+                          Service hasn't updated in over 60 seconds
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : health?.services && typeof health.services === 'object' ? (
+          // Fallback for old API format
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {Object.entries(health.services).map(([service, data]: [string, any]) => (
               <div
                 key={service}
@@ -297,9 +458,6 @@ export function Overview() {
                         <XCircle className="w-6 h-6 text-red-600" />
                       )}
                     </div>
-                    {data.status === 'healthy' && (
-                      <div className="absolute inset-0 w-12 h-12 bg-green-500 rounded-full pulse-ring"></div>
-                    )}
                   </div>
                   <p className="font-semibold text-slate-900 capitalize mb-1">{service}</p>
                   <span className={`px-3 py-1 rounded-lg text-xs font-semibold ${

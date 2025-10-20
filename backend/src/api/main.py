@@ -170,41 +170,98 @@ async def health_check():
 
 @app.get("/api/health")
 async def aggregate_health():
-    """Aggregate health status from all services."""
-    health_status = {
-        "gateway": "healthy",
-        "timestamp": None,
-        "services": {}
-    }
+    """
+    Aggregate health status from all services using HealthMonitor.
     
-    # Check each service
+    Returns comprehensive system health including:
+    - Overall system status (healthy, degraded, unhealthy)
+    - Individual service health with timestamps
+    - Stale service detection
+    - Critical service status
+    """
+    from common.health_monitor import get_health_monitor
+    
+    try:
+        monitor = get_health_monitor()
+        system_health = await monitor.get_system_health()
+        return system_health
+    except Exception as e:
+        logger.error(f"Error getting system health: {e}")
+        # Fallback to basic health check
+        return {
+            "status": "unknown",
+            "message": f"Health monitoring error: {str(e)}",
+            "gateway": "healthy",
+            "timestamp": None,
+        }
+
+
+@app.get("/api/health/detailed")
+async def detailed_health():
+    """
+    Detailed health check that includes live service pings.
+    
+    This endpoint actively pings each service's health endpoint
+    in addition to database-backed health monitoring.
+    """
+    from common.health_monitor import get_health_monitor
+    
+    # Get database health
+    try:
+        monitor = get_health_monitor()
+        db_health = await monitor.get_system_health()
+    except Exception as e:
+        logger.error(f"Error getting DB health: {e}")
+        db_health = {"error": str(e)}
+    
+    # Ping live services
+    live_services = {}
     for service_name, service_url in SERVICES.items():
         try:
             response = await http_client.get(f"{service_url}/healthz", timeout=2.0)
             if response.status_code == 200:
-                health_status["services"][service_name] = {
+                live_services[service_name] = {
                     "status": "healthy",
+                    "response_time_ms": response.elapsed.total_seconds() * 1000,
                     "details": response.json()
                 }
             else:
-                health_status["services"][service_name] = {
+                live_services[service_name] = {
                     "status": "unhealthy",
                     "code": response.status_code
                 }
         except Exception as e:
-            health_status["services"][service_name] = {
+            live_services[service_name] = {
                 "status": "unavailable",
                 "error": str(e)
             }
     
-    # Overall status
-    all_healthy = all(
-        s.get("status") == "healthy" 
-        for s in health_status["services"].values()
-    )
-    health_status["overall"] = "healthy" if all_healthy else "degraded"
+    return {
+        "database_health": db_health,
+        "live_services": live_services,
+        "gateway": "healthy"
+    }
+
+
+@app.get("/api/health/circuit-breakers")
+async def circuit_breaker_status():
+    """Get status of all circuit breakers."""
+    from common.db import get_circuit_breaker_status
+    from common.circuit_breaker import get_tws_circuit_breaker
     
-    return health_status
+    try:
+        db_cb = get_circuit_breaker_status()
+        tws_cb = get_tws_circuit_breaker().get_state()
+        
+        return {
+            "circuit_breakers": {
+                "database": db_cb,
+                "tws": tws_cb
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting circuit breaker status: {e}")
+        return {"error": str(e)}
 
 
 # ============================================================================

@@ -39,6 +39,14 @@ class JSONFormatter(logging.Formatter):
             "line": record.lineno
         }
         
+        # Add correlation ID if present (from correlation.py filter)
+        if hasattr(record, 'correlation_id') and record.correlation_id != "none":
+            log_entry["correlation_id"] = record.correlation_id
+        
+        # Add request duration if present
+        if hasattr(record, 'request_duration_ms') and record.request_duration_ms > 0:
+            log_entry["request_duration_ms"] = record.request_duration_ms
+        
         # Add exception information if present
         if record.exc_info:
             log_entry["exception"] = {
