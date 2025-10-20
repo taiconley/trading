@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card } from '../components/Card';
 import { api, Order, Position } from '../services/api';
-import { RefreshCw, TrendingUp, TrendingDown, AlertCircle } from 'lucide-react';
+import { RefreshCw, TrendingUp, TrendingDown, AlertCircle, Activity, CheckCircle, XCircle } from 'lucide-react';
 
 export function Overview() {
   const [loading, setLoading] = useState(true);
@@ -59,37 +59,61 @@ export function Overview() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card>
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Net Liquidation</p>
-              <p className="text-2xl font-bold text-gray-900">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">Net Liquidation</p>
+              <p className="text-3xl font-bold text-slate-900 mt-2">
                 ${account?.net_liquidation?.toLocaleString() || '0.00'}
               </p>
+              <div className="flex items-center mt-3">
+                <div className="flex items-center text-green-600 text-sm font-semibold">
+                  <TrendingUp className="w-4 h-4 mr-1" />
+                  <span>+2.4%</span>
+                </div>
+                <span className="text-xs text-slate-500 ml-2">vs last week</span>
+              </div>
             </div>
-            <TrendingUp className="w-8 h-8 text-green-600" />
+            <div className="bg-green-100 p-4 rounded-xl">
+              <TrendingUp className="w-8 h-8 text-green-600" />
+            </div>
           </div>
         </Card>
 
         <Card>
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Available Funds</p>
-              <p className="text-2xl font-bold text-gray-900">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">Available Funds</p>
+              <p className="text-3xl font-bold text-slate-900 mt-2">
                 ${account?.available_funds?.toLocaleString() || '0.00'}
               </p>
+              <div className="flex items-center mt-3">
+                <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden mr-2">
+                  <div className="h-full bg-blue-600 rounded-full" style={{width: '68%'}}></div>
+                </div>
+                <span className="text-xs text-slate-600 font-medium">68%</span>
+              </div>
             </div>
-            <TrendingUp className="w-8 h-8 text-blue-600" />
+            <div className="bg-blue-100 p-4 rounded-xl">
+              <TrendingUp className="w-8 h-8 text-blue-600" />
+            </div>
           </div>
         </Card>
 
         <Card>
           <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-gray-500">Buying Power</p>
-              <p className="text-2xl font-bold text-gray-900">
+            <div className="flex-1">
+              <p className="text-sm font-medium text-slate-600 uppercase tracking-wide">Buying Power</p>
+              <p className="text-3xl font-bold text-slate-900 mt-2">
                 ${account?.buying_power?.toLocaleString() || '0.00'}
               </p>
+              <div className="flex items-center mt-3">
+                <span className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-semibold rounded-lg">
+                  4x Leverage
+                </span>
+              </div>
             </div>
-            <TrendingUp className="w-8 h-8 text-purple-600" />
+            <div className="bg-purple-100 p-4 rounded-xl">
+              <TrendingUp className="w-8 h-8 text-purple-600" />
+            </div>
           </div>
         </Card>
       </div>
@@ -98,49 +122,49 @@ export function Overview() {
       <Card title="Current Positions">
         {account?.positions && account.positions.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
+            <table className="min-w-full">
               <thead>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Symbol
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Quantity
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Avg Price
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Market Value
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Unrealized P&L
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-100">
                 {account.positions.map((position: Position, idx: number) => (
-                  <tr key={idx}>
-                    <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
-                      {position.symbol}
+                  <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="font-bold text-slate-900">{position.symbol}</span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-slate-700">
                       {position.qty}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-slate-700">
                       ${position.avg_price?.toFixed(2)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-slate-700">
                       ${position.market_value?.toLocaleString()}
                     </td>
-                    <td
-                      className={`px-6 py-4 whitespace-nowrap font-medium ${
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`inline-flex items-center px-3 py-1 rounded-lg text-sm font-semibold ${
                         (position.unrealized_pnl || 0) >= 0
-                          ? 'text-green-600'
-                          : 'text-red-600'
-                      }`}
-                    >
-                      ${position.unrealized_pnl?.toFixed(2)}
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}>
+                        {(position.unrealized_pnl || 0) >= 0 ? '+' : ''}${position.unrealized_pnl?.toFixed(2)}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -148,7 +172,13 @@ export function Overview() {
             </table>
           </div>
         ) : (
-          <p className="text-gray-500 text-center py-8">No open positions</p>
+          <div className="text-center py-12">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+              <TrendingUp className="w-8 h-8 text-gray-400" />
+            </div>
+            <p className="text-gray-500 font-medium">No open positions</p>
+            <p className="text-sm text-gray-400 mt-1">Your positions will appear here</p>
+          </div>
         )}
       </Card>
 
@@ -158,75 +188,75 @@ export function Overview() {
         action={
           <button
             onClick={fetchData}
-            className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center"
+            className="flex items-center px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-all duration-200"
           >
-            <RefreshCw className="w-4 h-4 mr-1" />
+            <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
             Refresh
           </button>
         }
       >
         {orders && orders.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
+            <table className="min-w-full">
               <thead>
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                <tr className="border-b border-gray-200 bg-gray-50">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Symbol
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Side
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Qty
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Type
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Status
                   </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Time
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-gray-100">
                 {orders.map((order) => (
-                  <tr key={order.id}>
-                    <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">
-                      {order.symbol}
+                  <tr key={order.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="font-bold text-slate-900">{order.symbol}</span>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
-                        className={`px-2 py-1 text-xs font-medium rounded ${
+                        className={`inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold ${
                           order.side === 'BUY'
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-red-100 text-red-800'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-red-100 text-red-700'
                         }`}
                       >
                         {order.side}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-slate-700">
                       {order.qty}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                    <td className="px-6 py-4 whitespace-nowrap text-slate-700">
                       {order.order_type}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
-                        className={`px-2 py-1 text-xs font-medium rounded ${
+                        className={`inline-flex items-center px-3 py-1 rounded-lg text-xs font-semibold ${
                           order.status === 'Filled'
-                            ? 'bg-green-100 text-green-800'
+                            ? 'bg-green-100 text-green-700'
                             : order.status === 'Cancelled'
-                            ? 'bg-gray-100 text-gray-800'
-                            : 'bg-blue-100 text-blue-800'
+                            ? 'bg-gray-100 text-gray-700'
+                            : 'bg-blue-100 text-blue-700'
                         }`}
                       >
                         {order.status}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-600">
                       {new Date(order.placed_at).toLocaleString()}
                     </td>
                   </tr>
@@ -235,35 +265,62 @@ export function Overview() {
             </table>
           </div>
         ) : (
-          <p className="text-gray-500 text-center py-8">No recent orders</p>
+          <div className="text-center py-12">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+              <Activity className="w-8 h-8 text-gray-400" />
+            </div>
+            <p className="text-gray-500 font-medium">No recent orders</p>
+            <p className="text-sm text-gray-400 mt-1">Your order history will appear here</p>
+          </div>
         )}
       </Card>
 
       {/* Service Health */}
       <Card title="Service Health">
         {health?.services ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
             {Object.entries(health.services).map(([service, data]: [string, any]) => (
               <div
                 key={service}
-                className="p-4 border border-gray-200 rounded-lg flex items-center justify-between"
+                className="p-4 border border-gray-200 rounded-lg bg-white hover:border-gray-300 hover:shadow-sm transition-all duration-200"
               >
-                <div>
-                  <p className="font-medium text-gray-900 capitalize">{service}</p>
-                  <p className="text-sm text-gray-500">{data.status}</p>
+                <div className="flex flex-col items-center text-center">
+                  <div className="relative mb-3">
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
+                      data.status === 'healthy' 
+                        ? 'bg-green-100' 
+                        : 'bg-red-100'
+                    }`}>
+                      {data.status === 'healthy' ? (
+                        <CheckCircle className="w-6 h-6 text-green-600" />
+                      ) : (
+                        <XCircle className="w-6 h-6 text-red-600" />
+                      )}
+                    </div>
+                    {data.status === 'healthy' && (
+                      <div className="absolute inset-0 w-12 h-12 bg-green-500 rounded-full pulse-ring"></div>
+                    )}
+                  </div>
+                  <p className="font-semibold text-slate-900 capitalize mb-1">{service}</p>
+                  <span className={`px-3 py-1 rounded-lg text-xs font-semibold ${
+                    data.status === 'healthy'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-red-100 text-red-700'
+                  }`}>
+                    {data.status}
+                  </span>
                 </div>
-                <div
-                  className={`w-3 h-3 rounded-full ${
-                    data.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'
-                  }`}
-                />
               </div>
             ))}
           </div>
         ) : (
-          <p className="text-gray-500 text-center py-8">
-            Unable to fetch service health
-          </p>
+          <div className="text-center py-12">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-gray-100 rounded-full mb-4">
+              <AlertCircle className="w-8 h-8 text-gray-400" />
+            </div>
+            <p className="text-slate-600 font-medium">Unable to fetch service health</p>
+            <p className="text-sm text-slate-500 mt-1">Please check your connection</p>
+          </div>
         )}
       </Card>
     </div>
