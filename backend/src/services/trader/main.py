@@ -76,22 +76,119 @@ class WebSocketManager:
             self.active_connections.discard(connection)
 
 class RiskManager:
-    """Risk management and validation"""
+    """Enhanced risk management with violation logging and emergency stop"""
     
     def __init__(self, db_session_factory):
         self.db_session_factory = db_session_factory
         self.risk_limits_cache = {}
         self.last_cache_update = None
         self.cache_ttl = 60  # seconds
+        self.emergency_stop_active = False
     
-    async def validate_order(self, order_request: OrderRequest, account_id: str) -> tuple[bool, str]:
+    async def check_emergency_stop(self) -> tuple[bool, str]:
         """
-        Validate order against risk limits.
+        Check if emergency stop is active.
+        
+        Returns:
+            (is_stopped, reason)
+        """
+        try:
+            with self.db_session_factory() as session:
+                from common.models import RiskLimit
+                stop_limit = session.query(RiskLimit).filter(
+                    RiskLimit.key == 'emergency_stop'
+                ).first()
+                
+                if stop_limit and stop_limit.value_json == True:
+                    self.emergency_stop_active = True
+                    return True, "Emergency stop is active - all trading halted"
+                    
+            self.emergency_stop_active = False
+            return False, ""
+        except Exception as e:
+            logger.error(f"Error checking emergency stop: {e}")
+            return False, ""
+    
+    async def log_violation(self, violation_type: str, account_id: str, symbol: str,
+                           limit_key: str, limit_value: float, actual_value: float,
+                           message: str, severity: str = 'warning', 
+                           strategy_id: int = None, order_id: int = None,
+                           action_taken: str = 'rejected', metadata: dict = None):
+        """Log a risk violation to the database and send alerts"""
+        try:
+            with self.db_session_factory() as session:
+                from common.models import RiskViolation
+                violation = RiskViolation(
+                    violation_type=violation_type,
+                    severity=severity,
+                    account_id=account_id,
+                    symbol=symbol,
+                    strategy_id=strategy_id,
+                    order_id=order_id,
+                    limit_key=limit_key,
+                    limit_value=limit_value,
+                    actual_value=actual_value,
+                    message=message,
+                    metadata_json=metadata,
+                    action_taken=action_taken,
+                    resolved=False,
+                    created_at=datetime.now(timezone.utc)
+                )
+                session.add(violation)
+                session.commit()
+                
+                logger.warning(f"Risk violation logged: {violation_type} - {message}", 
+                             extra={'violation_id': violation.id, 'severity': severity})
+                
+                # Send alert notification
+                try:
+                    from common.risk_alerts import send_violation_alert
+                    await send_violation_alert(
+                        violation_type=violation_type,
+                        message=message,
+                        violation_id=violation.id,
+                        severity=severity,
+                        metadata={
+                            'account_id': account_id,
+                            'symbol': symbol,
+                            'limit_key': limit_key,
+                            'limit_value': limit_value,
+                            'actual_value': actual_value,
+                            **(metadata or {})
+                        }
+                    )
+                except Exception as alert_error:
+                    logger.error(f"Failed to send violation alert: {alert_error}")
+                
+        except Exception as e:
+            logger.error(f"Failed to log risk violation: {e}")
+    
+    async def validate_order(self, order_request: OrderRequest, account_id: str, 
+                            strategy_id: int = None) -> tuple[bool, str]:
+        """
+        Validate order against risk limits with comprehensive logging.
         
         Returns:
             (is_valid, error_message)
         """
         try:
+            # Check emergency stop first
+            is_stopped, stop_reason = await self.check_emergency_stop()
+            if is_stopped:
+                await self.log_violation(
+                    violation_type='emergency_stop',
+                    account_id=account_id,
+                    symbol=order_request.symbol,
+                    limit_key='emergency_stop',
+                    limit_value=1,
+                    actual_value=1,
+                    message=stop_reason,
+                    severity='critical',
+                    strategy_id=strategy_id,
+                    action_taken='emergency_stop'
+                )
+                return False, stop_reason
+            
             # Refresh risk limits cache if needed
             await self._refresh_risk_limits()
             
@@ -100,7 +197,21 @@ class RiskManager:
             max_notional_per_order = self.risk_limits_cache.get('max_notional_per_order', 100000)
             
             if notional > max_notional_per_order:
-                return False, f"Order notional ${notional:,.2f} exceeds limit ${max_notional_per_order:,.2f}"
+                error_msg = f"Order notional ${notional:,.2f} exceeds limit ${max_notional_per_order:,.2f}"
+                await self.log_violation(
+                    violation_type='order_size_exceeded',
+                    account_id=account_id,
+                    symbol=order_request.symbol,
+                    limit_key='max_notional_per_order',
+                    limit_value=max_notional_per_order,
+                    actual_value=notional,
+                    message=error_msg,
+                    severity='warning',
+                    strategy_id=strategy_id,
+                    action_taken='rejected',
+                    metadata={'order_type': order_request.order_type, 'side': str(order_request.side)}
+                )
+                return False, error_msg
             
             # Check position size limits
             with self.db_session_factory() as session:
@@ -124,10 +235,21 @@ class RiskManager:
                 position_notional = abs(new_qty) * (order_request.limit_price or 0)
                 
                 if position_notional > max_position_size:
-                    return False, f"Position would exceed symbol limit: ${position_notional:,.2f} > ${max_position_size:,.2f}"
-            
-            # Check daily loss limits (simplified - would need P&L calculation)
-            max_daily_loss = self.risk_limits_cache.get('max_daily_loss', 10000)
+                    error_msg = f"Position would exceed symbol limit: ${position_notional:,.2f} > ${max_position_size:,.2f}"
+                    await self.log_violation(
+                        violation_type='position_limit_exceeded',
+                        account_id=account_id,
+                        symbol=order_request.symbol,
+                        limit_key='max_notional_per_symbol',
+                        limit_value=max_position_size,
+                        actual_value=position_notional,
+                        message=error_msg,
+                        severity='warning',
+                        strategy_id=strategy_id,
+                        action_taken='rejected',
+                        metadata={'current_qty': current_qty, 'new_qty': new_qty}
+                    )
+                    return False, error_msg
             
             # Check if live trading is blocked
             block_until = self.risk_limits_cache.get('block_live_trading_until')
@@ -135,10 +257,25 @@ class RiskManager:
                 try:
                     block_datetime = datetime.fromisoformat(block_until.replace('Z', '+00:00'))
                     if datetime.now(timezone.utc) < block_datetime:
-                        return False, f"Live trading blocked until {block_until}"
+                        error_msg = f"Live trading blocked until {block_until}"
+                        await self.log_violation(
+                            violation_type='trading_blocked',
+                            account_id=account_id,
+                            symbol=order_request.symbol,
+                            limit_key='block_live_trading_until',
+                            limit_value=0,
+                            actual_value=1,
+                            message=error_msg,
+                            severity='warning',
+                            strategy_id=strategy_id,
+                            action_taken='rejected'
+                        )
+                        return False, error_msg
                 except Exception as e:
                     logger.warning(f"Error parsing block_live_trading_until: {e}")
             
+            # All checks passed
+            logger.info(f"Order validation passed for {order_request.symbol} - {account_id}")
             return True, ""
             
         except Exception as e:
@@ -340,7 +477,10 @@ class TraderService:
                 raise HTTPException(status_code=403, detail="Trading mode validation failed")
             
             # Risk validation
-            is_valid, error_msg = await self.risk_manager.validate_order(order_request, account_id)
+            strategy_id = int(order_request.strategy_id) if order_request.strategy_id else None
+            is_valid, error_msg = await self.risk_manager.validate_order(
+                order_request, account_id, strategy_id=strategy_id
+            )
             if not is_valid:
                 raise HTTPException(status_code=400, detail=f"Risk check failed: {error_msg}")
             
@@ -701,6 +841,184 @@ async def get_order(order_id: int):
 async def get_orders(limit: int = 100, status: Optional[str] = None):
     """Get order list with filtering"""
     return await trader_service.get_orders(limit, status)
+
+# Risk Management Endpoints
+@app.post("/risk/emergency-stop")
+async def activate_emergency_stop(reason: str = "Manual emergency stop"):
+    """
+    EMERGENCY STOP - Immediately halt all trading
+    
+    This endpoint activates the emergency stop flag in the database,
+    which will prevent ALL new orders from being placed.
+    """
+    try:
+        with get_db_session() as session:
+            from common.models import RiskLimit
+            
+            # Check if emergency stop limit exists
+            stop_limit = session.query(RiskLimit).filter(
+                RiskLimit.key == 'emergency_stop'
+            ).first()
+            
+            if stop_limit:
+                stop_limit.value_json = True
+                stop_limit.updated_at = datetime.now(timezone.utc)
+            else:
+                stop_limit = RiskLimit(
+                    key='emergency_stop',
+                    value_json=True,
+                    updated_at=datetime.now(timezone.utc)
+                )
+                session.add(stop_limit)
+            
+            session.commit()
+            
+            logger.critical(f"🚨 EMERGENCY STOP ACTIVATED: {reason}")
+            
+            # Send emergency alert
+            try:
+                from common.risk_alerts import send_emergency_alert
+                await send_emergency_alert(
+                    message=f"EMERGENCY STOP ACTIVATED: {reason}",
+                    metadata={'reason': reason, 'activated_at': datetime.now(timezone.utc).isoformat()}
+                )
+            except Exception as e:
+                logger.error(f"Failed to send emergency alert: {e}")
+            
+            return {
+                "status": "emergency_stop_activated",
+                "message": "All trading has been halted",
+                "reason": reason,
+                "activated_at": datetime.now(timezone.utc).isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Failed to activate emergency stop: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to activate emergency stop: {str(e)}")
+
+@app.delete("/risk/emergency-stop")
+async def deactivate_emergency_stop():
+    """
+    Deactivate emergency stop and resume trading
+    
+    Use with caution - only deactivate when you're certain it's safe to resume.
+    """
+    try:
+        with get_db_session() as session:
+            from common.models import RiskLimit
+            
+            stop_limit = session.query(RiskLimit).filter(
+                RiskLimit.key == 'emergency_stop'
+            ).first()
+            
+            if stop_limit:
+                stop_limit.value_json = False
+                stop_limit.updated_at = datetime.now(timezone.utc)
+                session.commit()
+            
+            logger.warning("✅ Emergency stop deactivated - trading resumed")
+            
+            return {
+                "status": "emergency_stop_deactivated",
+                "message": "Trading has been resumed",
+                "deactivated_at": datetime.now(timezone.utc).isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Failed to deactivate emergency stop: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to deactivate emergency stop: {str(e)}")
+
+@app.get("/risk/violations")
+async def get_risk_violations(
+    limit: int = 50,
+    severity: Optional[str] = None,
+    resolved: Optional[bool] = None
+):
+    """Get recent risk violations with optional filtering"""
+    try:
+        with get_db_session() as session:
+            from common.models import RiskViolation
+            
+            query = session.query(RiskViolation)
+            
+            if severity:
+                query = query.filter(RiskViolation.severity == severity)
+            
+            if resolved is not None:
+                query = query.filter(RiskViolation.resolved == resolved)
+            
+            violations = query.order_by(RiskViolation.created_at.desc()).limit(limit).all()
+            
+            return {
+                "violations": [
+                    {
+                        "id": v.id,
+                        "violation_type": v.violation_type,
+                        "severity": v.severity,
+                        "account_id": v.account_id,
+                        "symbol": v.symbol,
+                        "strategy_id": v.strategy_id,
+                        "message": v.message,
+                        "limit_key": v.limit_key,
+                        "limit_value": float(v.limit_value) if v.limit_value else None,
+                        "actual_value": float(v.actual_value) if v.actual_value else None,
+                        "action_taken": v.action_taken,
+                        "resolved": v.resolved,
+                        "created_at": v.created_at.isoformat(),
+                        "metadata": v.metadata_json
+                    }
+                    for v in violations
+                ],
+                "total": len(violations),
+                "filtered": f"severity={severity}" if severity else "all"
+            }
+    except Exception as e:
+        logger.error(f"Failed to get risk violations: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get risk violations: {str(e)}")
+
+@app.get("/risk/status")
+async def get_risk_status():
+    """Get current risk management status"""
+    try:
+        with get_db_session() as session:
+            from common.models import RiskLimit, RiskViolation
+            
+            # Get all active risk limits
+            limits = session.query(RiskLimit).all()
+            limits_dict = {limit.key: limit.value_json for limit in limits}
+            
+            # Get recent violations (last 24 hours)
+            from sqlalchemy import func
+            from datetime import timedelta
+            
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            recent_violations = session.query(RiskViolation).filter(
+                RiskViolation.created_at >= cutoff
+            ).count()
+            
+            critical_violations = session.query(RiskViolation).filter(
+                and_(
+                    RiskViolation.created_at >= cutoff,
+                    RiskViolation.severity == 'critical'
+                )
+            ).count()
+            
+            unresolved_violations = session.query(RiskViolation).filter(
+                RiskViolation.resolved == False
+            ).count()
+            
+            emergency_stop = limits_dict.get('emergency_stop', False)
+            
+            return {
+                "emergency_stop_active": emergency_stop,
+                "risk_limits": limits_dict,
+                "violations_last_24h": recent_violations,
+                "critical_violations_last_24h": critical_violations,
+                "unresolved_violations": unresolved_violations,
+                "status": "critical" if emergency_stop else ("warning" if unresolved_violations > 0 else "healthy"),
+                "checked_at": datetime.now(timezone.utc).isoformat()
+            }
+    except Exception as e:
+        logger.error(f"Failed to get risk status: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get risk status: {str(e)}")
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):

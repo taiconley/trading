@@ -95,6 +95,46 @@ class RiskLimit(Base):
     )
 
 
+class RiskViolation(Base):
+    """Risk limit violations and audit trail."""
+    __tablename__ = 'risk_violations'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    violation_type = Column(String(50), nullable=False)  # order_size, position_limit, daily_loss, etc
+    severity = Column(String(20), nullable=False, default='warning')  # info, warning, critical
+    account_id = Column(String(50), nullable=True)
+    symbol = Column(String(20), nullable=True)
+    strategy_id = Column(Integer, nullable=True)
+    order_id = Column(Integer, nullable=True)
+    limit_key = Column(String(50), nullable=False)
+    limit_value = Column(Numeric(20, 4), nullable=True)
+    actual_value = Column(Numeric(20, 4), nullable=True)
+    message = Column(Text, nullable=False)
+    metadata_json = Column(JSON, nullable=True)  # Additional context
+    action_taken = Column(String(50), nullable=False, default='rejected')  # rejected, warned, allowed
+    resolved = Column(Boolean, nullable=False, default=False)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Foreign keys
+    strategy_fk = relationship("Strategy", foreign_keys=[strategy_id], 
+                              primaryjoin="RiskViolation.strategy_id == Strategy.strategy_id",
+                              back_populates=None)
+    
+    # Constraints
+    __table_args__ = (
+        Index('ix_risk_violations_created_at', 'created_at'),
+        Index('ix_risk_violations_type_severity', 'violation_type', 'severity'),
+        Index('ix_risk_violations_account', 'account_id'),
+        Index('ix_risk_violations_symbol', 'symbol'),
+        Index('ix_risk_violations_resolved', 'resolved'),
+        CheckConstraint("severity IN ('info', 'warning', 'critical')", 
+                       name='ck_risk_violations_severity'),
+        CheckConstraint("action_taken IN ('rejected', 'warned', 'allowed', 'emergency_stop')", 
+                       name='ck_risk_violations_action'),
+    )
+
+
 class HealthStatus(Base):
     """Service health monitoring."""
     __tablename__ = 'health'
