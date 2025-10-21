@@ -8,7 +8,7 @@ with validation, defaults, and feature flags for the trading bot system.
 import os
 from typing import List, Optional
 from pydantic import Field, validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class DatabaseSettings(BaseSettings):
@@ -90,8 +90,10 @@ class MarketDataSettings(BaseSettings):
 class HistoricalDataSettings(BaseSettings):
     """Historical data configuration."""
     
-    max_requests_per_min: int = Field(default=30, env="MAX_HIST_REQUESTS_PER_MIN")
-    bar_sizes: str = Field(default="1 min,5 mins,1 day", env="HIST_BAR_SIZES")
+    model_config = SettingsConfigDict(env_file=None, extra='ignore', populate_by_name=True)
+    
+    max_requests_per_min: int = Field(default=30, validation_alias="MAX_HIST_REQUESTS_PER_MIN")
+    bar_sizes: str = Field(default="1 min,5 mins,1 day", validation_alias="HIST_BAR_SIZES")
     
     @property
     def bar_sizes_list(self) -> List[str]:
@@ -151,13 +153,13 @@ class TradingBotSettings(BaseSettings):
     service_name: Optional[str] = Field(default=None, env="SERVICE_NAME")
     
     # Sub-configurations
-    database: DatabaseSettings = DatabaseSettings()
-    tws: TWSSettings = TWSSettings()
-    market_data: MarketDataSettings = MarketDataSettings()
-    historical: HistoricalDataSettings = HistoricalDataSettings()
-    backtest: BacktestSettings = BacktestSettings()
-    logging: LoggingSettings = LoggingSettings()
-    development: DevelopmentSettings = DevelopmentSettings()
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    tws: TWSSettings = Field(default_factory=TWSSettings)
+    market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
+    historical: HistoricalDataSettings = Field(default_factory=HistoricalDataSettings)
+    backtest: BacktestSettings = Field(default_factory=BacktestSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    development: DevelopmentSettings = Field(default_factory=DevelopmentSettings)
     
     class Config:
         case_sensitive = False

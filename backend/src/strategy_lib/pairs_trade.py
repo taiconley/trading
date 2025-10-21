@@ -24,8 +24,9 @@ from .registry import strategy
 class PairsTradingConfig(StrategyConfig):
     """Configuration for Pairs Trading Strategy."""
     
-    # Must specify exactly 2 symbols for pairs trading
-    # symbols[0] will be "Stock A", symbols[1] will be "Stock B"
+    # Pairs definition - list of [stock_a, stock_b] pairs
+    # Example: pairs = [["AAPL", "MSFT"], ["JPM", "BAC"], ["XOM", "CVX"]]
+    pairs: List[List[str]] = []
     
     # Pairs parameters
     lookback_window: int = 20  # Window for calculating mean and std
@@ -45,8 +46,9 @@ class PairsTradingConfig(StrategyConfig):
 
 @strategy(
     name="Pairs_Trading",
-    description="Statistical arbitrage strategy trading price ratio deviations between two correlated stocks",
+    description="Statistical arbitrage strategy trading price ratio deviations between multiple pairs of correlated stocks",
     default_config={
+        "pairs": [["AAPL", "MSFT"]],  # List of [stock_a, stock_b] pairs
         "lookback_window": 20,
         "entry_threshold": 2.0,
         "exit_threshold": 0.5,
@@ -72,23 +74,40 @@ class PairsTradingStrategy(BaseStrategy):
                 pairs_config_data.update(pairs_config_data['parameters'])
             config = PairsTradingConfig(**pairs_config_data)
         
+        # Parse pairs from config
+        if hasattr(config, 'pairs') and config.pairs:
+            self.pairs = config.pairs
+        elif hasattr(config, 'symbols') and len(config.symbols) >= 2:
+            # Fallback: treat consecutive symbols as pairs
+            # e.g., ["AAPL", "MSFT", "JPM", "BAC"] -> [["AAPL", "MSFT"], ["JPM", "BAC"]]
+            if len(config.symbols) % 2 != 0:
+                raise ValueError(f"Pairs trading requires even number of symbols, got {len(config.symbols)}")
+            self.pairs = [[config.symbols[i], config.symbols[i+1]] for i in range(0, len(config.symbols), 2)]
+        else:
+            raise ValueError("Pairs trading requires 'pairs' parameter or even number of 'symbols'")
+        
+        # Extract all unique symbols for the config
+        all_symbols = list(set([sym for pair in self.pairs for sym in pair]))
+        config.symbols = all_symbols
+        
         super().__init__(config)
         
-        # Validate that we have exactly 2 symbols
-        if len(self.config.symbols) != 2:
-            raise ValueError(f"Pairs trading requires exactly 2 symbols, got {len(self.config.symbols)}")
+        # State tracking for each pair
+        # Key is "SYMBOL_A/SYMBOL_B"
+        self._pair_states: Dict[str, Dict[str, Any]] = {}
         
-        # State tracking
-        self._ratio_history: List[float] = []
-        self._current_position: str = "flat"  # "flat", "long_a_short_b", "short_a_long_b"
-        self._entry_zscore: float = 0.0
-        self._entry_date = None
-        self._days_in_trade = 0
+        for pair in self.pairs:
+            pair_key = f"{pair[0]}/{pair[1]}"
+            self._pair_states[pair_key] = {
+                'stock_a': pair[0],
+                'stock_b': pair[1],
+                'ratio_history': [],
+                'current_position': 'flat',  # "flat", "long_a_short_b", "short_a_long_b"
+                'entry_zscore': 0.0,
+                'days_in_trade': 0,
+            }
         
-        self.stock_a = self.config.symbols[0]
-        self.stock_b = self.config.symbols[1]
-        
-        self.log_info(f"Initialized pairs trading: {self.stock_a} vs {self.stock_b}")
+        self.log_info(f"Initialized pairs trading with {len(self.pairs)} pairs: {self.pairs}")
     
     @property
     def supports_multi_symbol(self) -> bool:
@@ -131,254 +150,291 @@ class PairsTradingStrategy(BaseStrategy):
     async def on_start(self, instruments: Dict[str, Any]) -> None:
         """Initialize strategy state."""
         self.set_state(StrategyState.RUNNING)
-        self._ratio_history = []
-        self._current_position = "flat"
+        
+        # Reset all pair states
+        for pair_key in self._pair_states:
+            self._pair_states[pair_key]['ratio_history'] = []
+            self._pair_states[pair_key]['current_position'] = 'flat'
+            self._pair_states[pair_key]['entry_zscore'] = 0.0
+            self._pair_states[pair_key]['days_in_trade'] = 0
         
         self.log_info(
-            f"Started pairs trading strategy: {self.stock_a}/{self.stock_b}, "
+            f"Started pairs trading strategy with {len(self.pairs)} pairs, "
             f"entry_threshold={self.config.entry_threshold}, "
             f"exit_threshold={self.config.exit_threshold}"
         )
     
     async def on_bar_multi(self, symbols: List[str], timeframe: str, 
                           bars_data: Dict[str, pd.DataFrame]) -> List[StrategySignal]:
-        """Process bar data for both stocks simultaneously."""
+        """Process bar data for all pairs simultaneously."""
         
-        # Ensure we have data for both stocks
-        if self.stock_a not in bars_data or self.stock_b not in bars_data:
-            return []
+        all_signals = []
         
-        bars_a = bars_data[self.stock_a]
-        bars_b = bars_data[self.stock_b]
-        
-        # Get current prices
-        price_a = float(bars_a['close'].iloc[-1])
-        price_b = float(bars_b['close'].iloc[-1])
-        
-        if price_b == 0:  # Avoid division by zero
-            return []
-        
-        # Calculate price ratio
-        ratio = price_a / price_b
-        self._ratio_history.append(ratio)
-        
-        # Keep only recent history
-        if len(self._ratio_history) > 200:
-            self._ratio_history = self._ratio_history[-200:]
-        
-        # Need enough history to calculate statistics
-        if len(self._ratio_history) < self.config.lookback_window:
-            return []
-        
-        # Calculate z-score
-        recent_ratios = self._ratio_history[-self.config.lookback_window:]
-        mean_ratio = np.mean(recent_ratios)
-        std_ratio = np.std(recent_ratios)
-        
-        if std_ratio == 0:  # Avoid division by zero
-            return []
-        
-        zscore = (ratio - mean_ratio) / std_ratio
-        
-        # Track days in trade
-        if self._current_position != "flat":
-            self._days_in_trade += 1
-        
-        # Generate signals based on z-score
-        signals = []
-        
-        if self._current_position == "flat":
-            # Look for entry signals
-            if zscore > self.config.entry_threshold:
-                # Ratio is too high: short A, long B
-                signals = self._generate_entry_signals(
-                    position_type="short_a_long_b",
-                    zscore=zscore,
-                    price_a=price_a,
-                    price_b=price_b
-                )
+        # Process each pair independently
+        for pair in self.pairs:
+            stock_a, stock_b = pair[0], pair[1]
+            pair_key = f"{stock_a}/{stock_b}"
+            
+            # Ensure we have data for both stocks in this pair
+            if stock_a not in bars_data or stock_b not in bars_data:
+                continue
+            
+            bars_a = bars_data[stock_a]
+            bars_b = bars_data[stock_b]
+            
+            # Get current prices
+            price_a = float(bars_a['close'].iloc[-1])
+            price_b = float(bars_b['close'].iloc[-1])
+            
+            if price_b == 0:  # Avoid division by zero
+                continue
+            
+            # Get pair state
+            pair_state = self._pair_states[pair_key]
+            
+            # Calculate price ratio
+            ratio = price_a / price_b
+            pair_state['ratio_history'].append(ratio)
+            
+            # Keep only recent history
+            if len(pair_state['ratio_history']) > 200:
+                pair_state['ratio_history'] = pair_state['ratio_history'][-200:]
+            
+            # Need enough history to calculate statistics
+            if len(pair_state['ratio_history']) < self.config.lookback_window:
+                continue
+            
+            # Calculate z-score
+            recent_ratios = pair_state['ratio_history'][-self.config.lookback_window:]
+            mean_ratio = np.mean(recent_ratios)
+            std_ratio = np.std(recent_ratios)
+            
+            if std_ratio == 0:  # Avoid division by zero
+                continue
+            
+            zscore = (ratio - mean_ratio) / std_ratio
+            
+            # Track days in trade
+            if pair_state['current_position'] != "flat":
+                pair_state['days_in_trade'] += 1
+            
+            # Generate signals based on z-score
+            signals = []
+            
+            if pair_state['current_position'] == "flat":
+                # Look for entry signals
+                if zscore > self.config.entry_threshold:
+                    # Ratio is too high: short A, long B
+                    signals = self._generate_entry_signals(
+                        pair_key=pair_key,
+                        position_type="short_a_long_b",
+                        zscore=zscore,
+                        price_a=price_a,
+                        price_b=price_b,
+                        stock_a=stock_a,
+                        stock_b=stock_b
+                    )
+                    
+                elif zscore < -self.config.entry_threshold:
+                    # Ratio is too low: long A, short B
+                    signals = self._generate_entry_signals(
+                        pair_key=pair_key,
+                        position_type="long_a_short_b",
+                        zscore=zscore,
+                        price_a=price_a,
+                        price_b=price_b,
+                        stock_a=stock_a,
+                        stock_b=stock_b
+                    )
+            
+            else:
+                # Already in a position - check for exit signals
                 
-            elif zscore < -self.config.entry_threshold:
-                # Ratio is too low: long A, short B
-                signals = self._generate_entry_signals(
-                    position_type="long_a_short_b",
-                    zscore=zscore,
-                    price_a=price_a,
-                    price_b=price_b
-                )
-        
-        else:
-            # Already in a position - check for exit signals
-            
-            # Exit condition 1: Z-score returns to normal
-            should_exit_mean_reversion = abs(zscore) < self.config.exit_threshold
-            
-            # Exit condition 2: Hit stop loss (z-score got worse)
-            should_exit_stop_loss = False
-            if self._current_position == "short_a_long_b" and zscore > self.config.stop_loss_zscore:
-                should_exit_stop_loss = True
-            elif self._current_position == "long_a_short_b" and zscore < -self.config.stop_loss_zscore:
-                should_exit_stop_loss = True
-            
-            # Exit condition 3: Held too long
-            should_exit_time = self._days_in_trade >= self.config.max_hold_days
-            
-            if should_exit_mean_reversion or should_exit_stop_loss or should_exit_time:
-                exit_reason = (
-                    "mean_reversion" if should_exit_mean_reversion else
-                    "stop_loss" if should_exit_stop_loss else
-                    "max_hold_time"
-                )
+                # Exit condition 1: Z-score returns to normal
+                should_exit_mean_reversion = abs(zscore) < self.config.exit_threshold
                 
-                signals = self._generate_exit_signals(
-                    exit_reason=exit_reason,
-                    zscore=zscore,
-                    price_a=price_a,
-                    price_b=price_b
-                )
+                # Exit condition 2: Hit stop loss (z-score got worse)
+                should_exit_stop_loss = False
+                if pair_state['current_position'] == "short_a_long_b" and zscore > self.config.stop_loss_zscore:
+                    should_exit_stop_loss = True
+                elif pair_state['current_position'] == "long_a_short_b" and zscore < -self.config.stop_loss_zscore:
+                    should_exit_stop_loss = True
+                
+                # Exit condition 3: Held too long
+                should_exit_time = pair_state['days_in_trade'] >= self.config.max_hold_days
+                
+                if should_exit_mean_reversion or should_exit_stop_loss or should_exit_time:
+                    exit_reason = (
+                        "mean_reversion" if should_exit_mean_reversion else
+                        "stop_loss" if should_exit_stop_loss else
+                        "max_hold_time"
+                    )
+                    
+                    signals = self._generate_exit_signals(
+                        pair_key=pair_key,
+                        exit_reason=exit_reason,
+                        zscore=zscore,
+                        price_a=price_a,
+                        price_b=price_b,
+                        stock_a=stock_a,
+                        stock_b=stock_b
+                    )
+            
+            # Add signals from this pair to the overall list
+            all_signals.extend(signals)
         
-        return signals
+        return all_signals
     
-    def _generate_entry_signals(self, position_type: str, zscore: float,
-                                price_a: float, price_b: float) -> List[StrategySignal]:
+    def _generate_entry_signals(self, pair_key: str, position_type: str, zscore: float,
+                                price_a: float, price_b: float, stock_a: str, stock_b: str) -> List[StrategySignal]:
         """Generate entry signals for the pair."""
         signals = []
+        pair_state = self._pair_states[pair_key]
         
         if position_type == "short_a_long_b":
             # Short A, Long B
             signals.append(self.create_signal(
-                symbol=self.stock_a,
+                symbol=stock_a,
                 signal_type=SignalType.SELL,
                 strength=Decimal(str(min(abs(zscore) / 5.0, 1.0))),
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
                 zscore=zscore,
                 ratio=price_a / price_b,
-                position_type=position_type
+                position_type=position_type,
+                pair=pair_key
             ))
             
             signals.append(self.create_signal(
-                symbol=self.stock_b,
+                symbol=stock_b,
                 signal_type=SignalType.BUY,
                 strength=Decimal(str(min(abs(zscore) / 5.0, 1.0))),
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
                 zscore=zscore,
                 ratio=price_a / price_b,
-                position_type=position_type
+                position_type=position_type,
+                pair=pair_key
             ))
             
             self.log_info(
-                f"ENTRY: Short {self.stock_a} @ ${price_a:.2f}, "
-                f"Long {self.stock_b} @ ${price_b:.2f}, "
+                f"ENTRY [{pair_key}]: Short {stock_a} @ ${price_a:.2f}, "
+                f"Long {stock_b} @ ${price_b:.2f}, "
                 f"z-score={zscore:.2f}"
             )
         
         elif position_type == "long_a_short_b":
             # Long A, Short B
             signals.append(self.create_signal(
-                symbol=self.stock_a,
+                symbol=stock_a,
                 signal_type=SignalType.BUY,
                 strength=Decimal(str(min(abs(zscore) / 5.0, 1.0))),
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
                 zscore=zscore,
                 ratio=price_a / price_b,
-                position_type=position_type
+                position_type=position_type,
+                pair=pair_key
             ))
             
             signals.append(self.create_signal(
-                symbol=self.stock_b,
+                symbol=stock_b,
                 signal_type=SignalType.SELL,
                 strength=Decimal(str(min(abs(zscore) / 5.0, 1.0))),
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
                 zscore=zscore,
                 ratio=price_a / price_b,
-                position_type=position_type
+                position_type=position_type,
+                pair=pair_key
             ))
             
             self.log_info(
-                f"ENTRY: Long {self.stock_a} @ ${price_a:.2f}, "
-                f"Short {self.stock_b} @ ${price_b:.2f}, "
+                f"ENTRY [{pair_key}]: Long {stock_a} @ ${price_a:.2f}, "
+                f"Short {stock_b} @ ${price_b:.2f}, "
                 f"z-score={zscore:.2f}"
             )
         
-        # Update state
-        self._current_position = position_type
-        self._entry_zscore = zscore
-        self._days_in_trade = 0
+        # Update pair state
+        pair_state['current_position'] = position_type
+        pair_state['entry_zscore'] = zscore
+        pair_state['days_in_trade'] = 0
         
         return signals
     
-    def _generate_exit_signals(self, exit_reason: str, zscore: float,
-                               price_a: float, price_b: float) -> List[StrategySignal]:
+    def _generate_exit_signals(self, pair_key: str, exit_reason: str, zscore: float,
+                               price_a: float, price_b: float, stock_a: str, stock_b: str) -> List[StrategySignal]:
         """Generate exit signals for the pair."""
         signals = []
+        pair_state = self._pair_states[pair_key]
         
         # Close both legs of the position
-        if self._current_position == "short_a_long_b":
+        if pair_state['current_position'] == "short_a_long_b":
             # Cover short A, Sell long B
             signals.append(self.create_signal(
-                symbol=self.stock_a,
+                symbol=stock_a,
                 signal_type=SignalType.BUY,  # Cover short
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
                 exit_reason=exit_reason,
                 zscore=zscore,
-                entry_zscore=self._entry_zscore,
-                days_held=self._days_in_trade
+                entry_zscore=pair_state['entry_zscore'],
+                days_held=pair_state['days_in_trade'],
+                pair=pair_key
             ))
             
             signals.append(self.create_signal(
-                symbol=self.stock_b,
+                symbol=stock_b,
                 signal_type=SignalType.SELL,  # Sell long
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
                 exit_reason=exit_reason,
                 zscore=zscore,
-                entry_zscore=self._entry_zscore,
-                days_held=self._days_in_trade
+                entry_zscore=pair_state['entry_zscore'],
+                days_held=pair_state['days_in_trade'],
+                pair=pair_key
             ))
         
-        elif self._current_position == "long_a_short_b":
+        elif pair_state['current_position'] == "long_a_short_b":
             # Sell long A, Cover short B
             signals.append(self.create_signal(
-                symbol=self.stock_a,
+                symbol=stock_a,
                 signal_type=SignalType.SELL,  # Sell long
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
                 exit_reason=exit_reason,
                 zscore=zscore,
-                entry_zscore=self._entry_zscore,
-                days_held=self._days_in_trade
+                entry_zscore=pair_state['entry_zscore'],
+                days_held=pair_state['days_in_trade'],
+                pair=pair_key
             ))
             
             signals.append(self.create_signal(
-                symbol=self.stock_b,
+                symbol=stock_b,
                 signal_type=SignalType.BUY,  # Cover short
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
                 exit_reason=exit_reason,
                 zscore=zscore,
-                entry_zscore=self._entry_zscore,
-                days_held=self._days_in_trade
+                entry_zscore=pair_state['entry_zscore'],
+                days_held=pair_state['days_in_trade'],
+                pair=pair_key
             ))
         
         self.log_info(
-            f"EXIT ({exit_reason}): Close {self._current_position}, "
-            f"z-score={zscore:.2f} (entry={self._entry_zscore:.2f}), "
-            f"days_held={self._days_in_trade}"
+            f"EXIT [{pair_key}] ({exit_reason}): Close {pair_state['current_position']}, "
+            f"z-score={zscore:.2f} (entry={pair_state['entry_zscore']:.2f}), "
+            f"days_held={pair_state['days_in_trade']}"
         )
         
-        # Reset state
-        self._current_position = "flat"
-        self._entry_zscore = 0.0
-        self._days_in_trade = 0
+        # Reset pair state
+        pair_state['current_position'] = "flat"
+        pair_state['entry_zscore'] = 0.0
+        pair_state['days_in_trade'] = 0
         
         return signals
     
@@ -395,31 +451,43 @@ class PairsTradingStrategy(BaseStrategy):
         """Cleanup when stopping."""
         self.set_state(StrategyState.STOPPING)
         
-        # If we have an open position, log a warning
-        if self._current_position != "flat":
-            self.log_warning(f"Stopping with open position: {self._current_position}")
+        # Check for open positions in any pair
+        open_positions = [
+            pair_key for pair_key, state in self._pair_states.items()
+            if state['current_position'] != "flat"
+        ]
+        
+        if open_positions:
+            self.log_warning(f"Stopping with {len(open_positions)} open positions: {open_positions}")
         
         self.set_state(StrategyState.STOPPED)
         self.log_info("Pairs trading strategy stopped")
     
     def get_strategy_state(self) -> Dict[str, Any]:
         """Get current strategy state for monitoring."""
-        current_ratio = self._ratio_history[-1] if self._ratio_history else None
+        
+        # Collect state for each pair
+        pairs_state = {}
+        for pair_key, state in self._pair_states.items():
+            current_ratio = state['ratio_history'][-1] if state['ratio_history'] else None
+            pairs_state[pair_key] = {
+                "position": state['current_position'],
+                "current_ratio": current_ratio,
+                "ratio_history_length": len(state['ratio_history']),
+                "days_in_trade": state['days_in_trade'],
+                "entry_zscore": state['entry_zscore'],
+            }
         
         return {
             "config": {
-                "stock_a": self.stock_a,
-                "stock_b": self.stock_b,
+                "pairs": self.pairs,
                 "lookback_window": self.config.lookback_window,
                 "entry_threshold": self.config.entry_threshold,
                 "exit_threshold": self.config.exit_threshold,
                 "position_size": self.config.position_size
             },
-            "position": self._current_position,
-            "current_ratio": current_ratio,
-            "ratio_history_length": len(self._ratio_history),
-            "days_in_trade": self._days_in_trade,
-            "entry_zscore": self._entry_zscore,
+            "num_pairs": len(self.pairs),
+            "pairs_state": pairs_state,
             "metrics": self.get_metrics().dict()
         }
 

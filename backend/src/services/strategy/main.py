@@ -165,7 +165,7 @@ class StrategyService:
         
         # Execution control
         self.running = False
-        self.bar_processing_interval = 60  # seconds
+        self.bar_processing_interval = 5  # seconds - check strategies every 5 seconds
         
     def _setup_routes(self):
         """Setup FastAPI routes."""
