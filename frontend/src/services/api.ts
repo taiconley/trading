@@ -143,6 +143,22 @@ class ApiClient {
     return response.data;
   }
 
+  async getHistoricalDatasets() {
+    const response = await this.client.get('/api/historical/datasets');
+    return response.data;
+  }
+
+  async getCandles(params: {
+    symbol: string;
+    timeframe: string;
+    limit?: number;
+    start_date?: string;
+    end_date?: string;
+  }) {
+    const response = await this.client.get('/api/historical/candles', { params });
+    return response.data;
+  }
+
   // ============================================================================
   // Strategies
   // ============================================================================

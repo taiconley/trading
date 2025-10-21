@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
   TrendingUp,
+  Clock,
   Zap,
   Activity,
   BarChart3,
@@ -16,6 +17,7 @@ interface LayoutProps {
 const navigation = [
   { name: 'Overview', href: '/', icon: LayoutDashboard },
   { name: 'Market Data', href: '/market', icon: TrendingUp },
+  { name: 'Historical Data', href: '/historical', icon: Clock },
   { name: 'Strategies', href: '/strategies', icon: Zap },
   { name: 'Backtests', href: '/backtests', icon: Activity },
   { name: 'Optimizer', href: '/optimizer', icon: BarChart3 },

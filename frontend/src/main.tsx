@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { Overview } from './pages/Overview';
 import { MarketData } from './pages/MarketData';
+import HistoricalData from './pages/HistoricalData';
 import { Strategies } from './pages/Strategies';
 import { Backtests } from './pages/Backtests';
 import { Optimizer } from './pages/Optimizer';
@@ -16,6 +17,7 @@ function App() {
         <Routes>
           <Route path="/" element={<Overview />} />
           <Route path="/market" element={<MarketData />} />
+          <Route path="/historical" element={<HistoricalData />} />
           <Route path="/strategies" element={<Strategies />} />
           <Route path="/backtests" element={<Backtests />} />
           <Route path="/optimizer" element={<Optimizer />} />

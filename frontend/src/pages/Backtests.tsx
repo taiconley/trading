@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
+import { LineChart, Line, Scatter, ScatterChart, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, ReferenceDot } from 'recharts';
 import { Card } from '../components/Card';
 import { api, Backtest } from '../services/api';
-import { RefreshCw, Eye, TrendingUp, TrendingDown } from 'lucide-react';
+import { RefreshCw, Eye, TrendingUp, TrendingDown, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 
 export function Backtests() {
   const [backtests, setBacktests] = useState<Backtest[]>([]);
@@ -99,9 +100,9 @@ export function Backtests() {
 
         <Card title="Trades">
           {trades.length > 0 ? (
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
               <table className="min-w-full divide-y divide-gray-200">
-                <thead>
+                <thead className="bg-gray-50 sticky top-0 z-10">
                   <tr>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                       Symbol
@@ -190,9 +191,9 @@ export function Backtests() {
         }
       >
         {backtests.length > 0 ? (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
             <table className="min-w-full divide-y divide-gray-200">
-              <thead>
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     ID

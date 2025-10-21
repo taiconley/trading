@@ -23,12 +23,12 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 import json
 import logging
-from sqlalchemy import desc, asc
+from sqlalchemy import desc, asc, text
 
 # Import common modules at the top
 from common.db import get_db_session
 from common.models import (
-    Tick, WatchlistEntry, Strategy, BacktestRun, BacktestTrade,
+    Tick, Candle, WatchlistEntry, Strategy, BacktestRun, BacktestTrade,
     OptimizationRun, OptimizationResult, ParameterSensitivity,
     Signal, Execution, Order
 )
@@ -417,6 +417,82 @@ async def bulk_historical_request():
 async def get_historical_queue():
     """Get historical data request queue status."""
     return await proxy_get("historical", "/queue/status")
+
+
+@app.get("/api/historical/datasets")
+async def get_available_datasets():
+    """Get list of available historical datasets (symbol + timeframe combinations)."""
+    
+    with get_db_session() as db:
+        # Query distinct symbol, timeframe combinations with count and date range
+        query = """
+        SELECT 
+            symbol,
+            tf as timeframe,
+            COUNT(*) as bar_count,
+            MIN(ts) as start_date,
+            MAX(ts) as end_date
+        FROM candles
+        GROUP BY symbol, tf
+        ORDER BY symbol, tf
+        """
+        
+        result = db.execute(text(query))
+        datasets = []
+        
+        for row in result:
+            datasets.append({
+                "symbol": row[0],
+                "timeframe": row[1],
+                "bar_count": row[2],
+                "start_date": row[3].isoformat() if row[3] else None,
+                "end_date": row[4].isoformat() if row[4] else None
+            })
+        
+        return {"datasets": datasets, "count": len(datasets)}
+
+
+@app.get("/api/historical/candles")
+async def get_candles(
+    symbol: str,
+    timeframe: str,
+    limit: int = 1000,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+):
+    """Get candle data for a specific symbol and timeframe."""
+    
+    with get_db_session() as db:
+        query = db.query(Candle).filter(
+            Candle.symbol == symbol.upper(),
+            Candle.tf == timeframe
+        )
+        
+        # Apply date filters if provided
+        if start_date:
+            query = query.filter(Candle.ts >= start_date)
+        if end_date:
+            query = query.filter(Candle.ts <= end_date)
+        
+        # Order by timestamp and limit
+        candles = query.order_by(Candle.ts.asc()).limit(limit).all()
+        
+        return {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "count": len(candles),
+            "candles": [
+                {
+                    "timestamp": c.ts.isoformat(),
+                    "open": float(c.open),
+                    "high": float(c.high),
+                    "low": float(c.low),
+                    "close": float(c.close),
+                    "volume": int(c.volume) if c.volume else 0
+                }
+                for c in candles
+            ]
+        }
 
 
 # ============================================================================
