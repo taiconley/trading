@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts';
-import { Download, BarChart3, Clock, Search } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { LineChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts';
+import { Download, BarChart3, Search, Trash2 } from 'lucide-react';
 import { Card } from '../components/Card';
 import { api } from '../services/api';
 
@@ -33,6 +33,7 @@ export default function HistoricalData() {
   const [symbol, setSymbol] = useState('');
   const [barSize, setBarSize] = useState('1 min');
   const [duration, setDuration] = useState('1 D');
+  const [bulkMode, setBulkMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -72,37 +73,58 @@ export default function HistoricalData() {
     }
   };
 
+  const deleteDataset = async (dataset: Dataset) => {
+    if (!confirm(`Are you sure you want to delete all ${dataset.bar_count.toLocaleString()} candles for ${dataset.symbol} (${dataset.timeframe})?`)) {
+      return;
+    }
+
+    try {
+      const response = await api.deleteDataset(dataset.symbol, dataset.timeframe);
+      alert(`Successfully deleted ${response.deleted_count} candles`);
+      
+      // Clear selected dataset if it was the one deleted
+      if (selectedDataset?.symbol === dataset.symbol && selectedDataset?.timeframe === dataset.timeframe) {
+        setSelectedDataset(null);
+        setCandles([]);
+      }
+      
+      // Refresh datasets
+      await loadDatasets();
+    } catch (error: any) {
+      console.error('Failed to delete dataset:', error);
+      alert(`Failed to delete dataset: ${error.response?.data?.detail || error.message}`);
+    }
+  };
+
   const submitRequest = async () => {
-    if (!symbol) {
+    // Validate input for individual mode
+    if (!bulkMode && !symbol) {
       alert('Please enter a symbol');
       return;
     }
     
     setSubmitting(true);
     try {
-      const response = await api.requestHistoricalData({
-        symbol: symbol.toUpperCase(),
-        bar_size: barSize,
-        lookback: duration
-      });
-      alert(`Request queued: ${response.message || 'Success'}`);
-      setSymbol('');
+      if (bulkMode) {
+        // Bulk request for all watchlist symbols
+        const response = await api.bulkHistoricalRequest({
+          bar_size: barSize,
+          duration: duration
+        });
+        alert(`Queued ${response.requests?.length || 0} requests for all watchlist symbols (${barSize}, ${duration})`);
+      } else {
+        // Individual symbol request
+        const response = await api.requestHistoricalData({
+          symbol: symbol.toUpperCase(),
+          bar_size: barSize,
+          lookback: duration
+        });
+        alert(`Request queued: ${response.message || 'Success'}`);
+        setSymbol('');
+      }
       setTimeout(loadDatasets, 2000); // Refresh after 2s
     } catch (error: any) {
       alert(`Failed to submit request: ${error.response?.data?.detail || error.message}`);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const bulkRequest = async () => {
-    setSubmitting(true);
-    try {
-      const response = await api.bulkHistoricalRequest();
-      alert(`Queued ${response.requests?.length || 0} requests for all watchlist symbols`);
-      setTimeout(loadDatasets, 2000);
-    } catch (error: any) {
-      alert(`Failed to submit bulk request: ${error.response?.data?.detail || error.message}`);
     } finally {
       setSubmitting(false);
     }
@@ -140,80 +162,83 @@ export default function HistoricalData() {
 
       {/* Request Form */}
       <Card title="Request Historical Data">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Individual Request */}
-          <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-slate-700">Individual Symbol</h3>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Symbol</label>
-                <input
-                  type="text"
-                  value={symbol}
-                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                  placeholder="AAPL"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Bar Size</label>
-                  <select
-                    value={barSize}
-                    onChange={(e) => setBarSize(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="5 secs">5 secs</option>
-                    <option value="1 min">1 min</option>
-                    <option value="5 mins">5 mins</option>
-                    <option value="15 mins">15 mins</option>
-                    <option value="1 hour">1 hour</option>
-                    <option value="1 day">1 day</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Duration</label>
-                  <select
-                    value={duration}
-                    onChange={(e) => setDuration(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  >
-                    <option value="1 D">1 Day</option>
-                    <option value="5 D">5 Days</option>
-                    <option value="1 W">1 Week</option>
-                    <option value="1 M">1 Month</option>
-                    <option value="3 M">3 Months</option>
-                    <option value="1 Y">1 Year</option>
-                  </select>
-                </div>
-              </div>
-              <button
-                onClick={submitRequest}
-                disabled={submitting}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <Download className="w-5 h-5" />
-                {submitting ? 'Submitting...' : 'Request Data'}
-              </button>
-            </div>
+        <div className="max-w-2xl mx-auto space-y-4">
+          {/* Bulk Mode Checkbox */}
+          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
+            <input
+              type="checkbox"
+              id="bulkMode"
+              checked={bulkMode}
+              onChange={(e) => setBulkMode(e.target.checked)}
+              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
+            />
+            <label htmlFor="bulkMode" className="text-sm font-medium text-slate-700 cursor-pointer">
+              Request data for all watchlist symbols
+            </label>
           </div>
 
-          {/* Bulk Request */}
+          {/* Request Form */}
           <div className="space-y-4">
-            <h3 className="text-sm font-semibold text-slate-700">Bulk Request</h3>
-            <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-              <p className="text-sm text-slate-600">
-                Request historical data for all symbols in your watchlist with the default timeframes (1 min, 5 mins, 1 day).
-              </p>
-              <button
-                onClick={bulkRequest}
-                disabled={submitting}
-                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-700 text-white rounded-lg hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                <Clock className="w-5 h-5" />
-                {submitting ? 'Submitting...' : 'Bulk Request All Symbols'}
-              </button>
+            {/* Symbol Input - disabled when bulk mode is on */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Symbol {bulkMode && <span className="text-slate-400">(all watchlist symbols)</span>}
+              </label>
+              <input
+                type="text"
+                value={symbol}
+                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                placeholder="AAPL"
+                disabled={bulkMode}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
+              />
             </div>
+
+            {/* Bar Size and Duration */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Bar Size</label>
+                <select
+                  value={barSize}
+                  onChange={(e) => setBarSize(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="5 secs">5 secs</option>
+                  <option value="1 min">1 min</option>
+                  <option value="5 mins">5 mins</option>
+                  <option value="15 mins">15 mins</option>
+                  <option value="1 hour">1 hour</option>
+                  <option value="1 day">1 day</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Duration</label>
+                <select
+                  value={duration}
+                  onChange={(e) => setDuration(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  <option value="1 D">1 Day</option>
+                  <option value="5 D">5 Days</option>
+                  <option value="1 W">1 Week</option>
+                  <option value="1 M">1 Month</option>
+                  <option value="3 M">3 Months</option>
+                  <option value="1 Y">1 Year</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              onClick={submitRequest}
+              disabled={submitting}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <Download className="w-5 h-5" />
+              {submitting ? 'Submitting...' : (bulkMode ? 'Request All Watchlist Symbols' : 'Request Data')}
+            </button>
+
+            {/* Info Note */}
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
               <p className="text-xs text-blue-800">
                 <strong>Note:</strong> Requests are rate-limited to 6 per minute to comply with TWS pacing rules.
@@ -270,13 +295,22 @@ export default function HistoricalData() {
                       {new Date(dataset.start_date).toLocaleDateString()} - {new Date(dataset.end_date).toLocaleDateString()}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
-                      <button
-                        onClick={() => loadCandles(dataset)}
-                        className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
-                      >
-                        <BarChart3 className="w-4 h-4" />
-                        View Chart
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => loadCandles(dataset)}
+                          className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
+                        >
+                          <BarChart3 className="w-4 h-4" />
+                          View Chart
+                        </button>
+                        <button
+                          onClick={() => deleteDataset(dataset)}
+                          className="flex items-center gap-1 px-3 py-1 text-sm bg-red-50 text-red-700 rounded-lg hover:bg-red-100 transition-colors"
+                          title="Delete dataset"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

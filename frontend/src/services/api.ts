@@ -133,8 +133,11 @@ class ApiClient {
     return response.data;
   }
 
-  async bulkHistoricalRequest() {
-    const response = await this.client.post('/api/historical/bulk');
+  async bulkHistoricalRequest(request?: {
+    bar_size?: string;
+    duration?: string;
+  }) {
+    const response = await this.client.post('/api/historical/bulk', request || {});
     return response.data;
   }
 
@@ -156,6 +159,13 @@ class ApiClient {
     end_date?: string;
   }) {
     const response = await this.client.get('/api/historical/candles', { params });
+    return response.data;
+  }
+
+  async deleteDataset(symbol: string, timeframe: string) {
+    const response = await this.client.delete('/api/historical/dataset', {
+      params: { symbol, timeframe }
+    });
     return response.data;
   }
 

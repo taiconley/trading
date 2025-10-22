@@ -408,9 +408,9 @@ async def request_historical_data(request: Dict = Body(...)):
 
 
 @app.post("/api/historical/bulk")
-async def bulk_historical_request():
+async def bulk_historical_request(body: Optional[Dict] = None):
     """Request historical data for all watchlist symbols."""
-    return await proxy_post("historical", "/historical/bulk")
+    return await proxy_post("historical", "/historical/bulk", json_data=body if body else {})
 
 
 @app.get("/api/historical/queue")
@@ -492,6 +492,26 @@ async def get_candles(
                 }
                 for c in candles
             ]
+        }
+
+
+@app.delete("/api/historical/dataset")
+async def delete_dataset(symbol: str, timeframe: str):
+    """Delete all candle data for a specific symbol and timeframe."""
+    
+    with get_db_session() as db:
+        deleted_count = db.query(Candle).filter(
+            Candle.symbol == symbol.upper(),
+            Candle.tf == timeframe
+        ).delete()
+        
+        db.commit()
+        
+        return {
+            "message": f"Deleted {deleted_count} candles for {symbol} ({timeframe})",
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "deleted_count": deleted_count
         }
 
 

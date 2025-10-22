@@ -18,6 +18,7 @@ from enum import Enum
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import uvicorn
 from ib_insync import IB, Stock, BarData
 
@@ -42,6 +43,12 @@ class RequestStatus(Enum):
     RATE_LIMITED = "rate_limited"
 
 
+class BulkHistoricalRequestBody(BaseModel):
+    """Request body for bulk historical data requests."""
+    bar_size: Optional[str] = None
+    duration: Optional[str] = None
+
+
 @dataclass
 class HistoricalRequest:
     """Historical data request."""
@@ -62,6 +69,21 @@ class HistoricalRequest:
 
 class HistoricalDataService:
     """Historical data service with request queueing and pacing controls."""
+    
+    # TWS Historical Data Limits (max duration per bar size)
+    BAR_SIZE_LIMITS = {
+        '5 secs': '7200 S',   # 2 hours
+        '10 secs': '14400 S',  # 4 hours
+        '15 secs': '14400 S',  # 4 hours
+        '30 secs': '28800 S',  # 8 hours
+        '1 min': '1 W',        # 1 week
+        '2 mins': '2 W',       # 2 weeks
+        '5 mins': '1 M',       # 1 month
+        '15 mins': '1 M',      # 1 month
+        '30 mins': '1 M',      # 1 month
+        '1 hour': '1 Y',       # 1 year
+        '1 day': '1 Y',        # 1 year (though more is available)
+    }
     
     def __init__(self):
         self.settings = get_settings()
@@ -91,6 +113,62 @@ class HistoricalDataService:
         # Setup signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+    
+    def _duration_to_seconds(self, duration_str: str) -> int:
+        """Convert TWS duration string to seconds."""
+        duration_str = duration_str.strip()
+        if duration_str.endswith('S'):
+            return int(duration_str[:-2])
+        elif duration_str.endswith('D'):
+            return int(duration_str[:-2]) * 86400
+        elif duration_str.endswith('W'):
+            return int(duration_str[:-2]) * 604800
+        elif duration_str.endswith('M'):
+            return int(duration_str[:-2]) * 2592000  # 30 days
+        elif duration_str.endswith('Y'):
+            return int(duration_str[:-2]) * 31536000  # 365 days
+        return 0
+    
+    def _split_request_if_needed(self, symbol: str, bar_size: str, duration: str, 
+                                   what_to_show: str, use_rth: bool, base_id: str) -> List[HistoricalRequest]:
+        """Split a request into multiple chunks if it exceeds TWS limits for the bar size."""
+        max_duration_str = self.BAR_SIZE_LIMITS.get(bar_size, duration)
+        max_duration_seconds = self._duration_to_seconds(max_duration_str)
+        requested_duration_seconds = self._duration_to_seconds(duration)
+        
+        # If within limits, return single request
+        if requested_duration_seconds <= max_duration_seconds:
+            return [HistoricalRequest(
+                id=base_id,
+                symbol=symbol,
+                bar_size=bar_size,
+                what_to_show=what_to_show,
+                duration=duration,
+                end_datetime="",
+                use_rth=use_rth
+            )]
+        
+        # Split into multiple requests
+        requests = []
+        num_chunks = (requested_duration_seconds + max_duration_seconds - 1) // max_duration_seconds
+        end_time = datetime.now(timezone.utc)
+        
+        for i in range(num_chunks):
+            chunk_end_time = end_time - timedelta(seconds=i * max_duration_seconds)
+            chunk_id = f"{base_id}_chunk{i+1}of{num_chunks}"
+            
+            requests.append(HistoricalRequest(
+                id=chunk_id,
+                symbol=symbol,
+                bar_size=bar_size,
+                what_to_show=what_to_show,
+                duration=max_duration_str,
+                end_datetime=chunk_end_time.strftime("%Y%m%d %H:%M:%S"),
+                use_rth=use_rth
+            ))
+        
+        self.logger.info(f"Split request for {symbol} ({bar_size}, {duration}) into {num_chunks} chunks")
+        return requests
     
     def _setup_routes(self):
         """Setup FastAPI routes."""
@@ -161,25 +239,27 @@ class HistoricalDataService:
                         detail=f"Invalid bar_size. Must be one of: {valid_bar_sizes}"
                     )
                 
-                # Create request
-                request = HistoricalRequest(
-                    id=request_id,
+                # Split request if it exceeds TWS limits
+                requests = self._split_request_if_needed(
                     symbol=symbol,
                     bar_size=bar_size,
-                    what_to_show=what_to_show,
                     duration=duration,
-                    end_datetime=end_datetime,
-                    use_rth=use_rth
+                    what_to_show=what_to_show,
+                    use_rth=use_rth,
+                    base_id=request_id
                 )
                 
-                # Add to queue
-                await self.request_queue.put(request)
+                # Add all chunks to queue
+                for request in requests:
+                    await self.request_queue.put(request)
                 
-                self.logger.info(f"Queued historical data request: {request_id}")
+                self.logger.info(f"Queued {len(requests)} historical data request(s): {request_id}")
                 
                 return {
                     "request_id": request_id,
                     "status": "queued",
+                    "chunks": len(requests),
+                    "message": f"Queued {len(requests)} request(s) for {symbol}",
                     "queue_position": self.request_queue.qsize()
                 }
                 
@@ -188,7 +268,7 @@ class HistoricalDataService:
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.post("/historical/bulk")
-        async def bulk_historical_request():
+        async def bulk_historical_request(body: Optional[BulkHistoricalRequestBody] = None):
             """Request historical data for all watchlist symbols."""
             try:
                 # Get watchlist symbols
@@ -201,34 +281,48 @@ class HistoricalDataService:
                 if not symbols:
                     return {"message": "No symbols in watchlist", "requests": []}
                 
-                # Create requests for each symbol and bar size
-                requests = []
-                bar_sizes = self.settings.historical.bar_sizes_list
+                # Determine bar sizes and duration to use
+                if body and body.bar_size:
+                    bar_sizes = [body.bar_size]
+                else:
+                    bar_sizes = self.settings.historical.bar_sizes_list
+                
+                duration = body.duration if body and body.duration else self.settings.market_data.lookback
+                
+                # Create requests for each symbol and bar size (with splitting if needed)
+                request_ids = []
+                total_chunks = 0
                 
                 for symbol in symbols:
                     for bar_size in bar_sizes:
                         request_id = f"bulk_{symbol}_{bar_size}_{int(time.time())}"
                         
-                        request = HistoricalRequest(
-                            id=request_id,
+                        # Split request if it exceeds TWS limits
+                        split_requests = self._split_request_if_needed(
                             symbol=symbol,
                             bar_size=bar_size,
+                            duration=duration,
                             what_to_show=self.settings.market_data.what_to_show,
-                            duration=self.settings.market_data.lookback,
-                            end_datetime="",
-                            use_rth=self.settings.market_data.rth
+                            use_rth=self.settings.market_data.rth,
+                            base_id=request_id
                         )
                         
-                        await self.request_queue.put(request)
-                        requests.append(request_id)
+                        # Add all chunks to queue
+                        for request in split_requests:
+                            await self.request_queue.put(request)
+                        
+                        request_ids.append(request_id)
+                        total_chunks += len(split_requests)
                 
-                self.logger.info(f"Queued {len(requests)} bulk historical requests")
+                self.logger.info(f"Queued {total_chunks} bulk historical requests ({len(request_ids)} base requests)")
                 
                 return {
-                    "message": f"Queued {len(requests)} historical data requests",
+                    "message": f"Queued {total_chunks} historical data requests ({len(request_ids)} symbols × bar sizes)",
                     "symbols": symbols,
                     "bar_sizes": bar_sizes,
-                    "requests": requests
+                    "duration": duration,
+                    "total_chunks": total_chunks,
+                    "requests": request_ids
                 }
                 
             except Exception as e:
