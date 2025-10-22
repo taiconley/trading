@@ -14,6 +14,7 @@ Classic pairs trading strategy:
 
 from decimal import Decimal
 from typing import Any, Dict, List
+from datetime import datetime, time
 import pandas as pd
 import numpy as np
 
@@ -29,16 +30,21 @@ class PairsTradingConfig(StrategyConfig):
     pairs: List[List[str]] = []
     
     # Pairs parameters
-    lookback_window: int = 20  # Window for calculating mean and std
+    lookback_window: int = 240  # Window for calculating mean and std (240 bars = 20 minutes at 5-sec bars)
     entry_threshold: float = 2.0  # Z-score threshold to enter trade
     exit_threshold: float = 0.5   # Z-score threshold to exit trade
     
     # Position sizing
     position_size: int = 100  # Shares per leg
     
-    # Risk management
-    max_hold_days: int = 20  # Maximum days to hold a position
+    # Risk management (for 5-second bars: 720 bars = 1 hour)
+    max_hold_bars: int = 720  # Maximum bars to hold a position
     stop_loss_zscore: float = 3.0  # Exit if z-score gets worse
+    
+    # Intraday-only trading
+    market_close_hour: int = 16  # US market close hour (4 PM Eastern)
+    market_close_minute: int = 0  # Market close minute
+    close_before_eod_minutes: int = 5  # Close all positions N minutes before market close
     
     class Config:
         extra = "allow"
@@ -46,15 +52,28 @@ class PairsTradingConfig(StrategyConfig):
 
 @strategy(
     name="Pairs_Trading",
-    description="Statistical arbitrage strategy trading price ratio deviations between multiple pairs of correlated stocks",
+    description="Intraday statistical arbitrage strategy for 5-second bars, trading price ratio deviations between multiple pairs",
     default_config={
-        "pairs": [["AAPL", "MSFT"]],  # List of [stock_a, stock_b] pairs
-        "lookback_window": 20,
+        "pairs": [
+            ["AAPL", "MSFT"],   # Tech Large Cap
+            ["JPM", "BAC"],     # Banks
+            ["GS", "MS"],       # Investment Banks
+            ["XOM", "CVX"],     # Energy
+            ["V", "MA"],        # Payments
+            ["KO", "PEP"],      # Beverages
+            ["WMT", "TGT"],     # Retail
+            ["PFE", "MRK"],     # Pharma
+            ["DIS", "NFLX"]     # Media
+        ],
+        "lookback_window": 240,  # 20 minutes at 5-sec bars
         "entry_threshold": 2.0,
         "exit_threshold": 0.5,
         "position_size": 100,
-        "max_hold_days": 20,
-        "stop_loss_zscore": 3.0
+        "max_hold_bars": 720,  # 1 hour at 5-sec bars
+        "stop_loss_zscore": 3.0,
+        "market_close_hour": 16,
+        "market_close_minute": 0,
+        "close_before_eod_minutes": 5
     }
 )
 class PairsTradingStrategy(BaseStrategy):
@@ -104,7 +123,7 @@ class PairsTradingStrategy(BaseStrategy):
                 'ratio_history': [],
                 'current_position': 'flat',  # "flat", "long_a_short_b", "short_a_long_b"
                 'entry_zscore': 0.0,
-                'days_in_trade': 0,
+                'bars_in_trade': 0,
             }
         
         self.log_info(f"Initialized pairs trading with {len(self.pairs)} pairs: {self.pairs}")
@@ -156,12 +175,13 @@ class PairsTradingStrategy(BaseStrategy):
             self._pair_states[pair_key]['ratio_history'] = []
             self._pair_states[pair_key]['current_position'] = 'flat'
             self._pair_states[pair_key]['entry_zscore'] = 0.0
-            self._pair_states[pair_key]['days_in_trade'] = 0
+            self._pair_states[pair_key]['bars_in_trade'] = 0
         
         self.log_info(
-            f"Started pairs trading strategy with {len(self.pairs)} pairs, "
+            f"Started intraday pairs trading strategy with {len(self.pairs)} pairs, "
             f"entry_threshold={self.config.entry_threshold}, "
-            f"exit_threshold={self.config.exit_threshold}"
+            f"exit_threshold={self.config.exit_threshold}, "
+            f"max_hold_bars={self.config.max_hold_bars}"
         )
     
     async def on_bar_multi(self, symbols: List[str], timeframe: str, 
@@ -169,6 +189,19 @@ class PairsTradingStrategy(BaseStrategy):
         """Process bar data for all pairs simultaneously."""
         
         all_signals = []
+        
+        # Check if we're near market close (force close all positions)
+        now = datetime.now()
+        
+        # Calculate when to close positions (N minutes before market close)
+        close_hour = self.config.market_close_hour
+        close_minute = self.config.market_close_minute - self.config.close_before_eod_minutes
+        if close_minute < 0:
+            close_hour -= 1
+            close_minute += 60
+        close_positions_time = time(close_hour, close_minute)
+        
+        is_near_close = now.time() >= close_positions_time
         
         # Process each pair independently
         for pair in self.pairs:
@@ -214,12 +247,26 @@ class PairsTradingStrategy(BaseStrategy):
             
             zscore = (ratio - mean_ratio) / std_ratio
             
-            # Track days in trade
+            # Track bars in trade
             if pair_state['current_position'] != "flat":
-                pair_state['days_in_trade'] += 1
+                pair_state['bars_in_trade'] += 1
             
-            # Generate signals based on z-score
+            # Generate signals based on z-score and market conditions
             signals = []
+            
+            # Force close all positions near market close
+            if is_near_close and pair_state['current_position'] != "flat":
+                signals = self._generate_exit_signals(
+                    pair_key=pair_key,
+                    exit_reason="end_of_day",
+                    zscore=zscore,
+                    price_a=price_a,
+                    price_b=price_b,
+                    stock_a=stock_a,
+                    stock_b=stock_b
+                )
+                all_signals.extend(signals)
+                continue  # Skip other checks for this pair
             
             if pair_state['current_position'] == "flat":
                 # Look for entry signals
@@ -261,7 +308,7 @@ class PairsTradingStrategy(BaseStrategy):
                     should_exit_stop_loss = True
                 
                 # Exit condition 3: Held too long
-                should_exit_time = pair_state['days_in_trade'] >= self.config.max_hold_days
+                should_exit_time = pair_state['bars_in_trade'] >= self.config.max_hold_bars
                 
                 if should_exit_mean_reversion or should_exit_stop_loss or should_exit_time:
                     exit_reason = (
@@ -358,7 +405,7 @@ class PairsTradingStrategy(BaseStrategy):
         # Update pair state
         pair_state['current_position'] = position_type
         pair_state['entry_zscore'] = zscore
-        pair_state['days_in_trade'] = 0
+        pair_state['bars_in_trade'] = 0
         
         return signals
     
@@ -380,7 +427,7 @@ class PairsTradingStrategy(BaseStrategy):
                 exit_reason=exit_reason,
                 zscore=zscore,
                 entry_zscore=pair_state['entry_zscore'],
-                days_held=pair_state['days_in_trade'],
+                bars_held=pair_state['bars_in_trade'],
                 pair=pair_key
             ))
             
@@ -393,7 +440,7 @@ class PairsTradingStrategy(BaseStrategy):
                 exit_reason=exit_reason,
                 zscore=zscore,
                 entry_zscore=pair_state['entry_zscore'],
-                days_held=pair_state['days_in_trade'],
+                bars_held=pair_state['bars_in_trade'],
                 pair=pair_key
             ))
         
@@ -408,7 +455,7 @@ class PairsTradingStrategy(BaseStrategy):
                 exit_reason=exit_reason,
                 zscore=zscore,
                 entry_zscore=pair_state['entry_zscore'],
-                days_held=pair_state['days_in_trade'],
+                bars_held=pair_state['bars_in_trade'],
                 pair=pair_key
             ))
             
@@ -421,20 +468,20 @@ class PairsTradingStrategy(BaseStrategy):
                 exit_reason=exit_reason,
                 zscore=zscore,
                 entry_zscore=pair_state['entry_zscore'],
-                days_held=pair_state['days_in_trade'],
+                bars_held=pair_state['bars_in_trade'],
                 pair=pair_key
             ))
         
         self.log_info(
             f"EXIT [{pair_key}] ({exit_reason}): Close {pair_state['current_position']}, "
             f"z-score={zscore:.2f} (entry={pair_state['entry_zscore']:.2f}), "
-            f"days_held={pair_state['days_in_trade']}"
+            f"bars_held={pair_state['bars_in_trade']}"
         )
         
         # Reset pair state
         pair_state['current_position'] = "flat"
         pair_state['entry_zscore'] = 0.0
-        pair_state['days_in_trade'] = 0
+        pair_state['bars_in_trade'] = 0
         
         return signals
     
@@ -474,7 +521,7 @@ class PairsTradingStrategy(BaseStrategy):
                 "position": state['current_position'],
                 "current_ratio": current_ratio,
                 "ratio_history_length": len(state['ratio_history']),
-                "days_in_trade": state['days_in_trade'],
+                "bars_in_trade": state['bars_in_trade'],
                 "entry_zscore": state['entry_zscore'],
             }
         
@@ -484,7 +531,8 @@ class PairsTradingStrategy(BaseStrategy):
                 "lookback_window": self.config.lookback_window,
                 "entry_threshold": self.config.entry_threshold,
                 "exit_threshold": self.config.exit_threshold,
-                "position_size": self.config.position_size
+                "position_size": self.config.position_size,
+                "max_hold_bars": self.config.max_hold_bars
             },
             "num_pairs": len(self.pairs),
             "pairs_state": pairs_state,
