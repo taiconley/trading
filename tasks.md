@@ -902,7 +902,10 @@ BT_TICK_SIZE_US_EQUITY=0.01
   - [x] `POST /api/watchlist` - Add/remove symbols from watchlist
   - [x] `GET /api/health` - Service health status
 - [x] Real-time updates:
-  - [x] Polling-based updates (5s for overview, 2s for market data)
+  - [x] WebSocket implementation for market data ✅ (Oct 22, 2025)
+  - [ ] WebSocket implementation for account updates (TODO - HIGH PRIORITY)
+  - [ ] WebSocket implementation for order updates (TODO - HIGH PRIORITY)
+  - [x] Polling fallback for overview page (5s intervals)
   - [x] Auto-refresh for all pages
   - [x] Service health monitoring
 - [x] User interface:
@@ -955,12 +958,53 @@ BT_TICK_SIZE_US_EQUITY=0.01
 - **Added**: Custom scrollbars, pulse animations, smooth transitions
 - **Result**: Clean, modern, professional dashboard with excellent UX
 
+### WebSocket Implementation Status (Oct 22, 2025):
+
+**✅ COMPLETED:**
+1. **Market Data Service** (`backend-marketdata` - port 8002)
+   - ✅ Backend: WebSocket endpoint `/ws` operational
+   - ✅ Frontend: `MarketData.tsx` using WebSocket for real-time ticks
+   - ✅ Result: Eliminated ~540 polling requests/min → 0 requests
+   - ✅ Visual: Green pulsing dot shows live connection status
+   - ✅ Bugfix: NaN handling for invalid tick sizes from TWS
+
+**🔧 TODO - HIGH PRIORITY:**
+
+2. **Account Service** (`backend-account` - port 8001)
+   - ✅ Backend: WebSocket endpoint `/ws` exists (not used)
+   - ❌ Frontend: `Overview.tsx` still polling every 5s
+   - **Polling**: `/api/account` → account stats, P&L, positions
+   - **Impact**: ~12 requests/min per user
+   - **Benefit**: Instant balance/P&L updates, real-time position changes
+
+3. **Trader Service** (`backend-trader` - port 8004)
+   - ✅ Backend: WebSocket endpoint `/ws` exists (not used)
+   - ❌ Frontend: `Overview.tsx` still polling every 5s
+   - **Polling**: `/api/orders` → order status, fills, executions
+   - **Impact**: ~12 requests/min per user
+   - **Benefit**: Instant order fill notifications, real-time status updates
+
+**Services with WebSocket Endpoints:**
+```
+ws://localhost:8001/ws  → Account updates (balance, P&L, positions)
+ws://localhost:8002/ws  → Market data (ticks) [IMPLEMENTED ✅]
+ws://localhost:8004/ws  → Order updates (status, fills, executions)
+```
+
+**Frontend Files to Update:**
+- `frontend/src/pages/Overview.tsx` - Add WebSocket for account + orders
+- Optional: `frontend/src/pages/Strategies.tsx` - Live strategy state
+
+**Implementation Reference:**
+- See `frontend/src/pages/MarketData.tsx` (lines 137-183) for WebSocket pattern
+- Backend services already broadcast updates via `_broadcast_websocket_update()`
+
 ### Notes:
 - Dashboard designed for desktop/tablet viewing (responsive)
-- All pages auto-refresh to show latest data
+- Market data now real-time via WebSockets (Oct 2025) ✅
+- Account/orders still use polling (5s) - acceptable but suboptimal
 - Backtests and optimizations are read-only (run via CLI)
 - Strategies can be enabled/disabled and parameters edited via UI
-- WebSocket support can be added in future for true real-time updates
 - Color scheme: Light gray background, dark slate sidebar, blue accents
 - Typography: Slate colors for high contrast (slate-900, slate-700, slate-600)
 

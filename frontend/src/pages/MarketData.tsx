@@ -113,9 +113,11 @@ interface SymbolCardProps {
 function SymbolCard({ symbol, onRemove }: SymbolCardProps) {
   const [ticks, setTicks] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
 
   useEffect(() => {
-    const fetchTicks = async () => {
+    // Fetch initial tick data
+    const fetchInitialTicks = async () => {
       try {
         setLoading(true);
         const data = await api.getTicks(symbol, 1);
@@ -123,15 +125,61 @@ function SymbolCard({ symbol, onRemove }: SymbolCardProps) {
           setTicks(data.ticks[0]);
         }
       } catch (err) {
-        console.error('Failed to fetch ticks:', err);
+        console.error('Failed to fetch initial ticks:', err);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchTicks();
-    const interval = setInterval(fetchTicks, 2000);
-    return () => clearInterval(interval);
+    fetchInitialTicks();
+  }, [symbol]);
+
+  useEffect(() => {
+    // Connect to WebSocket for real-time updates
+    const wsUrl = 'ws://localhost:8002/ws';
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log(`WebSocket connected for market data`);
+      setWsConnected(true);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        
+        // Handle tick updates for this symbol
+        if (message.type === 'tick_update' && message.data.symbol === symbol) {
+          setTicks({
+            symbol: message.data.symbol,
+            bid: message.data.bid,
+            ask: message.data.ask,
+            last: message.data.last,
+            bid_size: message.data.bid_size,
+            ask_size: message.data.ask_size,
+            last_size: message.data.last_size,
+            timestamp: message.data.timestamp
+          });
+        }
+      } catch (err) {
+        console.error('Failed to parse WebSocket message:', err);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setWsConnected(false);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected');
+      setWsConnected(false);
+    };
+
+    // Cleanup on unmount
+    return () => {
+      ws.close();
+    };
   }, [symbol]);
 
   return (
@@ -143,7 +191,15 @@ function SymbolCard({ symbol, onRemove }: SymbolCardProps) {
         <X className="w-4 h-4" />
       </button>
 
-      <h4 className="text-lg font-bold text-gray-900 mb-2">{symbol}</h4>
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="text-lg font-bold text-gray-900">{symbol}</h4>
+        <div className="flex items-center space-x-1">
+          <div 
+            className={`w-2 h-2 rounded-full ${wsConnected ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}
+            title={wsConnected ? 'Live' : 'Disconnected'}
+          />
+        </div>
+      </div>
 
       {loading && !ticks ? (
         <div className="flex items-center justify-center py-4">

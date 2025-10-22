@@ -10,6 +10,7 @@ import asyncio
 import signal
 import sys
 import time
+import math
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 from decimal import Decimal
@@ -379,21 +380,39 @@ class MarketDataService:
         
         self.logger.info("Unsubscribed from all market data")
     
+    def _is_valid_number(self, value) -> bool:
+        """Check if a value is a valid number (not None, not NaN, not inf)."""
+        if value is None:
+            return False
+        try:
+            return not (math.isnan(value) or math.isinf(value))
+        except (TypeError, ValueError):
+            return False
+    
+    def _safe_int(self, value) -> Optional[int]:
+        """Safely convert a value to int, handling NaN, None, and inf."""
+        if not self._is_valid_number(value):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+    
     async def _process_tick_data(self, ticker: Ticker):
         """Process and store tick data in database."""
         try:
             symbol = ticker.contract.symbol
             
-            # Extract tick data
+            # Extract tick data with proper NaN handling
             tick_data = {
                 'symbol': symbol,
                 'ts': datetime.now(timezone.utc),
-                'bid': Decimal(str(ticker.bid)) if ticker.bid and ticker.bid > 0 else None,
-                'ask': Decimal(str(ticker.ask)) if ticker.ask and ticker.ask > 0 else None,
-                'last': Decimal(str(ticker.last)) if ticker.last and ticker.last > 0 else None,
-                'bid_size': ticker.bidSize if ticker.bidSize else None,
-                'ask_size': ticker.askSize if ticker.askSize else None,
-                'last_size': ticker.lastSize if ticker.lastSize else None
+                'bid': Decimal(str(ticker.bid)) if self._is_valid_number(ticker.bid) and ticker.bid > 0 else None,
+                'ask': Decimal(str(ticker.ask)) if self._is_valid_number(ticker.ask) and ticker.ask > 0 else None,
+                'last': Decimal(str(ticker.last)) if self._is_valid_number(ticker.last) and ticker.last > 0 else None,
+                'bid_size': self._safe_int(ticker.bidSize),
+                'ask_size': self._safe_int(ticker.askSize),
+                'last_size': self._safe_int(ticker.lastSize)
             }
             
             # Only store if we have meaningful data
