@@ -9,6 +9,7 @@ export function Overview() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [health, setHealth] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [wsConnected, setWsConnected] = useState({ account: false, trader: false });
 
   const fetchData = async () => {
     try {
@@ -31,10 +32,119 @@ export function Overview() {
     }
   };
 
+  // Initial data fetch
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 5000); // Refresh every 5 seconds
-    return () => clearInterval(interval);
+  }, []);
+
+  // WebSocket for Account Updates
+  useEffect(() => {
+    const wsUrl = 'ws://localhost:8001/ws';
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('Account WebSocket connected');
+      setWsConnected(prev => ({ ...prev, account: true }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        
+        if (message.type === 'account_summary' || message.type === 'account_value') {
+          // Refresh account data when values change
+          api.getAccountStats().then(accountData => {
+            if (accountData) setAccount(accountData);
+          });
+        } else if (message.type === 'position') {
+          // Update positions in real-time
+          api.getAccountStats().then(accountData => {
+            if (accountData) setAccount(accountData);
+          });
+        } else if (message.type === 'pnl') {
+          // Update P&L in real-time
+          console.log('P&L Update:', message.data);
+        }
+      } catch (err) {
+        console.error('Failed to parse account WebSocket message:', err);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('Account WebSocket error:', error);
+      setWsConnected(prev => ({ ...prev, account: false }));
+    };
+
+    ws.onclose = () => {
+      console.log('Account WebSocket disconnected');
+      setWsConnected(prev => ({ ...prev, account: false }));
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, []);
+
+  // WebSocket for Order Updates
+  useEffect(() => {
+    const wsUrl = 'ws://localhost:8004/ws';
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('Trader WebSocket connected');
+      setWsConnected(prev => ({ ...prev, trader: true }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        
+        if (message.type === 'order_status') {
+          console.log('Order Status Update:', message.data);
+          // Refresh orders list when order status changes
+          api.getOrders({ limit: 10 }).then(ordersData => {
+            setOrders(ordersData.orders || ordersData);
+          });
+        } else if (message.type === 'execution') {
+          console.log('Execution Update:', message.data);
+          // Refresh both orders and account when execution happens
+          Promise.all([
+            api.getOrders({ limit: 10 }),
+            api.getAccountStats()
+          ]).then(([ordersData, accountData]) => {
+            setOrders(ordersData.orders || ordersData);
+            if (accountData) setAccount(accountData);
+          });
+        }
+      } catch (err) {
+        console.error('Failed to parse trader WebSocket message:', err);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('Trader WebSocket error:', error);
+      setWsConnected(prev => ({ ...prev, trader: false }));
+    };
+
+    ws.onclose = () => {
+      console.log('Trader WebSocket disconnected');
+      setWsConnected(prev => ({ ...prev, trader: false }));
+    };
+
+    return () => {
+      ws.close();
+    };
+  }, []);
+
+  // Still refresh health periodically (doesn't have WebSocket)
+  useEffect(() => {
+    const healthInterval = setInterval(() => {
+      api.getAggregateHealth().then(healthData => {
+        if (healthData) setHealth(healthData);
+      }).catch(err => console.error('Failed to fetch health:', err));
+    }, 10000); // Every 10 seconds for health only
+
+    return () => clearInterval(healthInterval);
   }, []);
 
   if (loading && !account) {
@@ -47,6 +157,18 @@ export function Overview() {
 
   return (
     <div className="space-y-6">
+      {/* WebSocket Connection Status */}
+      <div className="flex items-center justify-end space-x-4 text-sm">
+        <div className="flex items-center space-x-2">
+          <div className={`w-2 h-2 rounded-full ${wsConnected.account ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+          <span className="text-slate-600">Account {wsConnected.account ? 'Live' : 'Disconnected'}</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className={`w-2 h-2 rounded-full ${wsConnected.trader ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`} />
+          <span className="text-slate-600">Orders {wsConnected.trader ? 'Live' : 'Disconnected'}</span>
+        </div>
+      </div>
+
       {/* Error Alert */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center">
