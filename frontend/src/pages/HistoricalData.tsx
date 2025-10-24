@@ -145,13 +145,12 @@ export default function HistoricalData() {
       };
 
       if (dateRangeMode === 'absolute') {
-        // Convert end date to TWS format: "YYYYMMDD HH:MM:SS"
+        // Convert end date to TWS format: "YYYYMMDD-HH:MM:SS" (UTC)
         const endDateTime = new Date(endDate);
         endDateTime.setHours(23, 59, 59); // Set to end of day
         const tws_end_datetime = endDateTime.toISOString()
-          .replace('T', ' ')
-          .split('.')[0]
-          .replace(/-/g, '');
+          .replace('T', '-')
+          .split('.')[0];
         
         requestParams.end_datetime = tws_end_datetime;
         
