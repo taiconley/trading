@@ -18,7 +18,8 @@ from decimal import Decimal
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 import uvicorn
-from ib_insync import IB, Stock, Ticker
+from ib_insync import IB, Stock, Ticker, RealTimeBarList
+from collections import deque
 
 # Import our common modules
 # Add the src directory to Python path for Docker compatibility
@@ -27,7 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from common.config import get_settings
 from common.db import get_db_session, execute_with_retry, initialize_database
-from common.models import WatchlistEntry, Tick, Symbol, HealthStatus
+from common.models import WatchlistEntry, Tick, Symbol, HealthStatus, Candle
 from common.logging import configure_service_logging, log_market_data_event, log_system_event
 from common.notify import listen_for_watchlist_updates, get_notification_manager, initialize_notifications
 from tws_bridge.ib_client import create_ib_client
@@ -52,8 +53,14 @@ class MarketDataService:
         self.watchlist_symbols: Set[str] = set()
         self.max_subscriptions = self.settings.market_data.max_subscriptions
         
+        # Real-time 5-second bar subscriptions
+        self.realtime_bar_subscriptions: Dict[str, RealTimeBarList] = {}
+        self.bar_cache: Dict[str, deque] = {}  # In-memory cache of recent bars per symbol
+        self.bar_cache_size = 1000  # Keep last 1000 bars (~83 minutes at 5-sec bars)
+        
         # WebSocket connections for real-time updates
         self.websocket_connections: List[WebSocket] = []
+        self.bar_websocket_connections: List[WebSocket] = []  # Websockets for bar streaming
         
         # Service state
         self.running = False
@@ -131,6 +138,88 @@ class MarketDataService:
             finally:
                 if websocket in self.websocket_connections:
                     self.websocket_connections.remove(websocket)
+        
+        @self.app.post("/realtime-bars/subscribe")
+        async def subscribe_realtime_bars():
+            """Subscribe to real-time 5-second bars for watchlist symbols."""
+            try:
+                subscribed = await self._subscribe_realtime_bars()
+                return {
+                    "status": "success",
+                    "subscribed_symbols": subscribed,
+                    "count": len(subscribed)
+                }
+            except Exception as e:
+                self.logger.error(f"Failed to subscribe to real-time bars: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"status": "error", "message": str(e)}
+                )
+        
+        @self.app.get("/realtime-bars/subscriptions")
+        async def get_realtime_bar_subscriptions():
+            """Get active real-time bar subscriptions."""
+            return {
+                "subscriptions": list(self.realtime_bar_subscriptions.keys()),
+                "count": len(self.realtime_bar_subscriptions)
+            }
+        
+        @self.app.get("/realtime-bars/cache/{symbol}")
+        async def get_cached_bars(symbol: str, limit: int = 100):
+            """Get cached bars for a symbol."""
+            if symbol not in self.bar_cache:
+                return JSONResponse(
+                    status_code=404,
+                    content={"error": f"No cached bars for {symbol}"}
+                )
+            
+            bars = list(self.bar_cache[symbol])[-limit:]
+            return {
+                "symbol": symbol,
+                "count": len(bars),
+                "bars": [
+                    {
+                        "timestamp": bar["timestamp"].isoformat(),
+                        "open": float(bar["open"]),
+                        "high": float(bar["high"]),
+                        "low": float(bar["low"]),
+                        "close": float(bar["close"]),
+                        "volume": bar["volume"]
+                    }
+                    for bar in bars
+                ]
+            }
+        
+        @self.app.websocket("/ws/bars")
+        async def websocket_bars(websocket: WebSocket):
+            """WebSocket endpoint for real-time 5-second bar streaming."""
+            await websocket.accept()
+            self.bar_websocket_connections.append(websocket)
+            self.logger.info(f"Bar WebSocket connected. Total: {len(self.bar_websocket_connections)}")
+            
+            try:
+                # Send initial status
+                await websocket.send_json({
+                    "type": "status",
+                    "data": {
+                        "subscribed_symbols": list(self.realtime_bar_subscriptions.keys()),
+                        "message": "Connected to real-time bar stream"
+                    }
+                })
+                
+                # Keep connection alive
+                while True:
+                    try:
+                        await websocket.receive_text()
+                    except WebSocketDisconnect:
+                        break
+                        
+            except WebSocketDisconnect:
+                pass
+            finally:
+                if websocket in self.bar_websocket_connections:
+                    self.bar_websocket_connections.remove(websocket)
+                self.logger.info(f"Bar WebSocket disconnected. Remaining: {len(self.bar_websocket_connections)}")
     
     async def start(self):
         """Start the market data service."""
@@ -159,6 +248,13 @@ class MarketDataService:
             # Load watchlist and start subscriptions
             await self._load_watchlist()
             await self._subscribe_to_watchlist()
+            
+            # Subscribe to real-time 5-second bars
+            try:
+                subscribed = await self._subscribe_realtime_bars()
+                self.logger.info(f"Subscribed to real-time bars for {len(subscribed)} symbols")
+            except Exception as e:
+                self.logger.error(f"Failed to subscribe to real-time bars: {e}")
             
             # Setup watchlist update notifications
             self._setup_watchlist_notifications()
@@ -447,6 +543,148 @@ class MarketDataService:
             
         except Exception as e:
             self.logger.error(f"Error processing tick data for {ticker.contract.symbol}: {e}")
+    
+    async def _subscribe_realtime_bars(self) -> List[str]:
+        """Subscribe to real-time 5-second bars for all watchlist symbols."""
+        if not self.connected or not self.ib_client:
+            raise Exception("Not connected to TWS")
+        
+        subscribed = []
+        
+        for symbol in self.watchlist_symbols:
+            if symbol in self.realtime_bar_subscriptions:
+                continue  # Already subscribed
+            
+            try:
+                contract = Stock(symbol, 'SMART', 'USD')
+                
+                # Subscribe to real-time 5-second bars (use underlying IB client)
+                bars = self.ib_client.ib.reqRealTimeBars(
+                    contract, 
+                    barSize=5,  # 5-second bars
+                    whatToShow='TRADES',
+                    useRTH=False  # Include extended hours
+                )
+                
+                # Store subscription
+                self.realtime_bar_subscriptions[symbol] = bars
+                
+                # Initialize bar cache for this symbol
+                if symbol not in self.bar_cache:
+                    self.bar_cache[symbol] = deque(maxlen=self.bar_cache_size)
+                
+                # Set up event handler for this symbol's bars
+                # Use a closure to properly capture the symbol
+                def make_handler(sym):
+                    def handler(bars_list, hasGaps):
+                        asyncio.create_task(self._on_realtime_bar_update(sym, bars_list))
+                    return handler
+                
+                bars.updateEvent += make_handler(symbol)
+                
+                subscribed.append(symbol)
+                self.logger.info(f"Subscribed to real-time bars for {symbol}")
+                
+            except Exception as e:
+                self.logger.error(f"Failed to subscribe to real-time bars for {symbol}: {e}")
+        
+        return subscribed
+    
+    async def _on_realtime_bar_update(self, symbol: str, bars_list: RealTimeBarList):
+        """Handle incoming real-time bar updates."""
+        try:
+            if not bars_list or len(bars_list) == 0:
+                return
+            
+            # Get the latest bar
+            bar = bars_list[-1]
+            
+            # Create bar dict
+            bar_data = {
+                "timestamp": bar.time,
+                "open": Decimal(str(bar.open_)),
+                "high": Decimal(str(bar.high)),
+                "low": Decimal(str(bar.low)),
+                "close": Decimal(str(bar.close)),
+                "volume": int(bar.volume)
+            }
+            
+            # Add to in-memory cache
+            if symbol in self.bar_cache:
+                self.bar_cache[symbol].append(bar_data)
+            
+            # Store to database asynchronously
+            asyncio.create_task(self._store_bar_to_db(symbol, bar_data))
+            
+            # Broadcast to WebSocket clients
+            await self._broadcast_bar_update(symbol, bar_data)
+            
+            log_market_data_event(
+                self.logger, "bar_update", symbol,
+                open=float(bar_data["open"]),
+                high=float(bar_data["high"]),
+                low=float(bar_data["low"]),
+                close=float(bar_data["close"]),
+                volume=bar_data["volume"]
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error processing real-time bar for {symbol}: {e}")
+    
+    async def _store_bar_to_db(self, symbol: str, bar_data: dict):
+        """Store a bar to the database."""
+        try:
+            def _store_candle(session):
+                candle = Candle(
+                    symbol=symbol,
+                    tf="5 secs",
+                    ts=bar_data["timestamp"],
+                    open=bar_data["open"],
+                    high=bar_data["high"],
+                    low=bar_data["low"],
+                    close=bar_data["close"],
+                    volume=bar_data["volume"]
+                )
+                session.add(candle)
+                session.commit()
+                return candle
+            
+            await asyncio.get_event_loop().run_in_executor(
+                None, lambda: execute_with_retry(_store_candle)
+            )
+            
+        except Exception as e:
+            self.logger.error(f"Error storing bar to database for {symbol}: {e}")
+    
+    async def _broadcast_bar_update(self, symbol: str, bar_data: dict):
+        """Broadcast bar update to all connected WebSocket clients."""
+        if not self.bar_websocket_connections:
+            return
+        
+        message = {
+            "type": "bar",
+            "symbol": symbol,
+            "data": {
+                "timestamp": bar_data["timestamp"].isoformat(),
+                "open": float(bar_data["open"]),
+                "high": float(bar_data["high"]),
+                "low": float(bar_data["low"]),
+                "close": float(bar_data["close"]),
+                "volume": bar_data["volume"]
+            }
+        }
+        
+        disconnected = []
+        for websocket in self.bar_websocket_connections:
+            try:
+                await websocket.send_json(message)
+            except Exception:
+                disconnected.append(websocket)
+        
+        # Remove disconnected websockets
+        for websocket in disconnected:
+            if websocket in self.bar_websocket_connections:
+                self.bar_websocket_connections.remove(websocket)
     
     def _setup_watchlist_notifications(self):
         """Setup listener for watchlist update notifications."""

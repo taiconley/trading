@@ -17,6 +17,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any
 from decimal import Decimal
+from collections import deque
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -167,6 +168,12 @@ class StrategyService:
         self.running = False
         self.bar_processing_interval = 5  # seconds - check strategies every 5 seconds
         
+        # Real-time bar cache (in-memory)
+        self.bar_cache: Dict[str, deque] = {}  # symbol -> deque of bar dicts
+        self.bar_cache_size = 2000  # Keep last 2000 bars per symbol in memory
+        self.marketdata_ws_client = None  # WebSocket connection to MarketData service
+        self.marketdata_reconnect_delay = 5  # seconds
+        
     def _setup_routes(self):
         """Setup FastAPI routes."""
         
@@ -312,19 +319,31 @@ class StrategyService:
     async def start(self):
         """Start the strategy service."""
         try:
+            print("DEBUG start(): Calling initialize()...", flush=True)
             await self.initialize()
+            print("DEBUG start(): initialize() completed", flush=True)
+            
+            # Backfill bar cache with historical data
+            print("DEBUG start(): Calling _backfill_bar_cache()...", flush=True)
+            await self._backfill_bar_cache()
+            print("DEBUG start(): _backfill_bar_cache() completed", flush=True)
             
             # Start main execution loop
             self.running = True
             
             # Start background tasks
+            print("DEBUG start(): Starting background tasks...", flush=True)
             asyncio.create_task(self._strategy_execution_loop())
             asyncio.create_task(self._strategy_reload_loop())
             asyncio.create_task(self._heartbeat_loop())
+            asyncio.create_task(self._connect_to_marketdata_stream())  # Real-time bars
+            print("DEBUG start(): Background tasks started", flush=True)
             
             logger.info("Strategy service started successfully")
+            print("DEBUG start(): All done!", flush=True)
             
         except Exception as e:
+            print(f"DEBUG start(): EXCEPTION: {e}", flush=True)
             logger.error(f"Failed to start strategy service: {e}")
             await self._update_health_status("unhealthy")
             raise
@@ -356,18 +375,29 @@ class StrategyService:
     
     async def _strategy_execution_loop(self):
         """Main strategy execution loop."""
+        print("DEBUG exec_loop: Starting strategy execution loop", flush=True)
         logger.info("Starting strategy execution loop")
+        iteration = 0
         
         while self.running and not self.shutdown_event.is_set():
             try:
+                iteration += 1
+                if iteration % 6 == 1:  # Log every ~30 seconds
+                    print(f"DEBUG exec_loop: Iteration {iteration}, processing {len(self.strategy_runners)} strategies", flush=True)
+                
                 # Process each active strategy
                 for strategy_id, runner in list(self.strategy_runners.items()):
                     if not runner.is_running or not runner.strategy.config.enabled:
                         continue
                     
-                    # Get latest bars for each symbol
-                    for symbol in runner.strategy.config.symbols:
-                        await self._process_symbol_for_strategy(runner, symbol)
+                    # Check if strategy supports multi-symbol mode
+                    if hasattr(runner.strategy, 'supports_multi_symbol') and runner.strategy.supports_multi_symbol:
+                        # Multi-symbol strategy: process all symbols together
+                        await self._process_multi_symbol_strategy(runner)
+                    else:
+                        # Single-symbol strategy: process each symbol individually
+                        for symbol in runner.strategy.config.symbols:
+                            await self._process_symbol_for_strategy(runner, symbol)
                 
                 # Wait before next iteration
                 await asyncio.sleep(self.bar_processing_interval)
@@ -381,9 +411,13 @@ class StrategyService:
     async def _process_symbol_for_strategy(self, runner: StrategyRunner, symbol: str):
         """Process a symbol for a specific strategy."""
         try:
-            # Get latest bars from database
+            # Get latest bars from in-memory cache (real-time bars)
             timeframe = runner.strategy.config.bar_timeframe
             lookback = runner.strategy.config.lookback_periods
+            
+            # Use in-memory cache instead of database for real-time data
+            if symbol in self.bar_cache and len(self.bar_cache[symbol]) > 0:
+                print(f"DEBUG process_symbol: Using {len(self.bar_cache[symbol])} cached bars for {symbol}", flush=True)
             
             bars_df = await self._get_latest_bars(symbol, timeframe, lookback)
             
@@ -400,9 +434,61 @@ class StrategyService:
         except Exception as e:
             logger.error(f"Error processing symbol {symbol} for strategy {runner.strategy.config.strategy_id}: {e}")
     
-    async def _get_latest_bars(self, symbol: str, timeframe: str, lookback: int) -> pd.DataFrame:
-        """Get latest bars from database."""
+    async def _process_multi_symbol_strategy(self, runner: StrategyRunner):
+        """Process a multi-symbol strategy (e.g., pairs trading)."""
         try:
+            timeframe = runner.strategy.config.bar_timeframe
+            lookback = runner.strategy.config.lookback_periods
+            symbols = runner.strategy.config.symbols
+            
+            print(f"DEBUG multi_symbol: Processing {len(symbols)} symbols for {runner.strategy.config.strategy_id}", flush=True)
+            
+            # Fetch bars for all symbols
+            bars_data = {}
+            for symbol in symbols:
+                bars_df = await self._get_latest_bars(symbol, timeframe, lookback)
+                if not bars_df.empty:
+                    bars_data[symbol] = bars_df
+            
+            if len(bars_data) < 2:
+                # Need at least 2 symbols for pairs trading
+                logger.debug(f"Insufficient data for multi-symbol strategy: {len(bars_data)}/{len(symbols)} symbols")
+                return
+            
+            # Log bar counts for debugging
+            bar_counts_str = ', '.join([f"{sym}:{len(df)}" for sym, df in list(bars_data.items())[:5]])
+            print(f"DEBUG multi_symbol: Calling on_bar_multi() with {len(bars_data)} symbols, bar counts: {bar_counts_str}...", flush=True)
+            
+            # Call strategy's multi-symbol handler
+            signals = await runner.strategy.on_bar_multi(symbols, timeframe, bars_data)
+            
+            print(f"DEBUG multi_symbol: Received {len(signals) if signals else 0} signals", flush=True)
+            
+            # Handle any generated signals
+            if signals:
+                await self._handle_strategy_signals(runner, signals)
+                
+        except Exception as e:
+            logger.error(f"Error processing multi-symbol strategy {runner.strategy.config.strategy_id}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    async def _get_latest_bars(self, symbol: str, timeframe: str, lookback: int) -> pd.DataFrame:
+        """Get latest bars from in-memory cache (real-time) or database (fallback)."""
+        try:
+            # Try to get from in-memory cache first (real-time)
+            if symbol in self.bar_cache and len(self.bar_cache[symbol]) > 0:
+                cached_bars = list(self.bar_cache[symbol])
+                
+                # Get last N bars from cache
+                recent_bars = cached_bars[-lookback:] if len(cached_bars) >= lookback else cached_bars
+                
+                if recent_bars:
+                    logger.debug(f"Using {len(recent_bars)} cached bars for {symbol}")
+                    return pd.DataFrame(recent_bars)
+            
+            # Fallback to database if cache is empty or insufficient
+            logger.debug(f"Fetching bars from database for {symbol} (cache miss)")
             with self.db_session_factory() as db:
                 # Query latest candles
                 candles = db.query(Candle).filter(
@@ -434,6 +520,141 @@ class StrategyService:
         except Exception as e:
             logger.error(f"Failed to get latest bars for {symbol}: {e}")
             return pd.DataFrame()
+    
+    async def _connect_to_marketdata_stream(self):
+        """Connect to MarketData service WebSocket for real-time bars."""
+        print("DEBUG _connect_to_marketdata_stream: Method called!", flush=True)
+        # MarketData service WebSocket endpoint (hardcoded as per Docker Compose setup)
+        ws_url = "ws://backend-marketdata:8002/ws/bars"
+        print(f"DEBUG _connect_to_marketdata_stream: Will connect to {ws_url}", flush=True)
+        
+        while self.running and not self.shutdown_event.is_set():
+            try:
+                print(f"DEBUG _connect_to_marketdata_stream: Attempting connection...", flush=True)
+                logger.info(f"Connecting to MarketData WebSocket at {ws_url}...")
+                
+                async with aiohttp.ClientSession() as session:
+                    print(f"DEBUG _connect: Created ClientSession", flush=True)
+                    async with session.ws_connect(ws_url) as ws:
+                        print(f"DEBUG _connect: WebSocket connected successfully!", flush=True)
+                        self.marketdata_ws_client = ws
+                        logger.info("Connected to MarketData real-time bar stream")
+                        
+                        # Listen for incoming bar updates
+                        async for msg in ws:
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                try:
+                                    data = json.loads(msg.data)
+                                    await self._handle_bar_update(data)
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Failed to parse WebSocket message: {e}")
+                            elif msg.type == aiohttp.WSMsgType.ERROR:
+                                logger.error(f"WebSocket error: {ws.exception()}")
+                                break
+                            elif msg.type == aiohttp.WSMsgType.CLOSED:
+                                logger.warning("WebSocket connection closed by server")
+                                break
+                        
+            except aiohttp.ClientError as e:
+                print(f"DEBUG _connect: ClientError: {e}", flush=True)
+                logger.error(f"MarketData WebSocket connection error: {e}")
+            except Exception as e:
+                print(f"DEBUG _connect: Exception: {e}", flush=True)
+                logger.error(f"Unexpected error in MarketData WebSocket: {e}")
+            finally:
+                self.marketdata_ws_client = None
+                
+                if self.running and not self.shutdown_event.is_set():
+                    logger.info(f"Reconnecting to MarketData in {self.marketdata_reconnect_delay}s...")
+                    await asyncio.sleep(self.marketdata_reconnect_delay)
+    
+    async def _handle_bar_update(self, data: Dict[str, Any]):
+        """Handle incoming bar update from MarketData service."""
+        try:
+            if data.get("type") != "bar_update":
+                return
+            
+            bar_data = data.get("data", {})
+            symbol = bar_data.get("symbol")
+            
+            if not symbol:
+                return
+            
+            # Initialize cache for symbol if needed
+            if symbol not in self.bar_cache:
+                self.bar_cache[symbol] = deque(maxlen=self.bar_cache_size)
+                logger.info(f"Initialized bar cache for {symbol}")
+            
+            # Add bar to cache
+            bar = {
+                'timestamp': pd.to_datetime(bar_data['timestamp']),
+                'open': float(bar_data['open']),
+                'high': float(bar_data['high']),
+                'low': float(bar_data['low']),
+                'close': float(bar_data['close']),
+                'volume': int(bar_data['volume'])
+            }
+            
+            self.bar_cache[symbol].append(bar)
+            logger.debug(f"Cached new bar for {symbol} at {bar['timestamp']} (cache size: {len(self.bar_cache[symbol])})")
+            
+        except Exception as e:
+            logger.error(f"Error handling bar update: {e}")
+    
+    async def _backfill_bar_cache(self):
+        """Backfill in-memory cache with recent historical bars on startup."""
+        try:
+            print(f"DEBUG _backfill: strategy_runners count = {len(self.strategy_runners)}", flush=True)
+            # Get all symbols from active strategies
+            all_symbols = set()
+            for runner in self.strategy_runners.values():
+                if runner.strategy.config.enabled:
+                    all_symbols.update(runner.strategy.config.symbols)
+            
+            print(f"DEBUG _backfill: all_symbols = {all_symbols}", flush=True)
+            if not all_symbols:
+                logger.info("No active strategies, skipping bar cache backfill")
+                print("DEBUG _backfill: EARLY RETURN - no symbols", flush=True)
+                return
+            
+            logger.info(f"Backfilling bar cache for {len(all_symbols)} symbols...")
+            print(f"DEBUG _backfill: About to query database for {len(all_symbols)} symbols", flush=True)
+            
+            with self.db_session_factory() as db:
+                for symbol in all_symbols:
+                    # Fetch recent bars (enough for max lookback + buffer)
+                    candles = db.query(Candle).filter(
+                        and_(
+                            Candle.symbol == symbol,
+                            Candle.tf == "5 secs"  # Match MarketData service format
+                        )
+                    ).order_by(desc(Candle.ts)).limit(self.bar_cache_size).all()
+                    
+                    if candles:
+                        # Initialize cache
+                        self.bar_cache[symbol] = deque(maxlen=self.bar_cache_size)
+                        
+                        # Add bars in chronological order
+                        candles.reverse()
+                        for candle in candles:
+                            self.bar_cache[symbol].append({
+                                'timestamp': candle.ts,
+                                'open': float(candle.open),
+                                'high': float(candle.high),
+                                'low': float(candle.low),
+                                'close': float(candle.close),
+                                'volume': int(candle.volume)
+                            })
+                        
+                        logger.info(f"Backfilled {len(self.bar_cache[symbol])} bars for {symbol}")
+                        print(f"DEBUG _backfill: Backfilled {len(self.bar_cache[symbol])} bars for {symbol}", flush=True)
+            
+            logger.info("Bar cache backfill complete")
+            print(f"DEBUG _backfill: Bar cache backfill complete! Cache has {len(self.bar_cache)} symbols", flush=True)
+            
+        except Exception as e:
+            logger.error(f"Failed to backfill bar cache: {e}")
+            print(f"DEBUG _backfill: EXCEPTION: {e}", flush=True)
     
     async def _handle_strategy_signals(self, runner: StrategyRunner, signals: List[Any]):
         """Handle signals generated by a strategy."""
@@ -695,15 +916,20 @@ class StrategyService:
             logger.error(f"Failed to update health status: {e}")
 
 
-# Global service instance
-strategy_service = StrategyService()
-
-
 async def main():
     """Main entry point."""
-    # Setup logging
+    # Setup logging first
+    print("=" * 80, flush=True)
+    print("DEBUG: main() function called!", flush=True)
+    print("=" * 80, flush=True)
     setup_logging("strategy")
     logger.info("Starting Strategy Service...")
+    print("DEBUG: After setup_logging and logger.info", flush=True)
+    
+    # Create service instance
+    print("DEBUG: Creating StrategyService instance...", flush=True)
+    strategy_service = StrategyService()
+    print("DEBUG: StrategyService instance created", flush=True)
     
     # Setup signal handlers
     def signal_handler(signum, frame):
@@ -715,7 +941,9 @@ async def main():
     
     try:
         # Start service
+        print("DEBUG: About to call strategy_service.start()...", flush=True)
         await strategy_service.start()
+        print("DEBUG: strategy_service.start() completed!", flush=True)
         
         # Start FastAPI server
         config = uvicorn.Config(

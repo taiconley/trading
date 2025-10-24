@@ -27,6 +27,7 @@ DEFAULT_PARAMS = {
         ["PFE", "MRK"],     # Pharma
         ["DIS", "NFLX"]     # Media
     ],
+    "lookback_periods": 250,        # Number of bars to fetch for strategy
     "lookback_window": 120,         # Optimized: 240 → 120
     "entry_threshold": 1.5,         # Optimized: 2.0 → 1.5
     "exit_threshold": 1.0,          # Optimized: 0.5 → 1.0
