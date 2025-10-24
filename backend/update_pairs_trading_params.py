@@ -14,7 +14,7 @@ from common.db import get_db_session
 from common.models import Strategy
 from sqlalchemy import text
 
-# Default parameters from pairs_trade.py
+# Optimized parameters from genetic algorithm (Run ID: 33, Sharpe: 0.7863)
 DEFAULT_PARAMS = {
     "pairs": [
         ["AAPL", "MSFT"],   # Tech Large Cap
@@ -27,16 +27,16 @@ DEFAULT_PARAMS = {
         ["PFE", "MRK"],     # Pharma
         ["DIS", "NFLX"]     # Media
     ],
-    "lookback_window": 240,
-    "entry_threshold": 2.0,
-    "exit_threshold": 0.5,
-    "position_size": 100,
-    "max_hold_bars": 720,
-    "stop_loss_zscore": 3.0,
+    "lookback_window": 120,         # Optimized: 240 → 120
+    "entry_threshold": 1.5,         # Optimized: 2.0 → 1.5
+    "exit_threshold": 1.0,          # Optimized: 0.5 → 1.0
+    "position_size": 25,            # Optimized: 100 → 25
+    "max_hold_bars": 360,           # Optimized: 720 → 360
+    "stop_loss_zscore": 4.0,        # Optimized: 3.0 → 4.0
     "market_close_hour": 16,
     "market_close_minute": 0,
     "close_before_eod_minutes": 5,
-    "cooldown_bars": 60,
+    "cooldown_bars": 90,            # Optimized: 60 → 90
     "timezone": "US/Eastern",
     "spread_history_bars": 1000,
     "hedge_refresh_bars": 30,
