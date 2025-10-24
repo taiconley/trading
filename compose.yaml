@@ -64,6 +64,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-account
+    ports:
+      - "8001:8001"
     command: python -m src.services.account.main
     environment:
       SERVICE_NAME: account

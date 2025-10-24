@@ -315,10 +315,14 @@ class TraderService:
         self.shutdown_event = asyncio.Event()
         
     async def initialize(self):
+        print("DEBUG: initialize() ENTRY POINT")
         """Initialize the trader service"""
+        print("DEBUG: INSIDE initialize() - first line")
         try:
             # Get client ID
+            print("DEBUG: About to get client ID")
             self.client_id = self.client_id_manager.get_service_client_id("trader")
+            print(f"DEBUG: Got client ID: {self.client_id}")
             logger.info(f"Allocated client ID: {self.client_id}")
             
             # Initialize IB client
@@ -333,13 +337,55 @@ class TraderService:
             self.ib_client.ib.execDetailsEvent += self._on_execution
             
             # Connect to TWS
+            print("DEBUG: About to connect to TWS")
             await self.ib_client.connect()
+            print(f"DEBUG: TWS connect() completed, ib_client={self.ib_client}, ib={self.ib_client.ib if self.ib_client else None}")
+            print(f"DEBUG: ib.isConnected()={self.ib_client.ib.isConnected() if self.ib_client and self.ib_client.ib else 'N/A'}")
             logger.info("Connected to TWS successfully")
+            
+            # Subscribe to ALL open orders (not just orders from this client ID)
+            print("DEBUG: Requesting all open orders...")
+            self.ib_client.ib.reqAutoOpenOrders(True)
+            # Also request existing open orders (async version)
+            open_orders = await self.ib_client.ib.reqAllOpenOrdersAsync()
+            print(f"DEBUG: Found {len(open_orders)} existing open orders")
+            
+            # Sync existing orders to database (one-time on startup)
+            for trade in open_orders:
+                await self._on_order_status(trade)
+            
+            logger.info(f"Subscribed to all open orders, synced {len(open_orders)} existing to database")
+            print(f"DEBUG: Event-driven order updates enabled - orders will be created immediately when placed in TWS")
+            
+            # Sync historical executions to catch filled orders (especially market orders)
+            print("DEBUG: Requesting execution history...")
+            try:
+                from ib_insync import ExecutionFilter
+                executions = await self.ib_client.ib.reqExecutionsAsync(ExecutionFilter())
+                print(f"DEBUG: Found {len(executions)} historical executions")
+                
+                # Process each execution (will auto-create orders if missing)
+                for fill in executions:
+                    # Find the trade object for this execution
+                    trades = [t for t in self.ib_client.ib.trades() if t.order.orderId == fill.execution.orderId]
+                    if trades:
+                        await self._on_execution(trades[0], fill)
+                    else:
+                        logger.warning(f"Could not find trade for execution {fill.execution.execId}")
+                
+                logger.info(f"Synced {len(executions)} historical executions")
+            except Exception as e:
+                logger.warning(f"Failed to sync historical executions: {e}")
+                print(f"DEBUG: Execution sync warning (non-critical): {e}")
             
             # Update health status
             await self._update_health_status("healthy")
+            print("DEBUG: Health status updated")
             
         except Exception as e:
+            print(f"DEBUG: EXCEPTION in initialize(): {e}")
+            import traceback
+            traceback.print_exc()
             logger.error(f"Failed to initialize trader service: {e}")
             await self._update_health_status("unhealthy")
             raise
@@ -350,34 +396,84 @@ class TraderService:
             order_status = trade.orderStatus.status
             ib_order_id = trade.order.orderId
             
+            print(f"🔔 ORDER EVENT: {ib_order_id} -> {order_status} (Symbol: {trade.contract.symbol})")
             logger.info(f"Order status update: {ib_order_id} -> {order_status}")
             
-            # Update database
+            # Update or create order in database
             with self.db_session_factory() as session:
                 db_order = session.query(Order).filter(
                     Order.external_order_id == str(ib_order_id)
                 ).first()
                 
                 if db_order:
+                    # Update existing order
+                    print(f"   📝 Updating existing order ID {db_order.id}: {db_order.symbol} -> {order_status}")
                     db_order.status = order_status
                     db_order.updated_at = datetime.now(timezone.utc)
                     session.commit()
-                    
-                    # Broadcast update via WebSocket
-                    await self.websocket_manager.broadcast({
-                        'type': 'order_status',
-                        'data': {
-                            'order_id': db_order.id,
-                            'external_order_id': str(ib_order_id),
-                            'status': order_status,
-                            'symbol': db_order.symbol,
-                            'side': db_order.side,
-                            'qty': float(db_order.qty),
-                            'updated_at': db_order.updated_at.isoformat()
-                        }
-                    })
                 else:
-                    logger.warning(f"Order not found in database: {ib_order_id}")
+                    # Auto-create external order (placed directly in TWS)
+                    print(f"   ➕ Creating NEW order in database: {trade.contract.symbol} {trade.order.action} {trade.order.totalQuantity}")
+                    logger.info(f"Creating external order from TWS: {ib_order_id}")
+                    
+                    # Ensure account exists
+                    account_id = trade.order.account if trade.order.account else "DU7084660"
+                    account = session.query(Account).filter_by(account_id=account_id).first()
+                    if not account:
+                        account = Account(account_id=account_id, currency='USD')
+                        session.add(account)
+                        session.flush()
+                    
+                    # Ensure symbol exists
+                    symbol = trade.contract.symbol
+                    db_symbol = session.query(Symbol).filter_by(symbol=symbol).first()
+                    if not db_symbol:
+                        logger.info(f"Auto-creating symbol: {symbol}")
+                        db_symbol = Symbol(
+                            symbol=symbol,
+                            conid=trade.contract.conId,
+                            primary_exchange=trade.contract.primaryExchange or 'SMART',
+                            currency=trade.contract.currency or 'USD',
+                            active=True
+                        )
+                        session.add(db_symbol)
+                        session.flush()
+                    
+                    # Create new order
+                    db_order = Order(
+                        account_id=account_id,
+                        strategy_id=None,  # External order, no strategy
+                        symbol=symbol,
+                        side=trade.order.action,  # BUY or SELL
+                        qty=Decimal(str(trade.order.totalQuantity)),
+                        order_type=trade.order.orderType,  # MKT, LMT, etc.
+                        limit_price=Decimal(str(trade.order.lmtPrice)) if trade.order.lmtPrice else None,
+                        stop_price=Decimal(str(trade.order.auxPrice)) if trade.order.auxPrice else None,
+                        tif=trade.order.tif,
+                        status=order_status,
+                        external_order_id=str(ib_order_id),
+                        placed_at=datetime.now(timezone.utc),
+                        updated_at=datetime.now(timezone.utc)
+                    )
+                    session.add(db_order)
+                    session.commit()
+                    print(f"   ✅ Order saved to database! ID: {db_order.id}")
+                    logger.info(f"✅ Created external order: {symbol} {trade.order.action} {trade.order.totalQuantity}")
+                
+                # Broadcast update via WebSocket (frontend polls DB, so this is optional now)
+                await self.websocket_manager.broadcast({
+                    'type': 'order_status',
+                    'data': {
+                        'order_id': db_order.id,
+                        'external_order_id': str(ib_order_id),
+                        'status': order_status,
+                        'symbol': db_order.symbol,
+                        'side': db_order.side,
+                        'qty': float(db_order.qty),
+                        'updated_at': db_order.updated_at.isoformat()
+                    }
+                })
+                print(f"   📡 Order ID {db_order.id} ready - frontend will see it on next poll (2s)")
                     
         except Exception as e:
             logger.error(f"Error handling order status update: {e}")
@@ -421,10 +517,103 @@ class TraderService:
                         }
                     })
                 else:
-                    logger.warning(f"Order not found for execution: {trade.order.orderId}")
+                    # Order doesn't exist - this happens with fast-filling orders (market orders)
+                    # Create the order record from the execution data
+                    
+                    # Skip invalid executions (orderId=0, qty=0, etc.)
+                    if not trade.order.orderId or trade.order.orderId == 0:
+                        logger.warning(f"Skipping invalid execution with orderId={trade.order.orderId}")
+                        return
+                    if not trade.order.totalQuantity or trade.order.totalQuantity <= 0:
+                        logger.warning(f"Skipping execution with invalid quantity={trade.order.totalQuantity}")
+                        return
+                    
+                    logger.info(f"Creating order from execution: {trade.order.orderId}")
+                    
+                    # Ensure account exists
+                    account_id = trade.order.account if trade.order.account else "DU7084660"
+                    account = session.query(Account).filter_by(account_id=account_id).first()
+                    if not account:
+                        account = Account(account_id=account_id, currency='USD')
+                        session.add(account)
+                        session.flush()
+                    
+                    # Ensure symbol exists
+                    symbol = fill.contract.symbol
+                    db_symbol = session.query(Symbol).filter_by(symbol=symbol).first()
+                    if not db_symbol:
+                        logger.info(f"Auto-creating symbol: {symbol}")
+                        db_symbol = Symbol(
+                            symbol=symbol,
+                            conid=fill.contract.conId,
+                            primary_exchange=fill.contract.primaryExchange or 'SMART',
+                            currency=fill.contract.currency or 'USD',
+                            active=True
+                        )
+                        session.add(db_symbol)
+                        session.flush()
+                    
+                    # Get execution time (could be datetime or need conversion)
+                    if hasattr(execution, 'time') and execution.time:
+                        if isinstance(execution.time, datetime):
+                            exec_time = execution.time if execution.time.tzinfo else execution.time.replace(tzinfo=timezone.utc)
+                        else:
+                            exec_time = datetime.fromtimestamp(execution.time, tz=timezone.utc)
+                    else:
+                        exec_time = datetime.now(timezone.utc)
+                    
+                    # Create order record from execution
+                    db_order = Order(
+                        account_id=account_id,
+                        strategy_id=None,  # External order
+                        symbol=symbol,
+                        side=trade.order.action,  # BUY or SELL
+                        qty=Decimal(str(trade.order.totalQuantity)),
+                        order_type=trade.order.orderType,  # MKT, LMT, etc.
+                        limit_price=Decimal(str(trade.order.lmtPrice)) if trade.order.lmtPrice else None,
+                        stop_price=Decimal(str(trade.order.auxPrice)) if trade.order.auxPrice else None,
+                        tif=trade.order.tif,
+                        status='Filled',  # Must be filled if we're getting execution
+                        external_order_id=str(trade.order.orderId),
+                        placed_at=exec_time,
+                        updated_at=datetime.now(timezone.utc)
+                    )
+                    session.add(db_order)
+                    session.commit()
+                    session.refresh(db_order)
+                    logger.info(f"✅ Created order {db_order.id} from execution")
+                    
+                    # Now create the execution record
+                    db_execution = Execution(
+                        order_id=db_order.id,
+                        trade_id=execution.execId,
+                        symbol=symbol,
+                        qty=Decimal(str(execution.shares)),
+                        price=Decimal(str(execution.price)),
+                        ts=exec_time
+                    )
+                    session.add(db_execution)
+                    session.commit()
+                    
+                    # Broadcast both order and execution
+                    await self.websocket_manager.broadcast({
+                        'type': 'order_created_from_execution',
+                        'data': {
+                            'order_id': db_order.id,
+                            'execution_id': db_execution.id,
+                            'symbol': symbol,
+                            'side': trade.order.action,
+                            'qty': float(trade.order.totalQuantity),
+                            'price': float(execution.price),
+                            'status': 'Filled'
+                        }
+                    })
+                    print(f"   ✅ Order {db_order.id} created from fast-fill execution - frontend will see it on next poll (2s)")
                     
         except Exception as e:
             logger.error(f"Error handling execution: {e}")
+            import traceback
+            traceback.print_exc()
     
     async def _ensure_account_exists(self, account_id: str):
         """Ensure account exists in database, create if not exists"""
@@ -775,6 +964,21 @@ class TraderService:
                 details={"error": str(e)}
             )
     
+    async def _periodic_health_update(self):
+        """Periodically update health status in database"""
+        while not self.shutdown_event.is_set():
+            try:
+                # Update health status based on TWS connection
+                tws_connected = self.ib_client and self.ib_client.state.connected if self.ib_client else False
+                status = "healthy" if tws_connected else "unhealthy"
+                await self._update_health_status(status)
+                
+            except Exception as e:
+                logger.error(f"Error in periodic health update: {e}")
+            
+            # Wait 30 seconds before next update
+            await asyncio.sleep(30)
+    
     async def shutdown(self):
         """Graceful shutdown"""
         logger.info("Shutting down trader service...")
@@ -799,13 +1003,22 @@ trader_service = TraderService()
 @app.on_event("startup")
 async def startup_event():
     """Initialize service on startup"""
+    print("DEBUG: startup_event called")
     setup_logging("trader")
+    print("DEBUG: setup_logging completed")
     logger.info("Starting Trader Service...")
+    print("DEBUG: About to call trader_service.initialize()")
     
     try:
         await trader_service.initialize()
+        print("DEBUG: trader_service.initialize() completed")
+        
+        # Start periodic health update in background
+        asyncio.create_task(trader_service._periodic_health_update())
+        
         logger.info("Trader Service started successfully")
     except Exception as e:
+        print(f"DEBUG: Exception in startup: {e}")
         logger.error(f"Failed to start Trader Service: {e}")
         raise
 
