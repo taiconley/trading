@@ -220,7 +220,7 @@ class TestClientIdAllocation:
         assert get_client_id_for_service("account") == 11
         assert get_client_id_for_service("marketdata") == 12
         assert get_client_id_for_service("historical") == 13
-        assert get_client_id_for_service("trader") == 14
+        assert get_client_id_for_service("trader") == 0  # Trader must use client ID 0
         assert get_client_id_for_service("strategy") == 15
         
         # Test unknown service

@@ -227,11 +227,14 @@ def get_client_id_for_service(service_name: str) -> int:
     """
     base = settings.tws.client_id_base
     
+    # NOTE: trader MUST use client ID 0 to receive all order events via reqAutoOpenOrders
+    if service_name == "trader":
+        return 0
+    
     service_offsets = {
         "account": 1,      # Client ID 11
         "marketdata": 2,   # Client ID 12  
         "historical": 3,   # Client ID 13
-        "trader": 4,       # Client ID 14
         "strategy": 5,     # Client IDs 15-29 (base + 5 + instance_id)
     }
     

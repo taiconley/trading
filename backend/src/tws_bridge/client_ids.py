@@ -37,11 +37,12 @@ class ClientIdManager:
     """Manages client ID allocation and lifecycle."""
     
     # Service client ID ranges
+    # NOTE: trader MUST use ID 0 to receive all order events via reqAutoOpenOrders
     SERVICE_RANGES = {
+        "trader": (0, 0),         # Single ID: 0 (REQUIRED for all order events)
         "account": (11, 11),      # Single ID: 11
         "marketdata": (12, 12),   # Single ID: 12  
         "historical": (13, 13),   # Single ID: 13
-        "trader": (14, 14),       # Single ID: 14
         "strategy": (15, 29),     # Range: 15-29 (15 instances)
     }
     
@@ -73,7 +74,11 @@ class ClientIdManager:
         
         # For single-ID services, return the designated ID
         if start_id == end_id:
-            client_id = self.base_id + start_id
+            # Special case: trader service must use absolute client ID 0
+            if service_name == "trader":
+                client_id = 0
+            else:
+                client_id = self.base_id + start_id
             self._allocate_client_id(client_id, service_name, instance_id)
             return client_id
         
@@ -318,7 +323,11 @@ def reclaim_service_client_id(service_name: str, instance_id: Optional[str] = No
     if service_name in manager.SERVICE_RANGES:
         start_id, end_id = manager.SERVICE_RANGES[service_name]
         if start_id == end_id:
-            designated_id = manager.base_id + start_id
+            # Special case: trader service uses absolute client ID 0
+            if service_name == "trader":
+                designated_id = 0
+            else:
+                designated_id = manager.base_id + start_id
             
             # Check if it's currently allocated to someone else
             if manager._is_client_id_allocated(designated_id):

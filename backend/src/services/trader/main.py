@@ -332,51 +332,64 @@ class TraderService:
                 port=self.settings.tws.port
             )
             
-            # Set up event handlers following notes.md best practices
-            self.ib_client.ib.orderStatusEvent += self._on_order_status
-            self.ib_client.ib.execDetailsEvent += self._on_execution
-            
-            # Connect to TWS
+            # Connect to TWS FIRST
             print("DEBUG: About to connect to TWS")
             await self.ib_client.connect()
             print(f"DEBUG: TWS connect() completed, ib_client={self.ib_client}, ib={self.ib_client.ib if self.ib_client else None}")
             print(f"DEBUG: ib.isConnected()={self.ib_client.ib.isConnected() if self.ib_client and self.ib_client.ib else 'N/A'}")
             logger.info("Connected to TWS successfully")
             
+            # Set up event handlers AFTER connection
+            print("DEBUG: Setting up event handlers...")
+            
+            # Test handler to verify events are flowing
+            def _test_error_handler(reqId, errorCode, errorString, contract):
+                print(f"🔧 TWS EVENT RECEIVED: Error {errorCode} - {errorString}")
+            
+            # Also add a new order event handler
+            def _test_new_order_handler(trade):
+                print(f"🆕 NEW ORDER EVENT: Order {trade.order.orderId} created - {trade.contract.symbol}")
+                # Forward to the main handler
+                self._on_order_status(trade)
+            
+            self.ib_client.ib.errorEvent += _test_error_handler
+            self.ib_client.ib.newOrderEvent += _test_new_order_handler
+            self.ib_client.ib.orderStatusEvent += self._on_order_status
+            self.ib_client.ib.execDetailsEvent += self._on_execution
+            print(f"DEBUG: Event handlers registered:")
+            print(f"  - orderStatusEvent has {len(self.ib_client.ib.orderStatusEvent)} subscribers")
+            print(f"  - newOrderEvent has {len(self.ib_client.ib.newOrderEvent)} subscribers")
+            print(f"  - execDetailsEvent has {len(self.ib_client.ib.execDetailsEvent)} subscribers")
+            print(f"  - errorEvent has {len(self.ib_client.ib.errorEvent)} subscribers")
+            
             # Subscribe to ALL open orders (not just orders from this client ID)
-            print("DEBUG: Requesting all open orders...")
+            print("DEBUG: Requesting all open orders with reqAutoOpenOrders(True)...")
             self.ib_client.ib.reqAutoOpenOrders(True)
-            # Also request existing open orders (async version)
-            open_orders = await self.ib_client.ib.reqAllOpenOrdersAsync()
-            print(f"DEBUG: Found {len(open_orders)} existing open orders")
+            print("DEBUG: Waiting for IB to send existing orders via events...")
+            
+            # Wait a moment for IB to send existing orders via events
+            await asyncio.sleep(3)
+            
+            # Get current trades that are already loaded
+            existing_trades = self.ib_client.ib.trades()
+            print(f"DEBUG: Found {len(existing_trades)} existing trades in memory")
             
             # Sync existing orders to database (one-time on startup)
-            for trade in open_orders:
-                await self._on_order_status(trade)
+            for trade in existing_trades:
+                self._on_order_status(trade)
             
-            logger.info(f"Subscribed to all open orders, synced {len(open_orders)} existing to database")
+            logger.info(f"Subscribed to all open orders, synced {len(existing_trades)} existing to database")
             print(f"DEBUG: Event-driven order updates enabled - orders will be created immediately when placed in TWS")
             
-            # Sync historical executions to catch filled orders (especially market orders)
+            # Request executions (non-async, just trigger the request)
             print("DEBUG: Requesting execution history...")
             try:
                 from ib_insync import ExecutionFilter
-                executions = await self.ib_client.ib.reqExecutionsAsync(ExecutionFilter())
-                print(f"DEBUG: Found {len(executions)} historical executions")
-                
-                # Process each execution (will auto-create orders if missing)
-                for fill in executions:
-                    # Find the trade object for this execution
-                    trades = [t for t in self.ib_client.ib.trades() if t.order.orderId == fill.execution.orderId]
-                    if trades:
-                        await self._on_execution(trades[0], fill)
-                    else:
-                        logger.warning(f"Could not find trade for execution {fill.execution.execId}")
-                
-                logger.info(f"Synced {len(executions)} historical executions")
+                self.ib_client.ib.reqExecutions(ExecutionFilter())
+                print("DEBUG: Execution history requested (will arrive via execDetailsEvent)")
             except Exception as e:
-                logger.warning(f"Failed to sync historical executions: {e}")
-                print(f"DEBUG: Execution sync warning (non-critical): {e}")
+                logger.warning(f"Failed to request executions: {e}")
+                print(f"DEBUG: Execution request warning (non-critical): {e}")
             
             # Update health status
             await self._update_health_status("healthy")
@@ -390,13 +403,29 @@ class TraderService:
             await self._update_health_status("unhealthy")
             raise
     
-    async def _on_order_status(self, trade: Trade):
-        """Handle order status updates from TWS"""
+    def _on_order_status(self, trade: Trade):
+        """Handle order status updates from TWS (MUST BE SYNC for ib_insync)"""
+        print("=" * 80)
+        print("🔔 ORDER STATUS EVENT TRIGGERED!")
+        print("=" * 80)
         try:
             order_status = trade.orderStatus.status
             ib_order_id = trade.order.orderId
             
+            # Skip invalid orders (orderId=0 means it's not a real order)
+            if not ib_order_id or ib_order_id == 0:
+                print(f"⚠️  SKIPPING invalid order event with orderId={ib_order_id}")
+                return
+            
+            # Skip orders with zero quantity (junk events)
+            if not trade.order.totalQuantity or trade.order.totalQuantity <= 0:
+                print(f"⚠️  SKIPPING order {ib_order_id} with zero quantity")
+                return
+            
             print(f"🔔 ORDER EVENT: {ib_order_id} -> {order_status} (Symbol: {trade.contract.symbol})")
+            print(f"   Order details: {trade.order.action} {trade.order.totalQuantity} {trade.contract.symbol}")
+            print(f"   Account: {trade.order.account}")
+            print(f"   ClientId: {trade.order.clientId}")
             logger.info(f"Order status update: {ib_order_id} -> {order_status}")
             
             # Update or create order in database
@@ -460,8 +489,8 @@ class TraderService:
                     print(f"   ✅ Order saved to database! ID: {db_order.id}")
                     logger.info(f"✅ Created external order: {symbol} {trade.order.action} {trade.order.totalQuantity}")
                 
-                # Broadcast update via WebSocket (frontend polls DB, so this is optional now)
-                await self.websocket_manager.broadcast({
+                # Broadcast update via WebSocket (run in background)
+                asyncio.create_task(self.websocket_manager.broadcast({
                     'type': 'order_status',
                     'data': {
                         'order_id': db_order.id,
@@ -472,14 +501,16 @@ class TraderService:
                         'qty': float(db_order.qty),
                         'updated_at': db_order.updated_at.isoformat()
                     }
-                })
+                }))
                 print(f"   📡 Order ID {db_order.id} ready - frontend will see it on next poll (2s)")
                     
         except Exception as e:
             logger.error(f"Error handling order status update: {e}")
+            import traceback
+            traceback.print_exc()
     
-    async def _on_execution(self, trade: Trade, fill):
-        """Handle execution reports from TWS"""
+    def _on_execution(self, trade: Trade, fill):
+        """Handle execution reports from TWS (MUST BE SYNC for ib_insync)"""
         try:
             execution = fill.execution
             logger.info(f"Execution: {execution.execId} - {execution.shares} @ {execution.price}")
@@ -503,8 +534,8 @@ class TraderService:
                     session.add(db_execution)
                     session.commit()
                     
-                    # Broadcast execution via WebSocket
-                    await self.websocket_manager.broadcast({
+                    # Broadcast execution via WebSocket (run in background)
+                    asyncio.create_task(self.websocket_manager.broadcast({
                         'type': 'execution',
                         'data': {
                             'execution_id': db_execution.id,
@@ -515,7 +546,7 @@ class TraderService:
                             'price': float(execution.price),
                             'timestamp': db_execution.ts.isoformat()
                         }
-                    })
+                    }))
                 else:
                     # Order doesn't exist - this happens with fast-filling orders (market orders)
                     # Create the order record from the execution data
@@ -595,8 +626,8 @@ class TraderService:
                     session.add(db_execution)
                     session.commit()
                     
-                    # Broadcast both order and execution
-                    await self.websocket_manager.broadcast({
+                    # Broadcast both order and execution (run in background)
+                    asyncio.create_task(self.websocket_manager.broadcast({
                         'type': 'order_created_from_execution',
                         'data': {
                             'order_id': db_order.id,
@@ -607,7 +638,7 @@ class TraderService:
                             'price': float(execution.price),
                             'status': 'Filled'
                         }
-                    })
+                    }))
                     print(f"   ✅ Order {db_order.id} created from fast-fill execution - frontend will see it on next poll (2s)")
                     
         except Exception as e:
