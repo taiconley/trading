@@ -495,7 +495,7 @@ class TraderService:
                     db_execution = Execution(
                         order_id=db_order.id,
                         trade_id=execution.execId,
-                        symbol=execution.contract.symbol,
+                        symbol=trade.contract.symbol,
                         qty=Decimal(str(execution.shares)),
                         price=Decimal(str(execution.price)),
                         ts=datetime.now(timezone.utc)
@@ -510,7 +510,7 @@ class TraderService:
                             'execution_id': db_execution.id,
                             'order_id': db_order.id,
                             'trade_id': execution.execId,
-                            'symbol': execution.contract.symbol,
+                            'symbol': trade.contract.symbol,
                             'qty': float(execution.shares),
                             'price': float(execution.price),
                             'timestamp': db_execution.ts.isoformat()

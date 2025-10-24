@@ -238,7 +238,12 @@ class BacktesterService:
         """Execute a backtest and store results."""
         
         # Load historical data
-        bars_data = await self._load_historical_data(symbols, timeframe)
+        bars_data = await self._load_historical_data(
+            symbols=symbols,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date
+        )
         
         if not bars_data:
             raise ValueError(f"No historical data found for symbols: {symbols}")
@@ -282,7 +287,9 @@ class BacktesterService:
     async def _load_historical_data(
         self,
         symbols: List[str],
-        timeframe: str
+        timeframe: str,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> Dict[str, pd.DataFrame]:
         """Load historical data from database."""
         
@@ -291,10 +298,15 @@ class BacktesterService:
             
             for symbol in symbols:
                 # Query candles for this symbol and timeframe
-                candles = session.query(Candle).filter(
+                query = session.query(Candle).filter(
                     Candle.symbol == symbol,
                     Candle.tf == timeframe
-                ).order_by(Candle.ts).all()
+                )
+                if start_date:
+                    query = query.filter(Candle.ts >= start_date)
+                if end_date:
+                    query = query.filter(Candle.ts <= end_date)
+                candles = query.order_by(Candle.ts).all()
                 
                 if not candles:
                     self.logger.warning(f"No data found for {symbol} {timeframe}")
@@ -314,7 +326,14 @@ class BacktesterService:
                 ])
                 
                 data[symbol] = df
-                self.logger.info(f"Loaded {len(df)} bars for {symbol}")
+                if start_date or end_date:
+                    self.logger.info(
+                        f"Loaded {len(df)} bars for {symbol} between "
+                        f"{start_date.isoformat() if start_date else 'start'} and "
+                        f"{end_date.isoformat() if end_date else 'end'}"
+                    )
+                else:
+                    self.logger.info(f"Loaded {len(df)} bars for {symbol}")
             
             return data
         
@@ -590,4 +609,3 @@ Examples:
 
 if __name__ == "__main__":
     sys.exit(main())
-
