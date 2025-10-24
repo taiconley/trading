@@ -932,9 +932,11 @@ async def main():
     print("DEBUG: StrategyService instance created", flush=True)
     
     # Setup signal handlers
+    shutdown_event = asyncio.Event()
+    
     def signal_handler(signum, frame):
         logger.info(f"Received signal {signum}, shutting down...")
-        asyncio.create_task(strategy_service.stop())
+        shutdown_event.set()
     
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
@@ -954,8 +956,21 @@ async def main():
         )
         server = uvicorn.Server(config)
         
-        # Run server
-        await server.serve()
+        # Create server task
+        server_task = asyncio.create_task(server.serve())
+        
+        # Wait for either server completion or shutdown signal
+        done, pending = await asyncio.wait(
+            [server_task, asyncio.create_task(shutdown_event.wait())],
+            return_when=asyncio.FIRST_COMPLETED
+        )
+        
+        # Cancel pending tasks
+        for task in pending:
+            task.cancel()
+        
+        # Stop the server
+        server.should_exit = True
         
     except Exception as e:
         logger.error(f"Strategy service failed: {e}")

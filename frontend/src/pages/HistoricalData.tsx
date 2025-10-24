@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { LineChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts';
-import { Download, BarChart3, Search, Trash2 } from 'lucide-react';
+import { Download, BarChart3, Search, Trash2, Calendar, Copy } from 'lucide-react';
 import { Card } from '../components/Card';
 import { api } from '../services/api';
 
@@ -35,6 +35,11 @@ export default function HistoricalData() {
   const [duration, setDuration] = useState('1 D');
   const [bulkMode, setBulkMode] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  
+  // Date range mode
+  const [dateRangeMode, setDateRangeMode] = useState<'relative' | 'absolute'>('relative');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
   useEffect(() => {
     loadDatasets();
@@ -96,6 +101,19 @@ export default function HistoricalData() {
     }
   };
 
+  const matchDateRange = (dataset: Dataset) => {
+    // Convert dataset dates to date input format (YYYY-MM-DD)
+    const start = new Date(dataset.start_date);
+    const end = new Date(dataset.end_date);
+    
+    setStartDate(start.toISOString().split('T')[0]);
+    setEndDate(end.toISOString().split('T')[0]);
+    setDateRangeMode('absolute');
+    
+    // Scroll to the request form
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const submitRequest = async () => {
     // Validate input for individual mode
     if (!bulkMode && !symbol) {
@@ -103,21 +121,80 @@ export default function HistoricalData() {
       return;
     }
     
+    // Validate date range in absolute mode
+    if (dateRangeMode === 'absolute') {
+      if (!endDate) {
+        alert('Please enter an end date');
+        return;
+      }
+      if (!startDate) {
+        alert('Please enter a start date');
+        return;
+      }
+      if (new Date(startDate) > new Date(endDate)) {
+        alert('Start date must be before end date');
+        return;
+      }
+    }
+    
     setSubmitting(true);
     try {
+      // Prepare request parameters
+      let requestParams: any = {
+        bar_size: barSize,
+      };
+
+      if (dateRangeMode === 'absolute') {
+        // Convert end date to TWS format: "YYYYMMDD HH:MM:SS"
+        const endDateTime = new Date(endDate);
+        endDateTime.setHours(23, 59, 59); // Set to end of day
+        const tws_end_datetime = endDateTime.toISOString()
+          .replace('T', ' ')
+          .split('.')[0]
+          .replace(/-/g, '');
+        
+        requestParams.end_datetime = tws_end_datetime;
+        
+        // Calculate duration from start to end date
+        const start = new Date(startDate);
+        const end = new Date(endDate);
+        const diffTime = Math.abs(end.getTime() - start.getTime());
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        
+        // Convert to appropriate TWS duration string
+        if (diffDays <= 1) {
+          requestParams.duration = '1 D';
+        } else if (diffDays <= 7) {
+          requestParams.duration = `${diffDays} D`;
+        } else if (diffDays <= 30) {
+          const weeks = Math.ceil(diffDays / 7);
+          requestParams.duration = `${weeks} W`;
+        } else if (diffDays <= 365) {
+          const months = Math.ceil(diffDays / 30);
+          requestParams.duration = `${months} M`;
+        } else {
+          const years = Math.ceil(diffDays / 365);
+          requestParams.duration = `${years} Y`;
+        }
+      } else {
+        // Relative mode - use duration
+        requestParams.duration = duration;
+      }
+
       if (bulkMode) {
         // Bulk request for all watchlist symbols
-        const response = await api.bulkHistoricalRequest({
-          bar_size: barSize,
-          duration: duration
-        });
-        alert(`Queued ${response.requests?.length || 0} requests for all watchlist symbols (${barSize}, ${duration})`);
+        const response = await api.bulkHistoricalRequest(requestParams);
+        const modeStr = dateRangeMode === 'absolute' 
+          ? `from ${startDate} to ${endDate}` 
+          : `${duration}`;
+        alert(`Queued ${response.requests?.length || 0} requests for all watchlist symbols (${barSize}, ${modeStr})`);
       } else {
         // Individual symbol request
         const response = await api.requestHistoricalData({
           symbol: symbol.toUpperCase(),
           bar_size: barSize,
-          lookback: duration
+          duration: requestParams.duration,
+          end_datetime: requestParams.end_datetime
         });
         alert(`Request queued: ${response.message || 'Success'}`);
         setSymbol('');
@@ -177,6 +254,33 @@ export default function HistoricalData() {
             </label>
           </div>
 
+          {/* Date Range Mode Toggle */}
+          <div className="flex items-center gap-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+            <Calendar className="w-5 h-5 text-blue-600" />
+            <div className="flex gap-2">
+              <button
+                onClick={() => setDateRangeMode('relative')}
+                className={`px-3 py-1 text-sm font-medium rounded transition-colors ${
+                  dateRangeMode === 'relative'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                Relative (Duration)
+              </button>
+              <button
+                onClick={() => setDateRangeMode('absolute')}
+                className={`px-3 py-1 text-sm font-medium rounded transition-colors ${
+                  dateRangeMode === 'absolute'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-white text-slate-700 hover:bg-slate-100'
+                }`}
+              >
+                Absolute (Date Range)
+              </button>
+            </div>
+          </div>
+
           {/* Request Form */}
           <div className="space-y-4">
             {/* Symbol Input - disabled when bulk mode is on */}
@@ -194,25 +298,27 @@ export default function HistoricalData() {
               />
             </div>
 
-            {/* Bar Size and Duration */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* Bar Size */}
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Bar Size</label>
+              <select
+                value={barSize}
+                onChange={(e) => setBarSize(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="5 secs">5 secs</option>
+                <option value="1 min">1 min</option>
+                <option value="5 mins">5 mins</option>
+                <option value="15 mins">15 mins</option>
+                <option value="1 hour">1 hour</option>
+                <option value="1 day">1 day</option>
+              </select>
+            </div>
+
+            {/* Duration (Relative Mode) or Date Range (Absolute Mode) */}
+            {dateRangeMode === 'relative' ? (
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Bar Size</label>
-                <select
-                  value={barSize}
-                  onChange={(e) => setBarSize(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  <option value="5 secs">5 secs</option>
-                  <option value="1 min">1 min</option>
-                  <option value="5 mins">5 mins</option>
-                  <option value="15 mins">15 mins</option>
-                  <option value="1 hour">1 hour</option>
-                  <option value="1 day">1 day</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Duration</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Duration (lookback)</label>
                 <select
                   value={duration}
                   onChange={(e) => setDuration(e.target.value)}
@@ -226,7 +332,28 @@ export default function HistoricalData() {
                   <option value="1 Y">1 Year</option>
                 </select>
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Submit Button */}
             <button
@@ -238,11 +365,20 @@ export default function HistoricalData() {
               {submitting ? 'Submitting...' : (bulkMode ? 'Request All Watchlist Symbols' : 'Request Data')}
             </button>
 
-            {/* Info Note */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-              <p className="text-xs text-blue-800">
-                <strong>Note:</strong> Requests are rate-limited to 6 per minute to comply with TWS pacing rules.
-              </p>
+            {/* Info Notes */}
+            <div className="space-y-2">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs text-blue-800">
+                  <strong>Note:</strong> Requests are rate-limited to 6 per minute to comply with TWS pacing rules.
+                </p>
+              </div>
+              {dateRangeMode === 'absolute' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-xs text-amber-800">
+                    <strong>Tip:</strong> Use the "Match Range" button in the datasets table below to copy date ranges from existing data.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -299,9 +435,16 @@ export default function HistoricalData() {
                         <button
                           onClick={() => loadCandles(dataset)}
                           className="flex items-center gap-1 px-3 py-1 text-sm bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition-colors"
+                          title="View chart"
                         >
                           <BarChart3 className="w-4 h-4" />
-                          View Chart
+                        </button>
+                        <button
+                          onClick={() => matchDateRange(dataset)}
+                          className="flex items-center gap-1 px-3 py-1 text-sm bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors"
+                          title="Match date range for new request"
+                        >
+                          <Copy className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => deleteDataset(dataset)}

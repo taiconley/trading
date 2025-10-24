@@ -219,16 +219,20 @@ class HistoricalDataService:
             }
         
         @self.app.post("/historical/request")
-        async def request_historical_data(
-            symbol: str,
-            bar_size: str = "1 min",
-            what_to_show: str = "TRADES",
-            duration: str = "1 D",
-            end_datetime: str = "",
-            use_rth: bool = True
-        ):
+        async def request_historical_data(request: dict):
             """Request historical data for a symbol."""
             try:
+                # Extract parameters from request dict
+                symbol = request.get("symbol")
+                bar_size = request.get("bar_size", "1 min")
+                what_to_show = request.get("what_to_show", "TRADES")
+                duration = request.get("duration", "1 D")
+                end_datetime = request.get("end_datetime", "")
+                use_rth = request.get("use_rth", True)
+                
+                if not symbol:
+                    raise HTTPException(status_code=400, detail="symbol is required")
+                
                 request_id = f"{symbol}_{bar_size}_{duration}_{int(time.time())}"
                 
                 # Validate bar size

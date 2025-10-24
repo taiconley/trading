@@ -127,7 +127,8 @@ class ApiClient {
   async requestHistoricalData(request: {
     symbol: string;
     bar_size: string;
-    lookback: string;
+    duration: string;
+    end_datetime?: string;
   }) {
     const response = await this.client.post('/api/historical/request', request);
     return response.data;
@@ -136,6 +137,7 @@ class ApiClient {
   async bulkHistoricalRequest(request?: {
     bar_size?: string;
     duration?: string;
+    end_datetime?: string;
   }) {
     const response = await this.client.post('/api/historical/bulk', request || {});
     return response.data;
