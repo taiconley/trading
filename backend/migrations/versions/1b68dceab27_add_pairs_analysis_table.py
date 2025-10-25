@@ -10,15 +10,15 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = '1b68dcea-b27'
+revision = '1b68dceab27'
 down_revision = '40ad4f97d891'
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
-    # Create pairs_analysis table
-    op.create_table('pairs_analysis',
+    # Create potential_pairs table
+    op.create_table('potential_pairs',
         sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('symbol_a', sa.String(length=20), nullable=False),
         sa.Column('symbol_b', sa.String(length=20), nullable=False),
@@ -52,28 +52,28 @@ def upgrade() -> None:
     )
     
     # Create indexes
-    op.create_index('idx_pairs_analysis_symbols_timeframe', 'pairs_analysis', ['symbol_a', 'symbol_b', 'timeframe'], unique=False)
-    op.create_index('idx_pairs_analysis_window', 'pairs_analysis', ['window_start', 'window_end'], unique=False)
-    op.create_index('idx_pairs_analysis_status', 'pairs_analysis', ['status'], unique=False)
+    op.create_index('idx_potential_pairs_symbols_timeframe', 'potential_pairs', ['symbol_a', 'symbol_b', 'timeframe'], unique=False)
+    op.create_index('idx_potential_pairs_window', 'potential_pairs', ['window_start', 'window_end'], unique=False)
+    op.create_index('idx_potential_pairs_status', 'potential_pairs', ['status'], unique=False)
     
     # Create check constraint
-    op.create_check_constraint('ck_pairs_analysis_status', 'pairs_analysis', "status IN ('candidate', 'validated', 'rejected')")
+    op.create_check_constraint('ck_potential_pairs_status', 'potential_pairs', "status IN ('candidate', 'validated', 'rejected')")
     
     # Set default values
-    op.alter_column('pairs_analysis', 'pair_total_trades', server_default='0')
-    op.alter_column('pairs_analysis', 'status', server_default="'candidate'")
-    op.alter_column('pairs_analysis', 'meta', server_default="'{}'::jsonb")
-    op.alter_column('pairs_analysis', 'created_at', server_default=sa.text('now()'))
+    op.alter_column('potential_pairs', 'pair_total_trades', server_default='0')
+    op.alter_column('potential_pairs', 'status', server_default="'candidate'")
+    op.alter_column('potential_pairs', 'meta', server_default=sa.text("'{}'::jsonb"))
+    op.alter_column('potential_pairs', 'created_at', server_default=sa.text('now()'))
 
 
 def downgrade() -> None:
     # Drop check constraint
-    op.drop_constraint('ck_pairs_analysis_status', 'pairs_analysis', type_='check')
+    op.drop_constraint('ck_potential_pairs_status', 'potential_pairs', type_='check')
     
     # Drop indexes
-    op.drop_index('idx_pairs_analysis_status', table_name='pairs_analysis')
-    op.drop_index('idx_pairs_analysis_window', table_name='pairs_analysis')
-    op.drop_index('idx_pairs_analysis_symbols_timeframe', table_name='pairs_analysis')
+    op.drop_index('idx_potential_pairs_status', table_name='potential_pairs')
+    op.drop_index('idx_potential_pairs_window', table_name='potential_pairs')
+    op.drop_index('idx_potential_pairs_symbols_timeframe', table_name='potential_pairs')
     
     # Drop table
-    op.drop_table('pairs_analysis')
+    op.drop_table('potential_pairs')

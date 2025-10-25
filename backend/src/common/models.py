@@ -510,10 +510,10 @@ class PairsAnalysis(Base):
     
     # Constraints
     __table_args__ = (
-        CheckConstraint("status IN ('candidate', 'validated', 'rejected')", name='ck_pairs_analysis_status'),
-        Index('idx_pairs_analysis_symbols_timeframe', 'symbol_a', 'symbol_b', 'timeframe'),
-        Index('idx_pairs_analysis_window', 'window_start', 'window_end'),
-        Index('idx_pairs_analysis_status', 'status'),
+        CheckConstraint("status IN ('candidate', 'validated', 'rejected')", name='ck_potential_pairs_status'),
+        Index('idx_potential_pairs_symbols_timeframe', 'symbol_a', 'symbol_b', 'timeframe'),
+        Index('idx_potential_pairs_window', 'window_start', 'window_end'),
+        Index('idx_potential_pairs_status', 'status'),
     )
     
     # Relationships
