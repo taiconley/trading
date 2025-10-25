@@ -59,34 +59,152 @@ export function Backtests() {
         </button>
 
         <Card title={`Backtest #${selectedBacktest.id} - ${selectedBacktest.strategy_name}`}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
-            <div>
-              <p className="text-sm text-gray-500">Total P&L</p>
-              <p
-                className={`text-2xl font-bold ${
-                  (selectedBacktest.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                }`}
-              >
-                ${selectedBacktest.pnl?.toFixed(2) || '0.00'}
-              </p>
+          {/* Core Performance Metrics */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Performance Metrics</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <div>
+                <p className="text-sm text-gray-500">Total P&L</p>
+                <p
+                  className={`text-2xl font-bold ${
+                    (selectedBacktest.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                  }`}
+                >
+                  ${selectedBacktest.pnl?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Total Return</p>
+                <p
+                  className={`text-2xl font-bold ${
+                    (selectedBacktest.total_return_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                  }`}
+                >
+                  {selectedBacktest.total_return_pct?.toFixed(2) || 'N/A'}%
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Sharpe Ratio</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.sharpe?.toFixed(4) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Sortino Ratio</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.sortino_ratio?.toFixed(4) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Max Drawdown</p>
+                <p className="text-2xl font-bold text-red-600">
+                  {selectedBacktest.maxdd?.toFixed(2) || 'N/A'}%
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Volatility (Ann.)</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.annualized_volatility_pct?.toFixed(2) || 'N/A'}%
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Value at Risk</p>
+                <p className="text-2xl font-bold text-orange-600">
+                  {selectedBacktest.value_at_risk_pct?.toFixed(2) || 'N/A'}%
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Max DD Duration</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.max_drawdown_duration_days || 'N/A'} days
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-gray-500">Sharpe Ratio</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {selectedBacktest.sharpe?.toFixed(4) || 'N/A'}
-              </p>
+          </div>
+
+          {/* Trade Statistics */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Trade Statistics</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <div>
+                <p className="text-sm text-gray-500">Total Trades</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.trades || 0}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Winning Trades</p>
+                <p className="text-2xl font-bold text-green-600">
+                  {selectedBacktest.winning_trades || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Losing Trades</p>
+                <p className="text-2xl font-bold text-red-600">
+                  {selectedBacktest.losing_trades || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Win Rate</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.win_rate?.toFixed(2) || 'N/A'}%
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Profit Factor</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.profit_factor?.toFixed(2) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Avg Win</p>
+                <p className="text-2xl font-bold text-green-600">
+                  ${selectedBacktest.avg_win?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Avg Loss</p>
+                <p className="text-2xl font-bold text-red-600">
+                  ${selectedBacktest.avg_loss?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Largest Win</p>
+                <p className="text-2xl font-bold text-green-600">
+                  ${selectedBacktest.largest_win?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm text-gray-500">Max Drawdown</p>
-              <p className="text-2xl font-bold text-red-600">
-                {selectedBacktest.maxdd?.toFixed(2)}%
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-500">Total Trades</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {selectedBacktest.trades || 0}
-              </p>
+          </div>
+
+          {/* Trade Timing & Costs */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Trade Timing & Costs</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              <div>
+                <p className="text-sm text-gray-500">Avg Trade Duration</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.avg_trade_duration_days?.toFixed(2) || 'N/A'} days
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Avg Holding Period</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {selectedBacktest.avg_holding_period_hours?.toFixed(2) || 'N/A'} hours
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Total Commission</p>
+                <p className="text-2xl font-bold text-orange-600">
+                  ${selectedBacktest.total_commission?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Total Slippage</p>
+                <p className="text-2xl font-bold text-orange-600">
+                  ${selectedBacktest.total_slippage?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || 'N/A'}
+                </p>
+              </div>
             </div>
           </div>
 
@@ -205,10 +323,19 @@ export function Backtests() {
                     P&L
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Return %
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Sharpe
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Max DD
+                    Sortino
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Max DD %
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Win Rate %
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Trades
@@ -242,17 +369,30 @@ export function Backtests() {
                           ) : (
                             <TrendingDown className="w-4 h-4 mr-1" />
                           )}
-                          ${backtest.pnl.toFixed(2)}
+                          ${backtest.pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
                       ) : (
                         'N/A'
                       )}
                     </td>
+                    <td
+                      className={`px-6 py-4 whitespace-nowrap font-medium ${
+                        (backtest.total_return_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}
+                    >
+                      {backtest.total_return_pct?.toFixed(2) || 'N/A'}%
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-gray-600">
-                      {backtest.sharpe?.toFixed(4) || 'N/A'}
+                      {backtest.sharpe?.toFixed(3) || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                      {backtest.sortino_ratio?.toFixed(3) || 'N/A'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-red-600">
-                      {backtest.maxdd?.toFixed(2)}%
+                      {backtest.maxdd?.toFixed(2) || 'N/A'}%
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                      {backtest.win_rate?.toFixed(1) || 'N/A'}%
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-gray-600">
                       {backtest.trades}

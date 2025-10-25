@@ -59,7 +59,8 @@ class OptimizationEngine:
             lookback: Lookback period in days
             param_ranges: Parameter ranges to search
             algorithm: Optimization algorithm ('grid_search', 'random_search')
-            objective: Objective function ('sharpe_ratio', 'total_return', 'profit_factor', 'win_rate')
+            objective: Objective function ('sharpe_ratio', 'sortino_ratio', 'total_return', 'profit_factor',
+                                          'win_rate', 'volatility', 'value_at_risk', 'avg_holding_time')
             constraints: List of constraint expressions
             num_workers: Number of parallel workers (None for CPU count)
             max_iterations: Maximum iterations for random search
@@ -209,12 +210,36 @@ class OptimizationEngine:
             params_json=params,
             backtest_run_id=backtest_run_id,
             score=score,
+            
+            # Core performance metrics
             sharpe_ratio=metrics.get('sharpe_ratio'),
-            total_return=metrics.get('total_return_pct'),
-            max_drawdown=metrics.get('max_drawdown_pct'),
+            sortino_ratio=metrics.get('sortino_ratio'),
+            total_return_pct=metrics.get('total_return_pct'),
+            annualized_volatility_pct=metrics.get('annualized_volatility_pct'),
+            value_at_risk_pct=metrics.get('value_at_risk_pct'),
+            max_drawdown_pct=metrics.get('max_drawdown_pct'),
+            max_drawdown_duration_days=metrics.get('max_drawdown_duration_days'),
+            
+            # Trade statistics
+            total_trades=metrics.get('total_trades'),
+            winning_trades=metrics.get('winning_trades'),
+            losing_trades=metrics.get('losing_trades'),
             win_rate=metrics.get('win_rate'),
             profit_factor=metrics.get('profit_factor'),
-            total_trades=metrics.get('total_trades')
+            
+            # Trade performance
+            avg_win=metrics.get('avg_win'),
+            avg_loss=metrics.get('avg_loss'),
+            largest_win=metrics.get('largest_win'),
+            largest_loss=metrics.get('largest_loss'),
+            
+            # Trade timing
+            avg_trade_duration_days=metrics.get('avg_trade_duration_days'),
+            avg_holding_period_hours=metrics.get('avg_holding_period_hours'),
+            
+            # Costs
+            total_commission=metrics.get('total_commission'),
+            total_slippage=metrics.get('total_slippage')
         )
         db.add(result)
         db.commit()
@@ -451,4 +476,3 @@ class OptimizationEngine:
                     backtest_run_id=task_result.result.get('backtest_run_id')
                 )
                 self.optimizer.update(algo_result)
-

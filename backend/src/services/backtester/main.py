@@ -388,16 +388,46 @@ class BacktesterService:
         """Store backtest results in database."""
         
         def _store_results(session):
-            # Create backtest run record
+            # Create backtest run record with comprehensive metrics
             run = BacktestRun(
                 strategy_name=strategy_name,
                 params_json=strategy_params,
                 start_ts=metrics.start_date,
                 end_ts=metrics.end_date,
+                
+                # Core performance metrics
                 pnl=metrics.total_pnl,
+                total_return_pct=metrics.total_return_pct,
                 sharpe=metrics.sharpe_ratio,
+                sortino_ratio=metrics.sortino_ratio,
+                annualized_volatility_pct=metrics.annualized_volatility_pct,
+                value_at_risk_pct=metrics.value_at_risk_pct,
                 maxdd=metrics.max_drawdown_pct,
-                trades=metrics.total_trades
+                max_drawdown_duration_days=metrics.max_drawdown_duration_days,
+                
+                # Trade statistics
+                trades=metrics.total_trades,
+                winning_trades=metrics.winning_trades,
+                losing_trades=metrics.losing_trades,
+                win_rate=metrics.win_rate,
+                profit_factor=metrics.profit_factor,
+                
+                # Trade performance
+                avg_win=metrics.avg_win,
+                avg_loss=metrics.avg_loss,
+                largest_win=metrics.largest_win,
+                largest_loss=metrics.largest_loss,
+                
+                # Trade timing
+                avg_trade_duration_days=metrics.avg_trade_duration_days,
+                avg_holding_period_hours=metrics.avg_holding_period_hours,
+                
+                # Costs
+                total_commission=metrics.total_commission,
+                total_slippage=metrics.total_slippage,
+                
+                # Additional metadata
+                total_days=metrics.total_days
             )
             
             session.add(run)
@@ -432,6 +462,9 @@ class BacktesterService:
             'total_pnl': float(metrics.total_pnl),
             'total_return_pct': float(metrics.total_return_pct),
             'sharpe_ratio': float(metrics.sharpe_ratio) if metrics.sharpe_ratio else None,
+            'sortino_ratio': float(metrics.sortino_ratio) if metrics.sortino_ratio else None,
+            'annualized_volatility_pct': float(metrics.annualized_volatility_pct) if metrics.annualized_volatility_pct is not None else None,
+            'value_at_risk_pct': float(metrics.value_at_risk_pct) if metrics.value_at_risk_pct is not None else None,
             'max_drawdown_pct': float(metrics.max_drawdown_pct),
             'total_trades': metrics.total_trades,
             'winning_trades': metrics.winning_trades,
@@ -443,6 +476,7 @@ class BacktesterService:
             'largest_win': float(metrics.largest_win),
             'largest_loss': float(metrics.largest_loss),
             'avg_trade_duration_days': float(metrics.avg_trade_duration_days),
+            'avg_holding_period_hours': float(metrics.avg_holding_period_hours),
             'total_commission': float(metrics.total_commission),
             'total_slippage': float(metrics.total_slippage),
             'start_date': metrics.start_date.isoformat() if metrics.start_date else None,
@@ -502,6 +536,19 @@ async def cli_backtest(args):
         print(f"  Total P&L:        ${metrics['total_pnl']:>15,.2f}")
         print(f"  Total Return:     {metrics['total_return_pct']:>15,.2f}%")
         print(f"  Sharpe Ratio:     {metrics['sharpe_ratio']:>15.2f}" if metrics['sharpe_ratio'] else "  Sharpe Ratio:     N/A")
+        print(
+            f"  Sortino Ratio:    {metrics['sortino_ratio']:>15.2f}"
+            if metrics.get('sortino_ratio') is not None
+            else "  Sortino Ratio:    N/A"
+        )
+        if metrics.get('annualized_volatility_pct') is not None:
+            print(f"  Volatility (ann): {metrics['annualized_volatility_pct']:>15,.2f}%")
+        else:
+            print(f"  Volatility (ann): {'N/A':>15}")
+        if metrics.get('value_at_risk_pct') is not None:
+            print(f"  Value at Risk 95%: {metrics['value_at_risk_pct']:>14,.2f}%")
+        else:
+            print(f"  Value at Risk 95%: {'N/A':>14}")
         print(f"  Max Drawdown:     {metrics['max_drawdown_pct']:>15,.2f}%")
         
         print(f"\nTrades:")
@@ -519,6 +566,7 @@ async def cli_backtest(args):
             if metrics['profit_factor']:
                 print(f"  Profit Factor:    {metrics['profit_factor']:>15.2f}")
             print(f"  Avg Duration:     {metrics['avg_trade_duration_days']:>15,.1f} days")
+            print(f"  Avg Holding Time: {metrics['avg_holding_period_hours']:>15,.2f} hrs")
         
         print(f"\nCosts:")
         print(f"  Total Commission: ${metrics['total_commission']:>15,.2f}")

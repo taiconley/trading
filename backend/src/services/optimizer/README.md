@@ -491,13 +491,15 @@ python main.py optimize \
 - `--lookback`: Lookback period in days (default: 365)
 - `--params`: Parameter ranges as JSON (required)
 - `--algorithm`: grid_search or random_search (default: grid_search)
-- `--objective`: Objective function (default: sharpe_ratio)
+- `--objective`: Objective function (`sharpe_ratio`, `sortino_ratio`, `total_return`, `profit_factor`, `win_rate`, `volatility`, `value_at_risk`, `avg_holding_time`; default: `sharpe_ratio`)
 - `--constraints`: Comma-separated constraints (optional)
 - `--workers`: Number of parallel workers (default: all cores)
 - `--max-iterations`: Max iterations for random search (default: 100)
 - `--seed`: Random seed for reproducibility (optional)
 - `--batch-size`: Batch size for processing (default: 50)
 - `--config`: Additional config as JSON (optional)
+
+> Note: `volatility` and `value_at_risk` objectives are minimized internally by maximizing the negative value, so lower realized risk leads to higher scores. Other objectives are maximized directly.
 
 ### Additional Config JSON
 
@@ -836,4 +838,3 @@ WHERE run.strategy_name = 'SMA_Crossover'
 ORDER BY r.score DESC
 LIMIT 10;
 ```
-

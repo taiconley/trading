@@ -253,6 +253,9 @@ The backtester calculates comprehensive performance metrics:
 - **Total P&L**: Net profit/loss in dollars
 - **Total Return %**: Percentage return on initial capital
 - **Sharpe Ratio**: Risk-adjusted return (annualized)
+- **Sortino Ratio**: Downside-risk-adjusted return (annualized)
+- **Annualized Volatility %**: Standard deviation of daily returns, annualized
+- **Value at Risk 95%**: One-day loss threshold at 95% confidence
 - **Max Drawdown %**: Maximum peak-to-trough decline
 
 ### Trade Statistics
@@ -267,6 +270,7 @@ The backtester calculates comprehensive performance metrics:
 - **Largest Win**: Single largest winning trade
 - **Largest Loss**: Single largest losing trade
 - **Avg Trade Duration**: Average holding period in days
+- **Avg Holding Time (hrs)**: Average holding period in hours for closed trades
 
 ### Costs
 
@@ -323,6 +327,9 @@ Performance:
   Total P&L:              $15,678.90
   Total Return:                15.68%
   Sharpe Ratio:                  1.45
+  Sortino Ratio:                 1.62
+  Volatility (ann):              9.84%
+  Value at Risk 95%:             2.75%
   Max Drawdown:                  8.23%
 
 Trades:
@@ -338,6 +345,7 @@ Trade Statistics:
   Largest Loss:             -$1,234.56
   Profit Factor:                  2.48
   Avg Duration:                15.3 days
+  Avg Holding Time:           368.5 hrs
 
 Costs:
   Total Commission:             $60.00
@@ -515,4 +523,3 @@ Full API documentation available at `/docs` when running in API mode:
 python main.py api --port 8006
 # Visit http://localhost:8006/docs
 ```
-

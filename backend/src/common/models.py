@@ -386,10 +386,41 @@ class BacktestRun(Base):
     params_json = Column(JSON, nullable=True)
     start_ts = Column(DateTime(timezone=True), nullable=False)
     end_ts = Column(DateTime(timezone=True), nullable=False)
+    
+    # Core performance metrics
     pnl = Column(Numeric(15, 2), nullable=False)
+    total_return_pct = Column(Numeric(8, 4), nullable=True)
     sharpe = Column(Numeric(8, 4), nullable=True)
+    sortino_ratio = Column(Numeric(8, 4), nullable=True)
+    annualized_volatility_pct = Column(Numeric(8, 4), nullable=True)
+    value_at_risk_pct = Column(Numeric(8, 4), nullable=True)
     maxdd = Column(Numeric(8, 4), nullable=True)  # Max drawdown as percentage
+    max_drawdown_duration_days = Column(Integer, nullable=True)
+    
+    # Trade statistics
     trades = Column(Integer, nullable=False, default=0)
+    winning_trades = Column(Integer, nullable=True)
+    losing_trades = Column(Integer, nullable=True)
+    win_rate = Column(Numeric(8, 4), nullable=True)
+    profit_factor = Column(Numeric(8, 4), nullable=True)
+    
+    # Trade performance
+    avg_win = Column(Numeric(15, 2), nullable=True)
+    avg_loss = Column(Numeric(15, 2), nullable=True)
+    largest_win = Column(Numeric(15, 2), nullable=True)
+    largest_loss = Column(Numeric(15, 2), nullable=True)
+    
+    # Trade timing
+    avg_trade_duration_days = Column(Numeric(8, 4), nullable=True)
+    avg_holding_period_hours = Column(Numeric(8, 4), nullable=True)
+    
+    # Costs
+    total_commission = Column(Numeric(15, 2), nullable=True)
+    total_slippage = Column(Numeric(15, 2), nullable=True)
+    
+    # Additional metadata
+    total_days = Column(Integer, nullable=True)
+    
     created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
     
     # Relationships
@@ -482,12 +513,36 @@ class OptimizationResult(Base):
     
     # Performance metrics (duplicated from backtest for quick access)
     score = Column(Numeric(15, 6), nullable=False)  # Objective function value
+    
+    # Core performance metrics
     sharpe_ratio = Column(Numeric(8, 4), nullable=True)
-    total_return = Column(Numeric(15, 2), nullable=True)
-    max_drawdown = Column(Numeric(8, 4), nullable=True)
+    sortino_ratio = Column(Numeric(8, 4), nullable=True)
+    total_return_pct = Column(Numeric(8, 4), nullable=True)
+    annualized_volatility_pct = Column(Numeric(8, 4), nullable=True)
+    value_at_risk_pct = Column(Numeric(8, 4), nullable=True)
+    max_drawdown_pct = Column(Numeric(8, 4), nullable=True)
+    max_drawdown_duration_days = Column(Integer, nullable=True)
+    
+    # Trade statistics
+    total_trades = Column(Integer, nullable=True)
+    winning_trades = Column(Integer, nullable=True)
+    losing_trades = Column(Integer, nullable=True)
     win_rate = Column(Numeric(8, 4), nullable=True)
     profit_factor = Column(Numeric(8, 4), nullable=True)
-    total_trades = Column(Integer, nullable=True)
+    
+    # Trade performance
+    avg_win = Column(Numeric(15, 2), nullable=True)
+    avg_loss = Column(Numeric(15, 2), nullable=True)
+    largest_win = Column(Numeric(15, 2), nullable=True)
+    largest_loss = Column(Numeric(15, 2), nullable=True)
+    
+    # Trade timing
+    avg_trade_duration_days = Column(Numeric(8, 4), nullable=True)
+    avg_holding_period_hours = Column(Numeric(8, 4), nullable=True)
+    
+    # Costs
+    total_commission = Column(Numeric(15, 2), nullable=True)
+    total_slippage = Column(Numeric(15, 2), nullable=True)
     
     created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
     

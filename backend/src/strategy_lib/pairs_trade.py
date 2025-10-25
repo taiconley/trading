@@ -196,6 +196,7 @@ class PairsTradingStrategy(BaseStrategy):
                 'hedge_intercept': 0.0,
                 'bars_since_hedge': 0,
                 'bars_since_stationarity': 0,
+                'bars_since_entry': 0,
                 'adf_pvalue': None,
                 'cointegration_pvalue': None,
                 'baseline_spread_std': None,
@@ -300,6 +301,7 @@ class PairsTradingStrategy(BaseStrategy):
             state['hedge_intercept'] = 0.0
             state['bars_since_hedge'] = 0
             state['bars_since_stationarity'] = 0
+            state['bars_since_entry'] = 0
             state['adf_pvalue'] = None
             state['cointegration_pvalue'] = None
             state['baseline_spread_std'] = None
@@ -365,6 +367,7 @@ class PairsTradingStrategy(BaseStrategy):
             pair_state = self._pair_states[pair_key]
             pair_state['bars_since_hedge'] += 1
             pair_state['bars_since_stationarity'] += 1
+            pair_state['bars_since_entry'] += 1
             
             # Reduce cooldown when flat
             if pair_state['current_position'] == "flat" and pair_state['cooldown_remaining'] > 0:

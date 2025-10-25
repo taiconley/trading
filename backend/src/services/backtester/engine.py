@@ -122,6 +122,9 @@ class BacktestMetrics:
     total_pnl: Decimal = Decimal('0.0')
     total_return_pct: Decimal = Decimal('0.0')
     sharpe_ratio: Optional[Decimal] = None
+    sortino_ratio: Optional[Decimal] = None
+    annualized_volatility_pct: Optional[Decimal] = None
+    value_at_risk_pct: Optional[Decimal] = None
     max_drawdown_pct: Decimal = Decimal('0.0')
     max_drawdown_duration_days: int = 0
     total_trades: int = 0
@@ -134,6 +137,7 @@ class BacktestMetrics:
     largest_win: Decimal = Decimal('0.0')
     largest_loss: Decimal = Decimal('0.0')
     avg_trade_duration_days: Decimal = Decimal('0.0')
+    avg_holding_period_hours: Decimal = Decimal('0.0')
     total_commission: Decimal = Decimal('0.0')
     total_slippage: Decimal = Decimal('0.0')
     start_date: Optional[datetime] = None
@@ -636,8 +640,15 @@ class BacktestEngine:
                 metrics.profit_factor = total_wins / total_losses
             
             # Average trade duration
-            durations = [(t.exit_time - t.entry_time).days for t in self.trades]
-            metrics.avg_trade_duration_days = Decimal(sum(durations)) / Decimal(len(durations))
+            durations_seconds = [
+                Decimal(str((t.exit_time - t.entry_time).total_seconds()))
+                for t in self.trades
+                if t.exit_time and t.entry_time
+            ]
+            if durations_seconds:
+                avg_duration_seconds = sum(durations_seconds, Decimal('0')) / Decimal(len(durations_seconds))
+                metrics.avg_trade_duration_days = avg_duration_seconds / Decimal('86400')
+                metrics.avg_holding_period_hours = avg_duration_seconds / Decimal('3600')
             
             # Commission and slippage
             metrics.total_commission = sum(t.commission for t in self.trades)
@@ -645,20 +656,33 @@ class BacktestEngine:
         
         # Sharpe ratio (simplified - using daily returns)
         if len(self.equity_curve) > 1:
-            returns = []
+            returns: List[float] = []
             for i in range(1, len(self.equity_curve)):
-                prev_equity = self.equity_curve[i-1][1]
+                prev_equity = self.equity_curve[i - 1][1]
                 curr_equity = self.equity_curve[i][1]
                 if prev_equity > 0:
                     daily_return = (curr_equity - prev_equity) / prev_equity
                     returns.append(float(daily_return))
             
-            if len(returns) > 0:
-                mean_return = np.mean(returns)
-                std_return = np.std(returns)
+            if returns:
+                returns_array = np.array(returns, dtype=float)
+                mean_return = float(np.mean(returns_array))
+                std_return = float(np.std(returns_array))
+                
                 if std_return > 0:
-                    # Annualize (252 trading days)
-                    metrics.sharpe_ratio = Decimal(str(mean_return / std_return * np.sqrt(252)))
+                    metrics.sharpe_ratio = Decimal(str((mean_return / std_return) * np.sqrt(252)))
+                
+                annualized_vol = std_return * np.sqrt(252)
+                metrics.annualized_volatility_pct = Decimal(str(annualized_vol * 100))
+                
+                downside_returns = returns_array[returns_array < 0]
+                if downside_returns.size > 0:
+                    downside_std = float(np.std(downside_returns))
+                    if downside_std > 0:
+                        metrics.sortino_ratio = Decimal(str((mean_return / downside_std) * np.sqrt(252)))
+                
+                var_95 = float(np.percentile(returns_array, 5))
+                metrics.value_at_risk_pct = Decimal(str(max(0.0, -var_95) * 100))
         
         return metrics
     
@@ -699,4 +723,3 @@ class BacktestEngine:
             {'timestamp': ts, 'equity': float(eq)}
             for ts, eq in self.equity_curve
         ])
-

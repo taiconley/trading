@@ -101,12 +101,36 @@ class OptimizationResultResponse(BaseModel):
     id: int
     params: Dict[str, Any]
     score: float
+    
+    # Core performance metrics
     sharpe_ratio: Optional[float]
-    total_return: Optional[float]
-    max_drawdown: Optional[float]
+    sortino_ratio: Optional[float]
+    total_return_pct: Optional[float]
+    annualized_volatility_pct: Optional[float]
+    value_at_risk_pct: Optional[float]
+    max_drawdown_pct: Optional[float]
+    max_drawdown_duration_days: Optional[int]
+    
+    # Trade statistics
+    total_trades: Optional[int]
+    winning_trades: Optional[int]
+    losing_trades: Optional[int]
     win_rate: Optional[float]
     profit_factor: Optional[float]
-    total_trades: Optional[int]
+    
+    # Trade performance
+    avg_win: Optional[float]
+    avg_loss: Optional[float]
+    largest_win: Optional[float]
+    largest_loss: Optional[float]
+    
+    # Trade timing
+    avg_trade_duration_days: Optional[float]
+    avg_holding_period_hours: Optional[float]
+    
+    # Costs
+    total_commission: Optional[float]
+    total_slippage: Optional[float]
 
 
 # =============================================================================
@@ -241,12 +265,36 @@ def get_optimization_results(run_id: int, top_n: int = 20):
                 id=result.id,
                 params=result.params_json,
                 score=float(result.score),
+                
+                # Core performance metrics
                 sharpe_ratio=float(result.sharpe_ratio) if result.sharpe_ratio else None,
-                total_return=float(result.total_return) if result.total_return else None,
-                max_drawdown=float(result.max_drawdown) if result.max_drawdown else None,
+                sortino_ratio=float(result.sortino_ratio) if result.sortino_ratio else None,
+                total_return_pct=float(result.total_return_pct) if result.total_return_pct else None,
+                annualized_volatility_pct=float(result.annualized_volatility_pct) if result.annualized_volatility_pct else None,
+                value_at_risk_pct=float(result.value_at_risk_pct) if result.value_at_risk_pct else None,
+                max_drawdown_pct=float(result.max_drawdown_pct) if result.max_drawdown_pct else None,
+                max_drawdown_duration_days=result.max_drawdown_duration_days,
+                
+                # Trade statistics
+                total_trades=result.total_trades,
+                winning_trades=result.winning_trades,
+                losing_trades=result.losing_trades,
                 win_rate=float(result.win_rate) if result.win_rate else None,
                 profit_factor=float(result.profit_factor) if result.profit_factor else None,
-                total_trades=result.total_trades
+                
+                # Trade performance
+                avg_win=float(result.avg_win) if result.avg_win else None,
+                avg_loss=float(result.avg_loss) if result.avg_loss else None,
+                largest_win=float(result.largest_win) if result.largest_win else None,
+                largest_loss=float(result.largest_loss) if result.largest_loss else None,
+                
+                # Trade timing
+                avg_trade_duration_days=float(result.avg_trade_duration_days) if result.avg_trade_duration_days else None,
+                avg_holding_period_hours=float(result.avg_holding_period_hours) if result.avg_holding_period_hours else None,
+                
+                # Costs
+                total_commission=float(result.total_commission) if result.total_commission else None,
+                total_slippage=float(result.total_slippage) if result.total_slippage else None
             )
             for result in results
         ]
@@ -791,8 +839,11 @@ def main():
     optimize_parser.add_argument('--params', required=True, help='Parameter ranges (JSON)')
     optimize_parser.add_argument('--algorithm', default='grid_search', 
                                 help='Algorithm (grid_search, random_search, bayesian, genetic)')
-    optimize_parser.add_argument('--objective', default='sharpe_ratio',
-                                help='Objective function (sharpe_ratio, total_return, profit_factor, win_rate)')
+    optimize_parser.add_argument(
+        '--objective',
+        default='sharpe_ratio',
+        help='Objective function (sharpe_ratio, sortino_ratio, total_return, profit_factor, win_rate, volatility, value_at_risk, avg_holding_time)'
+    )
     optimize_parser.add_argument('--constraints', help='Comma-separated constraints')
     optimize_parser.add_argument('--workers', type=int, default=None, help='Number of workers')
     optimize_parser.add_argument('--max-iterations', type=int, default=None, help='Max iterations')
@@ -808,7 +859,11 @@ def main():
     wf_parser.add_argument('--lookback', type=int, default=100, help='Lookback periods')
     wf_parser.add_argument('--params', required=True, help='Parameter ranges (JSON)')
     wf_parser.add_argument('--algorithm', default='grid_search', help='Algorithm')
-    wf_parser.add_argument('--objective', default='sharpe_ratio', help='Objective function')
+    wf_parser.add_argument(
+        '--objective',
+        default='sharpe_ratio',
+        help='Objective function (sharpe_ratio, sortino_ratio, total_return, profit_factor, win_rate, volatility, value_at_risk, avg_holding_time)'
+    )
     wf_parser.add_argument('--constraints', help='Comma-separated constraints')
     wf_parser.add_argument('--in-sample-days', type=int, default=180, help='In-sample period (days)')
     wf_parser.add_argument('--out-sample-days', type=int, default=60, help='Out-of-sample period (days)')
@@ -825,7 +880,11 @@ def main():
     oos_parser.add_argument('--lookback', type=int, default=100, help='Lookback periods')
     oos_parser.add_argument('--params', required=True, help='Parameter ranges (JSON)')
     oos_parser.add_argument('--algorithm', default='grid_search', help='Algorithm')
-    oos_parser.add_argument('--objective', default='sharpe_ratio', help='Objective function')
+    oos_parser.add_argument(
+        '--objective',
+        default='sharpe_ratio',
+        help='Objective function (sharpe_ratio, sortino_ratio, total_return, profit_factor, win_rate, volatility, value_at_risk, avg_holding_time)'
+    )
     oos_parser.add_argument('--constraints', help='Comma-separated constraints')
     oos_parser.add_argument('--train-ratio', type=float, default=0.7, help='Training set ratio (0-1)')
     oos_parser.add_argument('--workers', type=int, default=None, help='Number of workers')
@@ -839,7 +898,11 @@ def main():
     cv_parser.add_argument('--lookback', type=int, default=100, help='Lookback periods')
     cv_parser.add_argument('--params', required=True, help='Parameter ranges (JSON)')
     cv_parser.add_argument('--algorithm', default='grid_search', help='Algorithm')
-    cv_parser.add_argument('--objective', default='sharpe_ratio', help='Objective function')
+    cv_parser.add_argument(
+        '--objective',
+        default='sharpe_ratio',
+        help='Objective function (sharpe_ratio, sortino_ratio, total_return, profit_factor, win_rate, volatility, value_at_risk, avg_holding_time)'
+    )
     cv_parser.add_argument('--constraints', help='Comma-separated constraints')
     cv_parser.add_argument('--n-splits', type=int, default=5, help='Number of folds')
     cv_parser.add_argument('--test-ratio', type=float, default=0.2, help='Test set ratio (0-1)')
@@ -876,4 +939,3 @@ def main():
 if __name__ == '__main__':
     from datetime import datetime, timezone
     sys.exit(main())
-

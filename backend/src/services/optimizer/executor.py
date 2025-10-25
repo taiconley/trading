@@ -157,12 +157,23 @@ def run_backtest_task(args: tuple) -> TaskResult:
         # Extract objective score from BacktestMetrics object
         if objective == 'sharpe_ratio':
             score = float(metrics.sharpe_ratio) if metrics.sharpe_ratio is not None else 0.0
+        elif objective in ('sortino_ratio', 'sortino'):
+            score = float(metrics.sortino_ratio) if metrics.sortino_ratio is not None else 0.0
         elif objective == 'total_return':
             score = float(metrics.total_return_pct) if metrics.total_return_pct is not None else 0.0
         elif objective == 'profit_factor':
             score = float(metrics.profit_factor) if metrics.profit_factor is not None else 0.0
         elif objective == 'win_rate':
             score = float(metrics.win_rate) if metrics.win_rate is not None else 0.0
+        elif objective in ('volatility', 'annualized_volatility'):
+            volatility = float(metrics.annualized_volatility_pct) if metrics.annualized_volatility_pct is not None else None
+            score = -volatility if volatility is not None else 0.0
+        elif objective in ('value_at_risk', 'var', 'var_95'):
+            var_value = float(metrics.value_at_risk_pct) if metrics.value_at_risk_pct is not None else None
+            score = -var_value if var_value is not None else 0.0
+        elif objective in ('avg_holding_time', 'avg_holding_period'):
+            holding_hours = float(metrics.avg_holding_period_hours) if metrics.avg_holding_period_hours is not None else None
+            score = holding_hours if holding_hours is not None else 0.0
         else:
             # Default to Sharpe ratio
             score = float(metrics.sharpe_ratio) if metrics.sharpe_ratio is not None else 0.0
@@ -170,8 +181,11 @@ def run_backtest_task(args: tuple) -> TaskResult:
         # Convert metrics to dict for storage
         metrics_dict = {
             'sharpe_ratio': float(metrics.sharpe_ratio) if metrics.sharpe_ratio else None,
+            'sortino_ratio': float(metrics.sortino_ratio) if metrics.sortino_ratio else None,
             'total_return_pct': float(metrics.total_return_pct) if metrics.total_return_pct else None,
             'max_drawdown_pct': float(metrics.max_drawdown_pct) if metrics.max_drawdown_pct else None,
+            'annualized_volatility_pct': float(metrics.annualized_volatility_pct) if metrics.annualized_volatility_pct is not None else None,
+            'value_at_risk_pct': float(metrics.value_at_risk_pct) if metrics.value_at_risk_pct is not None else None,
             'win_rate': float(metrics.win_rate) if metrics.win_rate else None,
             'profit_factor': float(metrics.profit_factor) if metrics.profit_factor else None,
             'total_trades': metrics.total_trades,
@@ -181,6 +195,8 @@ def run_backtest_task(args: tuple) -> TaskResult:
             'avg_loss': float(metrics.avg_loss) if metrics.avg_loss else None,
             'largest_win': float(metrics.largest_win) if metrics.largest_win else None,
             'largest_loss': float(metrics.largest_loss) if metrics.largest_loss else None,
+            'avg_trade_duration_days': float(metrics.avg_trade_duration_days),
+            'avg_holding_period_hours': float(metrics.avg_holding_period_hours),
             'total_commission': float(metrics.total_commission) if metrics.total_commission else None,
             'total_slippage': float(metrics.total_slippage) if metrics.total_slippage else None
         }
@@ -347,4 +363,3 @@ class ParallelExecutor:
                 logger.info(f"Completed {i + 1}/{len(param_combinations)} backtests")
         
         return results
-

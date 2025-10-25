@@ -297,10 +297,40 @@ export interface Backtest {
   params: Record<string, any>;
   start_ts?: string;
   end_ts?: string;
+  
+  // Core performance metrics
   pnl?: number;
+  total_return_pct?: number;
   sharpe?: number;
+  sortino_ratio?: number;
+  annualized_volatility_pct?: number;
+  value_at_risk_pct?: number;
   maxdd?: number;
+  max_drawdown_duration_days?: number;
+  
+  // Trade statistics
   trades: number;
+  winning_trades?: number;
+  losing_trades?: number;
+  win_rate?: number;
+  profit_factor?: number;
+  
+  // Trade performance
+  avg_win?: number;
+  avg_loss?: number;
+  largest_win?: number;
+  largest_loss?: number;
+  
+  // Trade timing
+  avg_trade_duration_days?: number;
+  avg_holding_period_hours?: number;
+  
+  // Costs
+  total_commission?: number;
+  total_slippage?: number;
+  
+  // Additional metadata
+  total_days?: number;
   created_at: string;
 }
 

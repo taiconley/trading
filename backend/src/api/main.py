@@ -610,10 +610,40 @@ async def list_backtests(limit: int = 50):
                     "params": r.params_json,
                     "start_ts": r.start_ts.isoformat() if r.start_ts else None,
                     "end_ts": r.end_ts.isoformat() if r.end_ts else None,
+                    
+                    # Core performance metrics
                     "pnl": float(r.pnl) if r.pnl else None,
+                    "total_return_pct": float(r.total_return_pct) if r.total_return_pct else None,
                     "sharpe": float(r.sharpe) if r.sharpe else None,
+                    "sortino_ratio": float(r.sortino_ratio) if r.sortino_ratio else None,
+                    "annualized_volatility_pct": float(r.annualized_volatility_pct) if r.annualized_volatility_pct else None,
+                    "value_at_risk_pct": float(r.value_at_risk_pct) if r.value_at_risk_pct else None,
                     "maxdd": float(r.maxdd) if r.maxdd else None,
+                    "max_drawdown_duration_days": r.max_drawdown_duration_days,
+                    
+                    # Trade statistics
                     "trades": r.trades,
+                    "winning_trades": r.winning_trades,
+                    "losing_trades": r.losing_trades,
+                    "win_rate": float(r.win_rate) if r.win_rate else None,
+                    "profit_factor": float(r.profit_factor) if r.profit_factor else None,
+                    
+                    # Trade performance
+                    "avg_win": float(r.avg_win) if r.avg_win else None,
+                    "avg_loss": float(r.avg_loss) if r.avg_loss else None,
+                    "largest_win": float(r.largest_win) if r.largest_win else None,
+                    "largest_loss": float(r.largest_loss) if r.largest_loss else None,
+                    
+                    # Trade timing
+                    "avg_trade_duration_days": float(r.avg_trade_duration_days) if r.avg_trade_duration_days else None,
+                    "avg_holding_period_hours": float(r.avg_holding_period_hours) if r.avg_holding_period_hours else None,
+                    
+                    # Costs
+                    "total_commission": float(r.total_commission) if r.total_commission else None,
+                    "total_slippage": float(r.total_slippage) if r.total_slippage else None,
+                    
+                    # Additional metadata
+                    "total_days": r.total_days,
                     "created_at": r.created_at.isoformat()
                 }
                 for r in runs
@@ -636,10 +666,40 @@ async def get_backtest(run_id: int):
             "params": run.params_json,
             "start_ts": run.start_ts.isoformat() if run.start_ts else None,
             "end_ts": run.end_ts.isoformat() if run.end_ts else None,
+            
+            # Core performance metrics
             "pnl": float(run.pnl) if run.pnl else None,
+            "total_return_pct": float(run.total_return_pct) if run.total_return_pct else None,
             "sharpe": float(run.sharpe) if run.sharpe else None,
+            "sortino_ratio": float(run.sortino_ratio) if run.sortino_ratio else None,
+            "annualized_volatility_pct": float(run.annualized_volatility_pct) if run.annualized_volatility_pct else None,
+            "value_at_risk_pct": float(run.value_at_risk_pct) if run.value_at_risk_pct else None,
             "maxdd": float(run.maxdd) if run.maxdd else None,
+            "max_drawdown_duration_days": run.max_drawdown_duration_days,
+            
+            # Trade statistics
             "trades": run.trades,
+            "winning_trades": run.winning_trades,
+            "losing_trades": run.losing_trades,
+            "win_rate": float(run.win_rate) if run.win_rate else None,
+            "profit_factor": float(run.profit_factor) if run.profit_factor else None,
+            
+            # Trade performance
+            "avg_win": float(run.avg_win) if run.avg_win else None,
+            "avg_loss": float(run.avg_loss) if run.avg_loss else None,
+            "largest_win": float(run.largest_win) if run.largest_win else None,
+            "largest_loss": float(run.largest_loss) if run.largest_loss else None,
+            
+            # Trade timing
+            "avg_trade_duration_days": float(run.avg_trade_duration_days) if run.avg_trade_duration_days else None,
+            "avg_holding_period_hours": float(run.avg_holding_period_hours) if run.avg_holding_period_hours else None,
+            
+            # Costs
+            "total_commission": float(run.total_commission) if run.total_commission else None,
+            "total_slippage": float(run.total_slippage) if run.total_slippage else None,
+            
+            # Additional metadata
+            "total_days": run.total_days,
             "created_at": run.created_at.isoformat()
         }
 
