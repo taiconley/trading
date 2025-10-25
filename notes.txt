@@ -61,3 +61,51 @@ Options for algorithm
 bayesian
 genetic
 random_search
+
+
+docker compose exec backend-api python -m src.research.potential_pairs_analyzer --help
+usage: potential_pairs_analyzer.py [-h] [--timeframe TIMEFRAME]
+                                   [--lookback-days LOOKBACK_DAYS]
+                                   [--start-date START_DATE]
+                                   [--end-date END_DATE] [--min-bars MIN_BARS]
+                                   [--min-dollar-volume MIN_DOLLAR_VOLUME]
+                                   [--max-symbols MAX_SYMBOLS]
+                                   [--max-pairs MAX_PAIRS] [--entry-z ENTRY_Z]
+                                   [--exit-z EXIT_Z] [--min-trades MIN_TRADES]
+                                   [--parallelism PARALLELISM]
+                                   [--replace-existing]
+                                   [--status {candidate,validated,rejected}]
+                                   [--verbose]
+
+Identify candidate pairs for the pairs trading strategy.
+
+options:
+  -h, --help            show this help message and exit
+  --timeframe TIMEFRAME
+                        Timeframe to evaluate (must match candles.tf).
+  --lookback-days LOOKBACK_DAYS
+                        Trailing calendar days to analyze when --start-date is
+                        omitted.
+  --start-date START_DATE
+                        Inclusive UTC start timestamp (e.g.
+                        2024-01-01T13:30:00Z).
+  --end-date END_DATE   Inclusive UTC end timestamp.
+  --min-bars MIN_BARS   Minimum overlapping bars required for a pair.
+  --min-dollar-volume MIN_DOLLAR_VOLUME
+                        Minimum average dollar volume per bar for symbols.
+  --max-symbols MAX_SYMBOLS
+                        Maximum number of symbols to include after filtering
+                        by liquidity.
+  --max-pairs MAX_PAIRS
+                        Optional hard cap on the number of pairs to analyze.
+  --entry-z ENTRY_Z     Z-score entry threshold used for simulation.
+  --exit-z EXIT_Z       Z-score exit threshold used for simulation.
+  --min-trades MIN_TRADES
+                        Minimum completed trades required to keep a pair.
+  --parallelism PARALLELISM
+                        Worker threads for pair evaluation.
+  --replace-existing    Delete existing potential_pairs rows overlapping the
+                        window/timeframe.
+  --status {candidate,validated,rejected}
+                        Status flag to assign to new rows.
+  --verbose             Enable debug logging.
