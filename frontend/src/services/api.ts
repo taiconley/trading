@@ -180,7 +180,7 @@ class ApiClient {
     return response.data;
   }
 
-  async enableStrategy(strategyId: number, enabled: boolean) {
+  async enableStrategy(strategyId: string, enabled: boolean) {
     const response = await this.client.post(
       `/api/strategies/${strategyId}/enable`,
       { enabled }
@@ -188,7 +188,7 @@ class ApiClient {
     return response.data;
   }
 
-  async updateStrategyParams(strategyId: number, params: Record<string, any>) {
+  async updateStrategyParams(strategyId: string, params: Record<string, any>) {
     const response = await this.client.put(
       `/api/strategies/${strategyId}/params`,
       params
@@ -318,7 +318,7 @@ export interface Optimization {
 }
 
 export interface Strategy {
-  id: number;
+  id: string;
   name: string;
   enabled: boolean;
   params: Record<string, any>;

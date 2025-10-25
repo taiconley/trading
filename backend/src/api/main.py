@@ -540,7 +540,7 @@ async def get_strategies():
 
 
 @app.post("/api/strategies/{strategy_id}/enable")
-async def enable_strategy(strategy_id: int, data: Dict = Body(...)):
+async def enable_strategy(strategy_id: str, data: Dict = Body(...)):
     """Enable or disable a strategy."""
     
     enabled = data.get("enabled", True)
@@ -561,7 +561,7 @@ async def enable_strategy(strategy_id: int, data: Dict = Body(...)):
 
 
 @app.put("/api/strategies/{strategy_id}/params")
-async def update_strategy_params(strategy_id: int, params: Dict = Body(...)):
+async def update_strategy_params(strategy_id: str, params: Dict = Body(...)):
     """Update strategy parameters."""
     
     with get_db_session() as db:

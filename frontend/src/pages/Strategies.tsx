@@ -7,7 +7,7 @@ export function Strategies() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [editParams, setEditParams] = useState('');
 
   const fetchStrategies = async () => {
@@ -26,7 +26,7 @@ export function Strategies() {
     fetchStrategies();
   }, []);
 
-  const handleToggle = async (strategyId: number, currentlyEnabled: boolean) => {
+  const handleToggle = async (strategyId: string, currentlyEnabled: boolean) => {
     try {
       setError(null);
       await api.enableStrategy(strategyId, !currentlyEnabled);
@@ -41,7 +41,7 @@ export function Strategies() {
     setEditParams(JSON.stringify(strategy.params, null, 2));
   };
 
-  const handleSave = async (strategyId: number) => {
+  const handleSave = async (strategyId: string) => {
     try {
       setError(null);
       const params = JSON.parse(editParams);

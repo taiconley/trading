@@ -770,10 +770,29 @@ class StrategyService:
         """Check if strategies need reloading based on database changes."""
         try:
             with self.db_session_factory() as db:
-                # Get latest strategy update time
-                latest_update = db.query(func.max(Strategy.created_at)).scalar()
+                # Check for any strategy changes (created_at or enabled status)
+                # We need to check both because enabling/disabling doesn't change created_at
+                latest_created = db.query(func.max(Strategy.created_at)).scalar()
                 
-                if latest_update and latest_update > self.last_strategy_reload:
+                # Also check if any strategy's enabled status has changed
+                # by comparing current enabled strategies with what we have loaded
+                current_enabled_strategies = set()
+                for runner in self.strategy_runners.values():
+                    if runner.strategy.config.enabled:
+                        current_enabled_strategies.add(runner.strategy.config.strategy_id)
+                
+                db_enabled_strategies = set()
+                db_strategies = db.query(Strategy).filter(Strategy.enabled == True).all()
+                for strategy in db_strategies:
+                    db_enabled_strategies.add(strategy.strategy_id)
+                
+                # Check if there are differences in enabled strategies
+                if current_enabled_strategies != db_enabled_strategies:
+                    logger.info(f"Strategy enabled status changed. Current: {current_enabled_strategies}, DB: {db_enabled_strategies}")
+                    return True
+                
+                # Also check for new strategies (created_at changes)
+                if latest_created and latest_created > self.last_strategy_reload:
                     return True
                     
                 return False
