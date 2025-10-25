@@ -167,13 +167,25 @@ export function Optimizer() {
                       Score
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                      Sharpe
-                    </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                       Return %
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Sharpe
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Sortino
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Max DD %
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Win Rate %
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                       Trades
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                      Profit Factor
                     </th>
                   </tr>
                 </thead>
@@ -196,20 +208,32 @@ export function Optimizer() {
                       <td className="px-6 py-4 whitespace-nowrap font-medium text-green-600">
                         {result.score?.toFixed(4) || 'N/A'}
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-gray-600">
-                        {result.sharpe_ratio?.toFixed(4) || 'N/A'}
-                      </td>
                       <td
                         className={`px-6 py-4 whitespace-nowrap font-medium ${
-                          (result.total_return || 0) >= 0
+                          (result.total_return_pct || 0) >= 0
                             ? 'text-green-600'
                             : 'text-red-600'
                         }`}
                       >
-                        {result.total_return?.toFixed(2)}%
+                        {result.total_return_pct?.toFixed(2) || 'N/A'}%
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-gray-600">
-                        {result.total_trades || 0}
+                        {result.sharpe_ratio?.toFixed(3) || 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                        {result.sortino_ratio?.toFixed(3) || 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-red-600">
+                        {result.max_drawdown_pct?.toFixed(2) || 'N/A'}%
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                        {result.win_rate?.toFixed(1) || 'N/A'}%
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                        {result.total_trades || 'N/A'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                        {result.profit_factor?.toFixed(2) || 'N/A'}
                       </td>
                     </tr>
                   ))}
@@ -262,10 +286,19 @@ export function Optimizer() {
                     Status
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Progress
+                    Best Score
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
-                    Best Score
+                    Best Return %
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Best Sharpe
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Best Win Rate %
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
+                    Progress
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">
                     Date
@@ -300,11 +333,24 @@ export function Optimizer() {
                         {opt.status}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
-                      {opt.completed_combinations} / {opt.total_combinations}
-                    </td>
                     <td className="px-6 py-4 whitespace-nowrap font-medium text-green-600">
                       {opt.best_score?.toFixed(4) || 'N/A'}
+                    </td>
+                    <td
+                      className={`px-6 py-4 whitespace-nowrap font-medium ${
+                        (opt.best_total_return_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                      }`}
+                    >
+                      {opt.best_total_return_pct?.toFixed(2) || 'N/A'}%
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                      {opt.best_sharpe_ratio?.toFixed(3) || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                      {opt.best_win_rate?.toFixed(1) || 'N/A'}%
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-gray-600">
+                      {opt.completed_combinations} / {opt.total_combinations}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {new Date(opt.created_at).toLocaleDateString()}

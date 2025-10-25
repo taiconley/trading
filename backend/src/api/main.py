@@ -752,23 +752,55 @@ async def list_optimizations(limit: int = 50):
     with get_db_session() as db:
         runs = db.query(OptimizationRun).order_by(desc(OptimizationRun.created_at)).limit(limit).all()
         
-        return {
-            "optimizations": [
-                {
-                    "id": r.id,
-                    "strategy_name": r.strategy_name,
-                    "algorithm": r.algorithm,
-                    "symbols": r.symbols,
-                    "status": r.status,
-                    "total_combinations": r.total_combinations,
-                    "completed_combinations": r.completed_combinations,
-                    "best_params": r.best_params,
-                    "best_score": float(r.best_score) if r.best_score else None,
-                    "created_at": r.created_at.isoformat()
-                }
-                for r in runs
-            ]
-        }
+        optimizations = []
+        for r in runs:
+            # Get the best result's metrics if available
+            best_result = None
+            if r.best_score is not None:
+                best_result = db.query(OptimizationResult).filter(
+                    OptimizationResult.run_id == r.id,
+                    OptimizationResult.score == r.best_score
+                ).first()
+            
+            optimization_data = {
+                "id": r.id,
+                "strategy_name": r.strategy_name,
+                "algorithm": r.algorithm,
+                "symbols": r.symbols,
+                "status": r.status,
+                "total_combinations": r.total_combinations,
+                "completed_combinations": r.completed_combinations,
+                "best_params": r.best_params,
+                "best_score": float(r.best_score) if r.best_score else None,
+                "created_at": r.created_at.isoformat()
+            }
+            
+            # Add best result metrics if available
+            if best_result:
+                optimization_data.update({
+                    "best_total_return_pct": float(best_result.total_return_pct) if best_result.total_return_pct else None,
+                    "best_sharpe_ratio": float(best_result.sharpe_ratio) if best_result.sharpe_ratio else None,
+                    "best_win_rate": float(best_result.win_rate) if best_result.win_rate else None,
+                    "best_max_drawdown_pct": float(best_result.max_drawdown_pct) if best_result.max_drawdown_pct else None,
+                    "best_sortino_ratio": float(best_result.sortino_ratio) if best_result.sortino_ratio else None,
+                    "best_profit_factor": float(best_result.profit_factor) if best_result.profit_factor else None,
+                    "best_total_trades": best_result.total_trades
+                })
+            else:
+                # Set to None if no best result found
+                optimization_data.update({
+                    "best_total_return_pct": None,
+                    "best_sharpe_ratio": None,
+                    "best_win_rate": None,
+                    "best_max_drawdown_pct": None,
+                    "best_sortino_ratio": None,
+                    "best_profit_factor": None,
+                    "best_total_trades": None
+                })
+            
+            optimizations.append(optimization_data)
+        
+        return {"optimizations": optimizations}
 
 
 @app.get("/api/optimizations/{run_id}")
@@ -816,12 +848,36 @@ async def get_optimization_results(run_id: int, top_n: int = 20):
                 {
                     "params": r.params_json,
                     "score": float(r.score) if r.score else None,
+                    
+                    # Core performance metrics
                     "sharpe_ratio": float(r.sharpe_ratio) if r.sharpe_ratio else None,
-                    "total_return": float(r.total_return) if r.total_return else None,
-                    "max_drawdown": float(r.max_drawdown) if r.max_drawdown else None,
+                    "sortino_ratio": float(r.sortino_ratio) if r.sortino_ratio else None,
+                    "total_return_pct": float(r.total_return_pct) if r.total_return_pct else None,
+                    "annualized_volatility_pct": float(r.annualized_volatility_pct) if r.annualized_volatility_pct else None,
+                    "value_at_risk_pct": float(r.value_at_risk_pct) if r.value_at_risk_pct else None,
+                    "max_drawdown_pct": float(r.max_drawdown_pct) if r.max_drawdown_pct else None,
+                    "max_drawdown_duration_days": r.max_drawdown_duration_days,
+                    
+                    # Trade statistics
+                    "total_trades": r.total_trades,
+                    "winning_trades": r.winning_trades,
+                    "losing_trades": r.losing_trades,
                     "win_rate": float(r.win_rate) if r.win_rate else None,
                     "profit_factor": float(r.profit_factor) if r.profit_factor else None,
-                    "total_trades": r.total_trades
+                    
+                    # Trade performance
+                    "avg_win": float(r.avg_win) if r.avg_win else None,
+                    "avg_loss": float(r.avg_loss) if r.avg_loss else None,
+                    "largest_win": float(r.largest_win) if r.largest_win else None,
+                    "largest_loss": float(r.largest_loss) if r.largest_loss else None,
+                    
+                    # Trade timing
+                    "avg_trade_duration_days": float(r.avg_trade_duration_days) if r.avg_trade_duration_days else None,
+                    "avg_holding_period_hours": float(r.avg_holding_period_hours) if r.avg_holding_period_hours else None,
+                    
+                    # Costs
+                    "total_commission": float(r.total_commission) if r.total_commission else None,
+                    "total_slippage": float(r.total_slippage) if r.total_slippage else None
                 }
                 for r in results
             ]

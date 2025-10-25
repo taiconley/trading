@@ -345,6 +345,15 @@ export interface Optimization {
   best_params?: Record<string, any>;
   best_score?: number;
   created_at: string;
+  
+  // Best result metrics
+  best_total_return_pct?: number;
+  best_sharpe_ratio?: number;
+  best_win_rate?: number;
+  best_max_drawdown_pct?: number;
+  best_sortino_ratio?: number;
+  best_profit_factor?: number;
+  best_total_trades?: number;
 }
 
 export interface Strategy {

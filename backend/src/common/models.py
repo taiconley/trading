@@ -464,6 +464,63 @@ class BacktestTrade(Base):
     )
 
 
+class PairsAnalysis(Base):
+    """Pairs analysis results for statistical arbitrage strategies."""
+    __tablename__ = 'potential_pairs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol_a = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    symbol_b = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    timeframe = Column(String(10), nullable=False)  # e.g. '5s'
+    window_start = Column(DateTime(timezone=True), nullable=False)
+    window_end = Column(DateTime(timezone=True), nullable=False)
+    sample_bars = Column(Integer, nullable=False)
+    
+    # Volume metrics
+    avg_dollar_volume_a = Column(Numeric(18, 2), nullable=False)
+    avg_dollar_volume_b = Column(Numeric(18, 2), nullable=False)
+    
+    # Hedge regression results
+    hedge_ratio = Column(Numeric(18, 8), nullable=False)
+    hedge_intercept = Column(Numeric(18, 8), nullable=False)
+    
+    # Statistical tests
+    adf_pvalue = Column(Numeric(10, 6), nullable=True)
+    coint_pvalue = Column(Numeric(10, 6), nullable=True)
+    half_life_minutes = Column(Numeric(18, 6), nullable=True)
+    
+    # Spread characteristics
+    spread_mean = Column(Numeric(18, 8), nullable=True)
+    spread_std = Column(Numeric(18, 8), nullable=True)
+    
+    # Simulated trading results
+    simulated_entry_z = Column(Numeric(18, 8), nullable=True)
+    simulated_exit_z = Column(Numeric(18, 8), nullable=True)
+    pair_sharpe = Column(Numeric(18, 8), nullable=True)
+    pair_profit_factor = Column(Numeric(18, 8), nullable=True)
+    pair_max_drawdown = Column(Numeric(18, 8), nullable=True)
+    pair_avg_holding_minutes = Column(Numeric(18, 6), nullable=True)
+    pair_total_trades = Column(Integer, nullable=False, default=0)
+    pair_win_rate = Column(Numeric(6, 3), nullable=True)
+    
+    # Status and metadata
+    status = Column(String(20), nullable=False, default='candidate')
+    meta = Column(JSON, nullable=True, default={})
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    
+    # Constraints
+    __table_args__ = (
+        CheckConstraint("status IN ('candidate', 'validated', 'rejected')", name='ck_pairs_analysis_status'),
+        Index('idx_pairs_analysis_symbols_timeframe', 'symbol_a', 'symbol_b', 'timeframe'),
+        Index('idx_pairs_analysis_window', 'window_start', 'window_end'),
+        Index('idx_pairs_analysis_status', 'status'),
+    )
+    
+    # Relationships
+    symbol_a_ref = relationship("Symbol", foreign_keys=[symbol_a])
+    symbol_b_ref = relationship("Symbol", foreign_keys=[symbol_b])
+
+
 class OptimizationRun(Base):
     """Parameter optimization run tracking."""
     __tablename__ = 'optimization_runs'
