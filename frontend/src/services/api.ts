@@ -120,6 +120,22 @@ class ApiClient {
     return response.data;
   }
 
+  // Market Data Collection Control
+  async enableMarketDataCollection() {
+    const response = await this.client.post('/api/marketdata/collection/enable');
+    return response.data;
+  }
+
+  async disableMarketDataCollection() {
+    const response = await this.client.post('/api/marketdata/collection/disable');
+    return response.data;
+  }
+
+  async getMarketDataCollectionStatus() {
+    const response = await this.client.get('/api/marketdata/collection/status');
+    return response.data;
+  }
+
   // ============================================================================
   // Historical Data
   // ============================================================================

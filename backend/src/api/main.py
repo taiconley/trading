@@ -353,6 +353,24 @@ async def get_subscriptions():
     return await proxy_get("marketdata", "/subscriptions")
 
 
+@app.post("/api/marketdata/collection/enable")
+async def enable_market_data_collection():
+    """Enable market data collection."""
+    return await proxy_post("marketdata", "/collection/enable")
+
+
+@app.post("/api/marketdata/collection/disable")
+async def disable_market_data_collection():
+    """Disable market data collection."""
+    return await proxy_post("marketdata", "/collection/disable")
+
+
+@app.get("/api/marketdata/collection/status")
+async def get_market_data_collection_status():
+    """Get market data collection status."""
+    return await proxy_get("marketdata", "/collection/status")
+
+
 @app.post("/api/watchlist")
 async def update_watchlist(data: Dict = Body(...)):
     """Add or remove symbols from watchlist."""

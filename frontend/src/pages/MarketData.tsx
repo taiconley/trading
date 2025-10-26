@@ -8,6 +8,8 @@ export function MarketData() {
   const [newSymbol, setNewSymbol] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [collectionEnabled, setCollectionEnabled] = useState<boolean>(true);
+  const [collectionLoading, setCollectionLoading] = useState(false);
 
   const fetchWatchlist = async () => {
     try {
@@ -18,8 +20,37 @@ export function MarketData() {
     }
   };
 
+  const fetchCollectionStatus = async () => {
+    try {
+      const data = await api.getMarketDataCollectionStatus();
+      setCollectionEnabled(data.enabled);
+    } catch (err: any) {
+      console.error('Failed to fetch collection status:', err);
+    }
+  };
+
+  const handleToggleCollection = async () => {
+    try {
+      setCollectionLoading(true);
+      setError(null);
+      
+      if (collectionEnabled) {
+        await api.disableMarketDataCollection();
+        setCollectionEnabled(false);
+      } else {
+        await api.enableMarketDataCollection();
+        setCollectionEnabled(true);
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setCollectionLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchWatchlist();
+    fetchCollectionStatus();
     const interval = setInterval(fetchWatchlist, 10000);
     return () => clearInterval(interval);
   }, []);
@@ -56,6 +87,50 @@ export function MarketData() {
 
   return (
     <div className="space-y-6">
+      {/* Collection Control Card */}
+      <Card
+        title="Market Data Collection"
+        action={
+          <button
+            onClick={handleToggleCollection}
+            disabled={collectionLoading}
+            className={`px-4 py-2 rounded-md flex items-center text-sm font-medium disabled:opacity-50 ${
+              collectionEnabled
+                ? 'bg-red-600 text-white hover:bg-red-700'
+                : 'bg-green-600 text-white hover:bg-green-700'
+            }`}
+          >
+            {collectionLoading ? (
+              <RefreshCw className="w-4 h-4 mr-1 animate-spin" />
+            ) : (
+              <div className={`w-2 h-2 rounded-full mr-2 ${collectionEnabled ? 'bg-white' : 'bg-white'}`} />
+            )}
+            {collectionEnabled ? 'Stop Collection' : 'Start Collection'}
+          </button>
+        }
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-600">
+              {collectionEnabled ? 'Market data collection is active' : 'Market data collection is stopped'}
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              {collectionEnabled 
+                ? 'Live market data is being collected and stored in the database'
+                : 'No new market data will be collected until collection is restarted'
+              }
+            </p>
+          </div>
+          <div className={`px-3 py-1 rounded-full text-xs font-medium ${
+            collectionEnabled 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-red-100 text-red-800'
+          }`}>
+            {collectionEnabled ? 'Active' : 'Stopped'}
+          </div>
+        </div>
+      </Card>
+
       <Card
         title="Watchlist"
         action={

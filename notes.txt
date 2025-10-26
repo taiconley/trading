@@ -109,3 +109,16 @@ options:
   --status {candidate,validated,rejected}
                         Status flag to assign to new rows.
   --verbose             Enable debug logging.
+
+
+
+  Data Collector (historical batch)
+
+  docker compose exec backend-api ./src/research/manage_collection.sh resume-job JOB_ID
+
+  docker compose exec backend-api python3 src/research/historical_data_collector.py create-job \
+  --name "samplel_1_20251010_20251020" \
+  --symbols-file src/research/sample_symbols.txt \
+  --start-date "2025-10-10T00:00:00Z" \
+  --end-date "2025-10-20T00:00:00Z" \
+  --bar-size "5 secs"

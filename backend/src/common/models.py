@@ -675,6 +675,79 @@ def get_utc_now():
     return datetime.now(timezone.utc)
 
 
+class DataCollectionJob(Base):
+    """Data collection job tracking."""
+    __tablename__ = 'data_collection_jobs'
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    start_date = Column(DateTime(timezone=True), nullable=False)
+    end_date = Column(DateTime(timezone=True), nullable=False)
+    bar_size = Column(String(50), nullable=False)
+    what_to_show = Column(String(50), nullable=False, default='TRADES')
+    use_rth = Column(Boolean, nullable=False, default=True)
+    status = Column(String(50), nullable=False, default='pending')  # pending, running, paused, completed, failed
+    total_symbols = Column(Integer, nullable=False)
+    completed_symbols = Column(Integer, nullable=False, default=0)
+    failed_symbols = Column(Integer, nullable=False, default=0)
+    total_requests = Column(Integer, nullable=False)
+    completed_requests = Column(Integer, nullable=False, default=0)
+    failed_requests = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    symbols = relationship("DataCollectionSymbol", back_populates="job", cascade="all, delete-orphan")
+
+
+class DataCollectionSymbol(Base):
+    """Individual symbol tracking within a collection job."""
+    __tablename__ = 'data_collection_symbols'
+    
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey('data_collection_jobs.id', ondelete='CASCADE'), nullable=False)
+    symbol = Column(String(50), nullable=False)
+    status = Column(String(50), nullable=False, default='pending')  # pending, running, completed, failed
+    total_requests = Column(Integer, nullable=False)
+    completed_requests = Column(Integer, nullable=False, default=0)
+    failed_requests = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    # Relationships
+    job = relationship("DataCollectionJob", back_populates="symbols")
+    requests = relationship("DataCollectionRequest", back_populates="symbol_record", cascade="all, delete-orphan")
+
+
+class DataCollectionRequest(Base):
+    """Individual request tracking within a symbol."""
+    __tablename__ = 'data_collection_requests'
+    
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey('data_collection_jobs.id', ondelete='CASCADE'), nullable=False)
+    symbol_id = Column(Integer, ForeignKey('data_collection_symbols.id', ondelete='CASCADE'), nullable=False)
+    symbol = Column(String(50), nullable=False)
+    start_time = Column(DateTime(timezone=True), nullable=False)
+    end_time = Column(DateTime(timezone=True), nullable=False)
+    request_id = Column(String(255), nullable=True)  # Historical service request ID
+    status = Column(String(50), nullable=False, default='pending')  # pending, queued, completed, failed
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    error_message = Column(Text, nullable=True)
+    
+    # Relationships
+    job = relationship("DataCollectionJob")
+    symbol_record = relationship("DataCollectionSymbol", back_populates="requests")
+
+
 def create_all_tables(engine):
     """Create all tables in the database."""
     Base.metadata.create_all(bind=engine)

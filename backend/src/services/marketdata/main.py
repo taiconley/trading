@@ -64,6 +64,7 @@ class MarketDataService:
         
         # Service state
         self.running = False
+        self.collection_enabled = True  # Market data collection state
         self.last_heartbeat = time.time()
         
         # Setup FastAPI routes
@@ -84,6 +85,7 @@ class MarketDataService:
                 "service": "marketdata",
                 "client_id": self.client_id,
                 "connected": self.connected,
+                "collection_enabled": self.collection_enabled,
                 "subscriptions": len(self.subscribed_symbols),
                 "max_subscriptions": self.max_subscriptions,
                 "watchlist_size": len(self.watchlist_symbols),
@@ -109,6 +111,21 @@ class MarketDataService:
                 "count": len(subscriptions),
                 "max_allowed": self.max_subscriptions
             }
+        
+        @self.app.post("/collection/enable")
+        async def enable_collection():
+            """Enable market data collection."""
+            return await self.enable_collection()
+        
+        @self.app.post("/collection/disable")
+        async def disable_collection():
+            """Disable market data collection."""
+            return await self.disable_collection()
+        
+        @self.app.get("/collection/status")
+        async def get_collection_status():
+            """Get market data collection status."""
+            return await self.get_collection_status()
         
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
@@ -497,6 +514,10 @@ class MarketDataService:
     async def _process_tick_data(self, ticker: Ticker):
         """Process and store tick data in database."""
         try:
+            # Check if collection is enabled
+            if not self.collection_enabled:
+                return
+                
             symbol = ticker.contract.symbol
             
             # Extract tick data with proper NaN handling
@@ -807,6 +828,72 @@ class MarketDataService:
         except Exception as e:
             self.logger.debug(f"Failed to send WebSocket message: {e}")
             raise
+    
+    async def enable_collection(self):
+        """Enable market data collection."""
+        if not self.collection_enabled:
+            self.collection_enabled = True
+            self.logger.info("Market data collection enabled")
+            
+            # Resume subscriptions if we have a watchlist
+            if self.watchlist_symbols and self.connected:
+                await self._subscribe_to_watchlist()
+                await self._subscribe_realtime_bars()
+            
+            # Notify WebSocket clients
+            await self._broadcast_collection_status()
+            
+            return {"status": "enabled", "message": "Market data collection enabled"}
+        else:
+            return {"status": "already_enabled", "message": "Market data collection is already enabled"}
+    
+    async def disable_collection(self):
+        """Disable market data collection."""
+        if self.collection_enabled:
+            self.collection_enabled = False
+            self.logger.info("Market data collection disabled")
+            
+            # Unsubscribe from all market data
+            await self._unsubscribe_all()
+            
+            # Notify WebSocket clients
+            await self._broadcast_collection_status()
+            
+            return {"status": "disabled", "message": "Market data collection disabled"}
+        else:
+            return {"status": "already_disabled", "message": "Market data collection is already disabled"}
+    
+    async def get_collection_status(self):
+        """Get current collection status."""
+        return {
+            "enabled": self.collection_enabled,
+            "connected": self.connected,
+            "subscriptions": len(self.subscribed_symbols),
+            "watchlist_size": len(self.watchlist_symbols)
+        }
+    
+    async def _broadcast_collection_status(self):
+        """Broadcast collection status to all WebSocket clients."""
+        message = {
+            "type": "collection_status",
+            "data": {
+                "enabled": self.collection_enabled,
+                "connected": self.connected,
+                "subscriptions": len(self.subscribed_symbols)
+            }
+        }
+        
+        # Send to tick WebSocket clients
+        disconnected = []
+        for websocket in self.websocket_connections:
+            try:
+                await self._send_websocket_update(websocket, message)
+            except Exception:
+                disconnected.append(websocket)
+        
+        # Remove disconnected clients
+        for websocket in disconnected:
+            self.websocket_connections.remove(websocket)
     
     def _signal_handler(self, signum, frame):
         """Handle shutdown signals."""

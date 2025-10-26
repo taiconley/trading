@@ -1,0 +1,3 @@
+# Test symbols
+META
+AAPL
