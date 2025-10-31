@@ -95,17 +95,18 @@ export default function HistoricalData() {
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  useEffect(() => {
-    loadDatasets();
+useEffect(() => {
+  const refresh = () => {
     loadQueueStatus();
     loadJobs();
-    const interval = setInterval(() => {
-      loadDatasets();
-      loadQueueStatus();
-      loadJobs();
-    }, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
-  }, []);
+  };
+
+  loadDatasets();
+  refresh();
+
+  const intervalId = setInterval(refresh, 10000); // Refresh tables every 10s
+  return () => clearInterval(intervalId);
+}, []);
 
   const loadDatasets = async () => {
     try {
@@ -715,9 +716,9 @@ export default function HistoricalData() {
             No jobs yet. Submit a request to start collecting data.
           </div>
         ) : (
-          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+          <div className="overflow-x-auto max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
             <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10">
                 <tr>
                   <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
                     Job

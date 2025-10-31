@@ -19,6 +19,7 @@ ssh \
     -L 8082:localhost:8082 \
     -L 54320:localhost:54320 \
     -L 3000:localhost:3000 \
+    -L 8003:localhost:8003 \
     taiconley@aiunlocked.zapto.org
 
 
@@ -111,14 +112,18 @@ options:
   --verbose             Enable debug logging.
 
 
-
-  Data Collector (historical batch)
-
-  docker compose exec backend-api ./src/research/manage_collection.sh resume-job JOB_ID
-
-  docker compose exec backend-api python3 src/research/historical_data_collector.py create-job \
-  --name "samplel_1_20251010_20251020" \
-  --symbols-file src/research/sample_symbols.txt \
-  --start-date "2025-10-10T00:00:00Z" \
-  --end-date "2025-10-20T00:00:00Z" \
-  --bar-size "5 secs"
+Service is running. Summary:
+Problem resolved
+Identified the issue: The historical_job_chunks table was missing, causing the service to crash on startup.
+Found the migration: Migration b1f92cd19e5c exists to create the historical job tables, but it wasn’t applied.
+Applied the migration: Ran alembic upgrade b1f92cd19e5c which created:
+historical_jobs table
+historical_job_chunks table
+historical_coverage table
+Restarted the service: The backend-historical service is running without errors.
+Note about migration heads
+There are two migration heads in your Alembic chain:
+b1f92cd19e5c (historical job tables)
+1b68dceab27 (pairs analysis table)
+Both branch from 84403efd8a90. This won’t affect current functionality, but to avoid confusion later you may want to create a merge migration. For now, you can upgrade to specific revisions as needed, or upgrade both heads separately.
+The immediate issue is resolved, and the service should work normally.
