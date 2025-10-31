@@ -436,6 +436,21 @@ async def get_historical_queue():
     """Get historical data request queue status."""
     return await proxy_get("historical", "/queue/status")
 
+@app.get("/api/historical/jobs")
+async def list_historical_jobs(limit: int = 50):
+    """List persisted historical jobs."""
+    return await proxy_get("historical", "/historical/jobs", params={"limit": limit})
+
+@app.get("/api/historical/jobs/{job_id}")
+async def get_historical_job(job_id: int):
+    """Get a single historical job detail."""
+    return await proxy_get("historical", f"/historical/jobs/{job_id}")
+
+@app.get("/api/historical/request/{request_id}")
+async def get_historical_request(request_id: str):
+    """Get request status by request id (including persisted state)."""
+    return await proxy_get("historical", f"/historical/request/{request_id}")
+
 
 @app.get("/api/historical/datasets")
 async def get_available_datasets():

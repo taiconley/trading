@@ -11,13 +11,12 @@ import signal
 import sys
 import time
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
 from dataclasses import dataclass, field
 from enum import Enum
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import uvicorn
 from ib_insync import IB, Stock, BarData
@@ -28,10 +27,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from common.config import get_settings
 from common.db import get_db_session, execute_with_retry, initialize_database
-from common.models import Candle, Symbol, HealthStatus, WatchlistEntry
+from common.models import (
+    Candle,
+    Symbol,
+    HealthStatus,
+    WatchlistEntry,
+    HistoricalJob,
+    HistoricalJobChunk,
+    HistoricalCoverage
+)
 from common.logging import configure_service_logging, log_system_event
 from tws_bridge.ib_client import create_ib_client
 from tws_bridge.client_ids import allocate_service_client_id, heartbeat_service_client_id, release_service_client_id
+from sqlalchemy import func
 
 
 class RequestStatus(Enum):
@@ -41,6 +49,7 @@ class RequestStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     RATE_LIMITED = "rate_limited"
+    SKIPPED = "skipped"
 
 
 class BulkHistoricalRequestBody(BaseModel):
@@ -59,6 +68,12 @@ class HistoricalRequest:
     duration: str
     end_datetime: str
     use_rth: bool
+    job_id: Optional[int] = None
+    chunk_id: Optional[int] = None
+    chunk_index: Optional[int] = None
+    start_dt: Optional[datetime] = None
+    end_dt: Optional[datetime] = None
+    duration_seconds: int = 0
     status: RequestStatus = RequestStatus.PENDING
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     started_at: Optional[datetime] = None
@@ -129,46 +144,512 @@ class HistoricalDataService:
             return int(duration_str[:-2]) * 31536000  # 365 days
         return 0
     
-    def _split_request_if_needed(self, symbol: str, bar_size: str, duration: str, 
-                                   what_to_show: str, use_rth: bool, base_id: str) -> List[HistoricalRequest]:
-        """Split a request into multiple chunks if it exceeds TWS limits for the bar size."""
+    def _seconds_to_duration_str(self, seconds: int) -> str:
+        """Convert seconds to a TWS duration string (defaults to seconds granularity)."""
+        if seconds <= 0:
+            return "1 S"
+        # Prefer larger units when the division is clean, otherwise fall back to seconds
+        if seconds % 31536000 == 0:
+            years = seconds // 31536000
+            return f"{years} Y"
+        if seconds % 2592000 == 0:
+            months = seconds // 2592000
+            return f"{months} M"
+        if seconds % 604800 == 0:
+            weeks = seconds // 604800
+            return f"{weeks} W"
+        if seconds % 86400 == 0:
+            days = seconds // 86400
+            return f"{days} D"
+        return f"{seconds} S"
+    
+    def _parse_end_datetime(self, end_datetime: Optional[str]) -> datetime:
+        """Parse API end datetime formats into a timezone-aware datetime (UTC)."""
+        if not end_datetime:
+            return datetime.now(timezone.utc).replace(microsecond=0)
+        
+        patterns = [
+            "%Y%m%d %H:%M:%S",
+            "%Y-%m-%d-%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S",
+        ]
+        
+        for pattern in patterns:
+            try:
+                parsed = datetime.strptime(end_datetime, pattern)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                else:
+                    parsed = parsed.astimezone(timezone.utc)
+                return parsed.replace(microsecond=0)
+            except ValueError:
+                continue
+        
+        # Fallback: attempt ISO parsing
+        try:
+            parsed_iso = datetime.fromisoformat(end_datetime)
+            if parsed_iso.tzinfo is None:
+                parsed_iso = parsed_iso.replace(tzinfo=timezone.utc)
+            else:
+                parsed_iso = parsed_iso.astimezone(timezone.utc)
+            return parsed_iso.replace(microsecond=0)
+        except ValueError:
+            self.logger.warning(f"Unrecognized end_datetime format '{end_datetime}', defaulting to now()")
+            return datetime.now(timezone.utc).replace(microsecond=0)
+    
+    def _format_end_datetime(self, dt: Optional[datetime]) -> str:
+        """Format datetime for TWS historical data request."""
+        if not dt:
+            return ""
+        return dt.strftime("%Y%m%d %H:%M:%S")
+    
+    def _plan_chunk_windows(
+        self,
+        symbol: str,
+        bar_size: str,
+        duration: str,
+        end_datetime: Optional[str],
+        base_id: str
+    ) -> Tuple[List[dict], datetime]:
+        """Plan chunk windows for a request and return chunk metadata."""
         max_duration_str = self.BAR_SIZE_LIMITS.get(bar_size, duration)
         max_duration_seconds = self._duration_to_seconds(max_duration_str)
         requested_duration_seconds = self._duration_to_seconds(duration)
+        end_time = self._parse_end_datetime(end_datetime)
         
-        # If within limits, return single request
-        if requested_duration_seconds <= max_duration_seconds:
-            return [HistoricalRequest(
-                id=base_id,
-                symbol=symbol,
-                bar_size=bar_size,
-                what_to_show=what_to_show,
-                duration=duration,
-                end_datetime="",
-                use_rth=use_rth
-            )]
+        if requested_duration_seconds == 0:
+            requested_duration_seconds = max_duration_seconds
         
-        # Split into multiple requests
-        requests = []
-        num_chunks = (requested_duration_seconds + max_duration_seconds - 1) // max_duration_seconds
-        end_time = datetime.now(timezone.utc)
+        if requested_duration_seconds <= 0:
+            requested_duration_seconds = max_duration_seconds
         
-        for i in range(num_chunks):
-            chunk_end_time = end_time - timedelta(seconds=i * max_duration_seconds)
-            chunk_id = f"{base_id}_chunk{i+1}of{num_chunks}"
+        num_chunks = max(
+            1,
+            (requested_duration_seconds + max_duration_seconds - 1) // max_duration_seconds
+        )
+        
+        remaining_seconds = requested_duration_seconds
+        current_end = end_time
+        chunk_plans: List[dict] = []
+        
+        for index in range(1, num_chunks + 1):
+            chunk_seconds = min(max_duration_seconds, remaining_seconds)
+            chunk_start = current_end - timedelta(seconds=chunk_seconds)
+            chunk_duration_str = self._seconds_to_duration_str(chunk_seconds)
             
-            requests.append(HistoricalRequest(
-                id=chunk_id,
+            chunk_id = f"{base_id}_chunk{index}of{num_chunks}" if num_chunks > 1 else base_id
+            
+            chunk_plans.append({
+                "chunk_index": index,
+                "chunk_total": num_chunks,
+                "request_id": chunk_id,
+                "duration_str": chunk_duration_str,
+                "start": chunk_start,
+                "end": current_end,
+                "end_str": self._format_end_datetime(current_end),
+            })
+            
+            current_end = chunk_start
+            remaining_seconds -= chunk_seconds
+        
+        return chunk_plans, end_time
+    
+    async def _create_job_with_chunks(
+        self,
+        symbol: str,
+        bar_size: str,
+        what_to_show: str,
+        duration: str,
+        end_datetime: Optional[str],
+        use_rth: bool,
+        base_id: str
+    ) -> Tuple[HistoricalJob, List[HistoricalRequest]]:
+        """Create a persisted job and associated chunk records, returning queue-ready requests."""
+        chunk_plans, planned_end = self._plan_chunk_windows(
+            symbol=symbol,
+            bar_size=bar_size,
+            duration=duration,
+            end_datetime=end_datetime,
+            base_id=base_id
+        )
+        
+        now = datetime.now(timezone.utc)
+        loop = asyncio.get_event_loop()
+        
+        def _create(session):
+            job = HistoricalJob(
+                job_key=base_id,
                 symbol=symbol,
                 bar_size=bar_size,
                 what_to_show=what_to_show,
-                duration=max_duration_str,
-                end_datetime=chunk_end_time.strftime("%Y%m%d %H:%M:%S"),
-                use_rth=use_rth
-            ))
+                use_rth=use_rth,
+                duration=duration,
+                end_datetime=planned_end,
+                status='pending',
+                total_chunks=len(chunk_plans),
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(job)
+            session.flush()
+            
+            requests: List[HistoricalRequest] = []
+            
+            for plan in chunk_plans:
+                chunk = HistoricalJobChunk(
+                    job_id=job.id,
+                    chunk_index=plan["chunk_index"],
+                    request_id=plan["request_id"],
+                    status='pending',
+                    duration=plan["duration_str"],
+                    start_datetime=plan["start"],
+                    end_datetime=plan["end"],
+                    scheduled_for=now,
+                    priority=0,
+                    attempts=0,
+                    max_attempts=5,
+                )
+                session.add(chunk)
+                session.flush()
+                
+                requests.append(
+                    HistoricalRequest(
+                        id=chunk.request_id,
+                        symbol=symbol,
+                        bar_size=bar_size,
+                        what_to_show=what_to_show,
+                        duration=chunk.duration,
+                        end_datetime=plan["end_str"],
+                        use_rth=use_rth,
+                        job_id=job.id,
+                        chunk_id=chunk.id,
+                        chunk_index=chunk.chunk_index,
+                        start_dt=chunk.start_datetime,
+                        end_dt=chunk.end_datetime,
+                        duration_seconds=self._duration_to_seconds(chunk.duration)
+                    )
+                )
+            
+            return job, requests
         
-        self.logger.info(f"Split request for {symbol} ({bar_size}, {duration}) into {num_chunks} chunks")
-        return requests
+        job, requests = await loop.run_in_executor(
+            None,
+            lambda: execute_with_retry(_create)
+        )
+        
+        for request in requests:
+            await self.request_queue.put(request)
+        
+        return job, requests
+    
+    async def _load_pending_chunks_from_db(self) -> int:
+        """Load pending or retryable chunks from the database into the in-memory queue."""
+        loop = asyncio.get_event_loop()
+        now = datetime.now(timezone.utc)
+        
+        def _load(session):
+            pending_requests: List[HistoricalRequest] = []
+            
+            query = (
+                session.query(HistoricalJobChunk, HistoricalJob)
+                .join(HistoricalJob, HistoricalJobChunk.job_id == HistoricalJob.id)
+                .filter(
+                    HistoricalJobChunk.status.in_(["pending", "in_progress"]),
+                    HistoricalJobChunk.scheduled_for <= now
+                )
+                .order_by(
+                    HistoricalJobChunk.priority.desc(),
+                    HistoricalJobChunk.scheduled_for.asc(),
+                    HistoricalJobChunk.id.asc()
+                )
+            )
+            
+            for chunk, job in query.all():
+                if chunk.status == "in_progress":
+                    # Reset any dangling in-progress work so we can resume cleanly
+                    chunk.status = "pending"
+                    chunk.started_at = None
+                    chunk.updated_at = now
+                
+                pending_requests.append(
+                    HistoricalRequest(
+                        id=chunk.request_id,
+                        symbol=job.symbol,
+                        bar_size=job.bar_size,
+                        what_to_show=job.what_to_show,
+                        duration=chunk.duration,
+                        end_datetime=self._format_end_datetime(chunk.end_datetime),
+                        use_rth=job.use_rth,
+                        job_id=job.id,
+                        chunk_id=chunk.id,
+                        chunk_index=chunk.chunk_index,
+                        start_dt=chunk.start_datetime,
+                        end_dt=chunk.end_datetime,
+                        duration_seconds=self._duration_to_seconds(chunk.duration)
+                    )
+                )
+            
+            return pending_requests
+        
+        pending_requests = await loop.run_in_executor(
+            None,
+            lambda: execute_with_retry(_load)
+        )
+        
+        for request in pending_requests:
+            await self.request_queue.put(request)
+        
+        if pending_requests:
+            self.logger.info(f"Recovered {len(pending_requests)} queued historical chunk(s) from database")
+        
+        return len(pending_requests)
+    
+    def _should_skip_chunk(self, session, request: HistoricalRequest) -> bool:
+        """Determine whether a chunk should be skipped based on existing coverage."""
+        if not request.start_dt or not request.end_dt:
+            return False
+        
+        coverage = session.query(HistoricalCoverage).filter(
+            HistoricalCoverage.symbol == request.symbol,
+            HistoricalCoverage.timeframe == request.bar_size
+        ).first()
+        
+        if not coverage:
+            return False
+        
+        if coverage.min_ts and coverage.max_ts:
+            if coverage.min_ts <= request.start_dt and coverage.max_ts >= request.end_dt:
+                # Double-check that data actually exists near the edges of the window
+                start_bar = session.query(Candle.ts).filter(
+                    Candle.symbol == request.symbol,
+                    Candle.tf == request.bar_size,
+                    Candle.ts >= request.start_dt
+                ).order_by(Candle.ts.asc()).first()
+                
+                end_bar = session.query(Candle.ts).filter(
+                    Candle.symbol == request.symbol,
+                    Candle.tf == request.bar_size,
+                    Candle.ts <= request.end_dt
+                ).order_by(Candle.ts.desc()).first()
+                
+                if start_bar and end_bar:
+                    return True
+        
+        return False
+    
+    async def _mark_chunk_started(self, request: HistoricalRequest) -> Tuple[bool, Optional[str]]:
+        """Mark a chunk as in-progress; return (skipped, reason)."""
+        loop = asyncio.get_event_loop()
+        now = datetime.now(timezone.utc)
+        
+        def _mark(session):
+            chunk = session.query(HistoricalJobChunk).filter(
+                HistoricalJobChunk.id == request.chunk_id
+            ).first()
+            if not chunk:
+                return True, "chunk_not_found"
+            
+            job = session.query(HistoricalJob).filter(
+                HistoricalJob.id == chunk.job_id
+            ).first()
+            if not job:
+                return True, "job_not_found"
+            
+            # Refresh request metadata with the latest persisted values
+            request.duration = chunk.duration
+            request.start_dt = chunk.start_datetime
+            request.end_dt = chunk.end_datetime
+            request.end_datetime = self._format_end_datetime(chunk.end_datetime)
+            request.duration_seconds = self._duration_to_seconds(chunk.duration)
+            
+            if chunk.status == "completed":
+                return True, "already_completed"
+            
+            if chunk.status == "skipped":
+                return True, "already_skipped"
+            
+            if self._should_skip_chunk(session, request):
+                chunk.status = "skipped"
+                chunk.completed_at = now
+                chunk.updated_at = now
+                chunk.error_message = None
+                job.completed_chunks = (job.completed_chunks or 0) + 1
+                if job.status in ("pending", "running"):
+                    if job.completed_chunks >= job.total_chunks:
+                        job.status = "completed"
+                        job.completed_at = now
+                    else:
+                        job.status = "running"
+                session.flush()
+                return True, "coverage_satisfied"
+            
+            chunk.status = "in_progress"
+            chunk.started_at = now
+            chunk.updated_at = now
+            chunk.attempts = (chunk.attempts or 0) + 1
+            chunk.error_message = None
+            
+            if job.status == "pending":
+                job.status = "running"
+                job.started_at = job.started_at or now
+            job.updated_at = now
+            
+            session.flush()
+            return False, None
+        
+        return await loop.run_in_executor(
+            None,
+            lambda: execute_with_retry(_mark)
+        )
+    
+    async def _mark_chunk_completed(
+        self,
+        request: HistoricalRequest,
+        bars: List[BarData],
+        bars_stored: int
+    ) -> None:
+        """Mark chunk completion, update job counters and coverage metadata."""
+        loop = asyncio.get_event_loop()
+        now = datetime.now(timezone.utc)
+        
+        # Derive time bounds from returned bars (fallback to planned window if empty)
+        bar_timestamps = [
+            bar.date if isinstance(bar.date, datetime) else None
+            for bar in bars
+            if hasattr(bar, 'date')
+        ]
+        bar_timestamps = [ts.replace(tzinfo=timezone.utc) if ts and ts.tzinfo is None else ts for ts in bar_timestamps]
+        bar_timestamps = [ts for ts in bar_timestamps if ts]
+        
+        chunk_min = min(bar_timestamps) if bar_timestamps else request.start_dt
+        chunk_max = max(bar_timestamps) if bar_timestamps else request.end_dt
+        
+        def _complete(session):
+            chunk = session.query(HistoricalJobChunk).filter(
+                HistoricalJobChunk.id == request.chunk_id
+            ).first()
+            if not chunk:
+                return
+            
+            job = session.query(HistoricalJob).filter(
+                HistoricalJob.id == chunk.job_id
+            ).first()
+            if not job:
+                return
+            
+            chunk.status = "completed"
+            chunk.completed_at = now
+            chunk.updated_at = now
+            chunk.bars_received = (chunk.bars_received or 0) + max(bars_stored, 0)
+            chunk.error_message = None
+            
+            job.completed_chunks = (job.completed_chunks or 0) + 1
+            job.failed_chunks = job.failed_chunks or 0
+            job.updated_at = now
+            if job.status in ("pending", "running"):
+                if job.completed_chunks >= job.total_chunks:
+                    job.status = "completed"
+                    job.completed_at = now
+                else:
+                    job.status = "running"
+            
+            coverage = session.query(HistoricalCoverage).filter(
+                HistoricalCoverage.symbol == request.symbol,
+                HistoricalCoverage.timeframe == request.bar_size
+            ).first()
+            
+            if not coverage:
+                coverage = HistoricalCoverage(
+                    symbol=request.symbol,
+                    timeframe=request.bar_size,
+                    min_ts=chunk_min,
+                    max_ts=chunk_max,
+                    total_bars=bars_stored,
+                    last_updated_at=now,
+                    last_verified_at=now
+                )
+                session.add(coverage)
+            else:
+                if chunk_min:
+                    coverage.min_ts = (
+                        chunk_min if not coverage.min_ts else min(coverage.min_ts, chunk_min)
+                    )
+                if chunk_max:
+                    coverage.max_ts = (
+                        chunk_max if not coverage.max_ts else max(coverage.max_ts, chunk_max)
+                    )
+                coverage.total_bars = (coverage.total_bars or 0) + max(bars_stored, 0)
+                coverage.last_updated_at = now
+                coverage.last_verified_at = now
+            
+            session.flush()
+        
+        await loop.run_in_executor(None, lambda: execute_with_retry(_complete))
+    
+    async def _handle_chunk_failure(self, request: HistoricalRequest, error_message: str) -> bool:
+        """Record failure information and decide whether to retry the chunk."""
+        loop = asyncio.get_event_loop()
+        now = datetime.now(timezone.utc)
+        
+        def _fail(session):
+            chunk = session.query(HistoricalJobChunk).filter(
+                HistoricalJobChunk.id == request.chunk_id
+            ).first()
+            if not chunk:
+                return False
+            
+            job = session.query(HistoricalJob).filter(
+                HistoricalJob.id == chunk.job_id
+            ).first()
+            if not job:
+                return False
+            
+            max_attempts = chunk.max_attempts or 5
+            attempts = chunk.attempts or 0
+            chunk.error_message = error_message[:1024]
+            chunk.updated_at = now
+            
+            if attempts >= max_attempts:
+                chunk.status = "failed"
+                chunk.completed_at = now
+                job.failed_chunks = (job.failed_chunks or 0) + 1
+                job.status = "failed"
+                job.completed_at = job.completed_at or now
+                job.updated_at = now
+                session.flush()
+                return False
+            
+            # Schedule retry with basic backoff (attempt count already incremented in _mark_chunk_started)
+            backoff_seconds = min(60 * attempts, 300)
+            chunk.status = "pending"
+            chunk.started_at = None
+            chunk.scheduled_for = now + timedelta(seconds=backoff_seconds)
+            job.status = "running"
+            job.updated_at = now
+            
+            session.flush()
+            return True
+        
+        return await loop.run_in_executor(None, lambda: execute_with_retry(_fail))
+    
+    def _split_request_if_needed(self, symbol: str, bar_size: str, duration: str, 
+                                   what_to_show: str, use_rth: bool, base_id: str,
+                                   end_datetime: Optional[str] = None) -> List[dict]:
+        """Split a request into multiple chunks if it exceeds TWS limits for the bar size."""
+        chunk_plans, _ = self._plan_chunk_windows(
+            symbol=symbol,
+            bar_size=bar_size,
+            duration=duration,
+            end_datetime=end_datetime,
+            base_id=base_id
+        )
+        
+        if len(chunk_plans) > 1:
+            self.logger.info(
+                f"Split request for {symbol} ({bar_size}, {duration}) into {len(chunk_plans)} chunks"
+            )
+        return chunk_plans
     
     def _setup_routes(self):
         """Setup FastAPI routes."""
@@ -192,6 +673,19 @@ class HistoricalDataService:
         @self.app.get("/queue/status")
         async def queue_status():
             """Get request queue status."""
+            def _job_summary(session):
+                return {
+                    "pending_chunks": session.query(func.count(HistoricalJobChunk.id)).filter(HistoricalJobChunk.status == "pending").scalar(),
+                    "in_progress_chunks": session.query(func.count(HistoricalJobChunk.id)).filter(HistoricalJobChunk.status == "in_progress").scalar(),
+                    "failed_chunks": session.query(func.count(HistoricalJobChunk.id)).filter(HistoricalJobChunk.status == "failed").scalar(),
+                    "skipped_chunks": session.query(func.count(HistoricalJobChunk.id)).filter(HistoricalJobChunk.status == "skipped").scalar(),
+                    "total_jobs": session.query(func.count(HistoricalJob.id)).scalar(),
+                    "completed_jobs": session.query(func.count(HistoricalJob.id)).filter(HistoricalJob.status == "completed").scalar(),
+                    "failed_jobs": session.query(func.count(HistoricalJob.id)).filter(HistoricalJob.status == "failed").scalar(),
+                }
+            
+            summary = execute_with_retry(_job_summary)
+            
             return {
                 "queue_size": self.request_queue.qsize(),
                 "active_requests": [
@@ -215,7 +709,8 @@ class HistoricalDataService:
                         "error": req.error_message
                     }
                     for req in list(self.completed_requests.values())[-10:]  # Last 10
-                ]
+                ],
+                "db_summary": summary
             }
         
         @self.app.post("/historical/request")
@@ -242,28 +737,29 @@ class HistoricalDataService:
                         status_code=400,
                         detail=f"Invalid bar_size. Must be one of: {valid_bar_sizes}"
                     )
-                
-                # Split request if it exceeds TWS limits
-                requests = self._split_request_if_needed(
+
+                # Persist job and enqueue all chunks
+                job, queued_requests = await self._create_job_with_chunks(
                     symbol=symbol,
                     bar_size=bar_size,
-                    duration=duration,
                     what_to_show=what_to_show,
+                    duration=duration,
+                    end_datetime=end_datetime,
                     use_rth=use_rth,
                     base_id=request_id
                 )
+                chunk_count = len(queued_requests)
                 
-                # Add all chunks to queue
-                for request in requests:
-                    await self.request_queue.put(request)
-                
-                self.logger.info(f"Queued {len(requests)} historical data request(s): {request_id}")
+                self.logger.info(
+                    f"Queued historical job {job.job_key} with {chunk_count} chunk(s) for {symbol}"
+                )
                 
                 return {
                     "request_id": request_id,
                     "status": "queued",
-                    "chunks": len(requests),
-                    "message": f"Queued {len(requests)} request(s) for {symbol}",
+                    "chunks": chunk_count,
+                    "job_id": job.id,
+                    "message": f"Queued {chunk_count} chunk(s) for {symbol}",
                     "queue_position": self.request_queue.qsize()
                 }
                 
@@ -295,38 +791,37 @@ class HistoricalDataService:
                 
                 # Create requests for each symbol and bar size (with splitting if needed)
                 request_ids = []
+                job_ids = []
                 total_chunks = 0
                 
                 for symbol in symbols:
                     for bar_size in bar_sizes:
                         request_id = f"bulk_{symbol}_{bar_size}_{int(time.time())}"
                         
-                        # Split request if it exceeds TWS limits
-                        split_requests = self._split_request_if_needed(
+                        job, queued_requests = await self._create_job_with_chunks(
                             symbol=symbol,
                             bar_size=bar_size,
                             duration=duration,
                             what_to_show=self.settings.market_data.what_to_show,
                             use_rth=self.settings.market_data.rth,
-                            base_id=request_id
+                            base_id=request_id,
+                            end_datetime=None
                         )
                         
-                        # Add all chunks to queue
-                        for request in split_requests:
-                            await self.request_queue.put(request)
-                        
+                        job_ids.append(job.id)
                         request_ids.append(request_id)
-                        total_chunks += len(split_requests)
+                        total_chunks += len(queued_requests)
                 
-                self.logger.info(f"Queued {total_chunks} bulk historical requests ({len(request_ids)} base requests)")
+                self.logger.info(f"Queued {total_chunks} bulk historical chunks ({len(request_ids)} base requests)")
                 
                 return {
-                    "message": f"Queued {total_chunks} historical data requests ({len(request_ids)} symbols × bar sizes)",
+                    "message": f"Queued {total_chunks} historical data chunks ({len(request_ids)} symbols × bar sizes)",
                     "symbols": symbols,
                     "bar_sizes": bar_sizes,
                     "duration": duration,
                     "total_chunks": total_chunks,
-                    "requests": request_ids
+                    "requests": request_ids,
+                    "jobs": job_ids
                 }
                 
             except Exception as e:
@@ -362,7 +857,120 @@ class HistoricalDataService:
                     "error": req.error_message
                 }
             
+            # Fallback to persisted chunk info
+            def _lookup(session):
+                result = (
+                    session.query(HistoricalJobChunk, HistoricalJob)
+                    .join(HistoricalJob, HistoricalJobChunk.job_id == HistoricalJob.id)
+                    .filter(HistoricalJobChunk.request_id == request_id)
+                    .first()
+                )
+                if not result:
+                    return None
+                chunk, job = result
+                return {
+                    "request_id": request_id,
+                    "status": chunk.status,
+                    "symbol": job.symbol,
+                    "bar_size": job.bar_size,
+                    "started_at": chunk.started_at.isoformat() if chunk.started_at else None,
+                    "completed_at": chunk.completed_at.isoformat() if chunk.completed_at else None,
+                    "bars_count": chunk.bars_received or 0,
+                    "error": chunk.error_message,
+                    "job_id": job.id,
+                }
+            
+            persisted = execute_with_retry(_lookup)
+            if persisted:
+                return persisted
+            
             raise HTTPException(status_code=404, detail="Request not found")
+        
+        @self.app.get("/historical/jobs")
+        async def list_historical_jobs(limit: int = 50):
+            """List recent historical jobs with summary information."""
+            def _list(session):
+                jobs = (
+                    session.query(HistoricalJob)
+                    .order_by(HistoricalJob.created_at.desc())
+                    .limit(limit)
+                    .all()
+                )
+                return [
+                    {
+                        "id": job.id,
+                        "job_key": job.job_key,
+                        "symbol": job.symbol,
+                        "bar_size": job.bar_size,
+                        "status": job.status,
+                        "total_chunks": job.total_chunks,
+                        "completed_chunks": job.completed_chunks,
+                        "failed_chunks": job.failed_chunks,
+                        "created_at": job.created_at.isoformat() if job.created_at else None,
+                        "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                        "started_at": job.started_at.isoformat() if job.started_at else None,
+                        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                    }
+                    for job in jobs
+                ]
+            
+            jobs = execute_with_retry(_list)
+            return {"jobs": jobs, "count": len(jobs)}
+        
+        @self.app.get("/historical/jobs/{job_id}")
+        async def get_historical_job(job_id: int):
+            """Retrieve job details including chunk breakdown."""
+            def _get(session):
+                job = session.query(HistoricalJob).filter(HistoricalJob.id == job_id).first()
+                if not job:
+                    return None
+                
+                chunks = (
+                    session.query(HistoricalJobChunk)
+                    .filter(HistoricalJobChunk.job_id == job.id)
+                    .order_by(HistoricalJobChunk.chunk_index.asc())
+                    .all()
+                )
+                
+                return {
+                    "id": job.id,
+                    "job_key": job.job_key,
+                    "symbol": job.symbol,
+                    "bar_size": job.bar_size,
+                    "status": job.status,
+                    "duration": job.duration,
+                    "end_datetime": job.end_datetime.isoformat() if job.end_datetime else None,
+                    "total_chunks": job.total_chunks,
+                    "completed_chunks": job.completed_chunks,
+                    "failed_chunks": job.failed_chunks,
+                    "created_at": job.created_at.isoformat() if job.created_at else None,
+                    "updated_at": job.updated_at.isoformat() if job.updated_at else None,
+                    "started_at": job.started_at.isoformat() if job.started_at else None,
+                    "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+                    "chunks": [
+                        {
+                            "id": chunk.id,
+                            "request_id": chunk.request_id,
+                            "chunk_index": chunk.chunk_index,
+                            "status": chunk.status,
+                            "duration": chunk.duration,
+                            "start_datetime": chunk.start_datetime.isoformat() if chunk.start_datetime else None,
+                            "end_datetime": chunk.end_datetime.isoformat() if chunk.end_datetime else None,
+                            "scheduled_for": chunk.scheduled_for.isoformat() if chunk.scheduled_for else None,
+                            "attempts": chunk.attempts,
+                            "max_attempts": chunk.max_attempts,
+                            "bars_received": chunk.bars_received,
+                            "error_message": chunk.error_message,
+                            "completed_at": chunk.completed_at.isoformat() if chunk.completed_at else None,
+                        }
+                        for chunk in chunks
+                    ]
+                }
+            
+            job = execute_with_retry(_get)
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found")
+            return job
     
     async def start(self):
         """Start the historical data service."""
@@ -387,6 +995,11 @@ class HistoricalDataService:
             
             # Update health status
             await self._update_health_status("healthy")
+            
+            # Recover any pending work from previous runs
+            recovered = await self._load_pending_chunks_from_db()
+            if recovered:
+                self.logger.info(f"Recovered {recovered} pending chunk(s) before starting processing loop")
             
             # Start request processing task
             asyncio.create_task(self._process_requests())
@@ -530,6 +1143,21 @@ class HistoricalDataService:
             if not self.connected:
                 raise Exception("Not connected to TWS")
             
+            skipped, reason = await self._mark_chunk_started(request)
+            if skipped:
+                request.status = RequestStatus.COMPLETED if reason in ("already_completed", "already_skipped") else RequestStatus.SKIPPED
+                request.completed_at = datetime.now(timezone.utc)
+                request.bars_count = 0
+                if reason == "coverage_satisfied":
+                    request.error_message = None
+                else:
+                    request.error_message = reason
+                self.completed_requests[request.id] = request
+                if request.id in self.active_requests:
+                    del self.active_requests[request.id]
+                self.logger.info(f"Skipped historical request {request.id} ({reason})")
+                return
+            
             # Create contract
             contract = Stock(request.symbol, 'SMART', 'USD')
             
@@ -545,6 +1173,7 @@ class HistoricalDataService:
             
             # Store bars in database
             bars_stored = await self._store_bars(request.symbol, request.bar_size, bars)
+            await self._mark_chunk_completed(request, bars, bars_stored)
             
             # Mark as completed
             request.status = RequestStatus.COMPLETED
@@ -561,15 +1190,21 @@ class HistoricalDataService:
         except Exception as e:
             self.logger.error(f"Failed to process historical request {request.id}: {e}")
             
-            # Mark as failed
-            request.status = RequestStatus.FAILED
-            request.completed_at = datetime.now(timezone.utc)
+            should_retry = await self._handle_chunk_failure(request, str(e))
             request.error_message = str(e)
+            request.completed_at = datetime.now(timezone.utc)
             
-            # Move to completed requests
-            self.completed_requests[request.id] = request
             if request.id in self.active_requests:
                 del self.active_requests[request.id]
+            
+            if should_retry:
+                request.status = RequestStatus.PENDING
+                request.started_at = None
+                await self.request_queue.put(request)
+                self.logger.info(f"Re-queued historical request {request.id} for retry")
+            else:
+                request.status = RequestStatus.FAILED
+                self.completed_requests[request.id] = request
     
     async def _store_bars(self, symbol: str, timeframe: str, bars: List[BarData]) -> int:
         """Store historical bars in database with idempotent upserts."""

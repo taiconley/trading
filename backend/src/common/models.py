@@ -282,6 +282,93 @@ class Candle(Base):
     )
 
 
+class HistoricalJob(Base):
+    """Persisted historical data collection job."""
+    __tablename__ = 'historical_jobs'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_key = Column(String(128), nullable=False, unique=True)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    bar_size = Column(String(20), nullable=False)
+    what_to_show = Column(String(50), nullable=False, default='TRADES')
+    use_rth = Column(Boolean, nullable=False, default=True)
+    duration = Column(String(20), nullable=False)
+    end_datetime = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(20), nullable=False, default='pending')
+    total_chunks = Column(Integer, nullable=False, default=0)
+    completed_chunks = Column(Integer, nullable=False, default=0)
+    failed_chunks = Column(Integer, nullable=False, default=0)
+    priority = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    
+    symbol_ref = relationship("Symbol")
+    chunks = relationship("HistoricalJobChunk", back_populates="job", cascade="all, delete-orphan")
+    
+    __table_args__ = (
+        Index('ix_historical_jobs_status', 'status'),
+        Index('ix_historical_jobs_symbol_tf', 'symbol', 'bar_size'),
+    )
+
+
+class HistoricalJobChunk(Base):
+    """Individual request chunk for a historical job."""
+    __tablename__ = 'historical_job_chunks'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Integer, ForeignKey('historical_jobs.id', ondelete='CASCADE'), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    request_id = Column(String(128), nullable=False, unique=True)
+    status = Column(String(20), nullable=False, default='pending')
+    duration = Column(String(20), nullable=False)
+    start_datetime = Column(DateTime(timezone=True), nullable=True)
+    end_datetime = Column(DateTime(timezone=True), nullable=True)
+    scheduled_for = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    priority = Column(Integer, nullable=False, default=0)
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=5)
+    bars_expected = Column(Integer, nullable=True)
+    bars_received = Column(Integer, nullable=True)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    job = relationship("HistoricalJob", back_populates="chunks")
+    
+    __table_args__ = (
+        UniqueConstraint('job_id', 'chunk_index', name='uq_historical_job_chunks_index'),
+        Index('ix_historical_job_chunks_status', 'status'),
+        Index('ix_historical_job_chunks_scheduled', 'scheduled_for'),
+    )
+
+
+class HistoricalCoverage(Base):
+    """Coverage metadata for historical datasets."""
+    __tablename__ = 'historical_coverage'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
+    timeframe = Column(String(20), nullable=False)
+    min_ts = Column(DateTime(timezone=True), nullable=True)
+    max_ts = Column(DateTime(timezone=True), nullable=True)
+    total_bars = Column(Integer, nullable=False, default=0)
+    last_updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    last_verified_at = Column(DateTime(timezone=True), nullable=True)
+    notes = Column(Text, nullable=True)
+    
+    symbol_ref = relationship("Symbol")
+    
+    __table_args__ = (
+        UniqueConstraint('symbol', 'timeframe', name='uq_historical_coverage_symbol_tf'),
+        Index('ix_historical_coverage_symbol_tf', 'symbol', 'timeframe'),
+    )
+
+
 # =============================================================================
 # Trading Tables
 # =============================================================================

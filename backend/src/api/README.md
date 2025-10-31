@@ -259,8 +259,20 @@ Request historical data for a symbol.
 ```json
 {
   "symbol": "AAPL",
-  "bar_size": "1 day",
-  "lookback": "30 D"
+  "bar_size": "5 secs",
+  "duration": "1 D"
+}
+```
+
+**Response:**
+```json
+{
+  "request_id": "AAPL_5 secs_1 D_1708000000",
+  "status": "queued",
+  "chunks": 24,
+  "job_id": 42,
+  "message": "Queued 24 chunk(s) for AAPL",
+  "queue_position": 3
 }
 ```
 
@@ -275,15 +287,118 @@ Request historical data for all watchlist symbols.
 }
 ```
 
+#### `GET /api/historical/jobs`
+List persisted historical jobs.
+
+**Response:**
+```json
+{
+  "jobs": [
+    {
+      "id": 42,
+      "job_key": "AAPL_5 secs_1 D_1708000000",
+      "symbol": "AAPL",
+      "bar_size": "5 secs",
+      "status": "running",
+      "total_chunks": 24,
+      "completed_chunks": 6,
+      "failed_chunks": 0,
+      "created_at": "2024-02-15T03:15:00Z",
+      "updated_at": "2024-02-15T03:35:00Z",
+      "started_at": "2024-02-15T03:15:10Z",
+      "completed_at": null
+    }
+  ],
+  "count": 1
+}
+```
+
+#### `GET /api/historical/jobs/{job_id}`
+Get job details including chunk breakdown.
+
+**Response:**
+```json
+{
+  "id": 42,
+  "job_key": "AAPL_5 secs_1 D_1708000000",
+  "symbol": "AAPL",
+  "bar_size": "5 secs",
+  "status": "running",
+  "duration": "1 D",
+  "total_chunks": 24,
+  "completed_chunks": 6,
+  "failed_chunks": 0,
+  "chunks": [
+    {
+      "id": 210,
+      "request_id": "AAPL_5 secs_1 D_1708000000_chunk1of24",
+      "chunk_index": 1,
+      "status": "completed",
+      "duration": "7200 S",
+      "start_datetime": "2024-02-14T03:15:00Z",
+      "end_datetime": "2024-02-14T05:15:00Z",
+      "attempts": 1,
+      "bars_received": 1440,
+      "completed_at": "2024-02-15T03:17:00Z"
+    }
+  ]
+}
+```
+
 #### `GET /api/historical/queue`
 Get historical data request queue status.
 
 **Response:**
 ```json
 {
-  "queue_size": 5,
-  "active_requests": 1,
-  "completed_requests": 20
+  "queue_size": 3,
+  "active_requests": [
+    {
+      "id": "AAPL_5 secs_1 D_1708000000_chunk7of24",
+      "symbol": "AAPL",
+      "bar_size": "5 secs",
+      "status": "in_progress",
+      "started_at": "2024-02-15T03:36:02Z"
+    }
+  ],
+  "recent_completions": [
+    {
+      "id": "AAPL_5 secs_1 D_1708000000_chunk6of24",
+      "symbol": "AAPL",
+      "bar_size": "5 secs",
+      "status": "completed",
+      "bars_count": 1440,
+      "completed_at": "2024-02-15T03:34:59Z",
+      "error": null
+    }
+  ],
+  "db_summary": {
+    "pending_chunks": 48,
+    "in_progress_chunks": 1,
+    "failed_chunks": 0,
+    "skipped_chunks": 0,
+    "total_jobs": 4,
+    "completed_jobs": 1,
+    "failed_jobs": 0
+  }
+}
+```
+
+#### `GET /api/historical/request/{request_id}`
+Get a persisted request (chunk) status by request identifier.
+
+**Response:**
+```json
+{
+  "request_id": "AAPL_5 secs_1 D_1708000000_chunk7of24",
+  "status": "in_progress",
+  "symbol": "AAPL",
+  "bar_size": "5 secs",
+  "started_at": "2024-02-15T03:36:02Z",
+  "completed_at": null,
+  "bars_count": 0,
+  "error": null,
+  "job_id": 42
 }
 ```
 
@@ -846,4 +961,3 @@ If any service is unavailable, the gateway will return a `503 Service Unavailabl
 - [ ] WebSocket connection pooling
 - [ ] Metrics and logging aggregation
 - [ ] API versioning (v1, v2)
-

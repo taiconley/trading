@@ -21,6 +21,54 @@ interface Candle {
   volume: number;
 }
 
+interface HistoricalJobSummary {
+  id: number;
+  job_key: string;
+  symbol: string;
+  bar_size: string;
+  status: string;
+  total_chunks: number;
+  completed_chunks: number;
+  failed_chunks: number;
+  created_at?: string;
+  updated_at?: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+interface QueueActiveRequest {
+  id: string;
+  symbol: string;
+  bar_size: string;
+  status: string;
+  started_at?: string | null;
+}
+
+interface QueueCompletion {
+  id: string;
+  symbol: string;
+  bar_size: string;
+  status: string;
+  bars_count: number;
+  completed_at?: string | null;
+  error?: string | null;
+}
+
+interface QueueSummary {
+  queue_size: number;
+  active_requests: QueueActiveRequest[];
+  recent_completions: QueueCompletion[];
+  db_summary?: {
+    pending_chunks: number;
+    in_progress_chunks: number;
+    failed_chunks: number;
+    skipped_chunks: number;
+    total_jobs: number;
+    completed_jobs: number;
+    failed_jobs: number;
+  };
+}
+
 export default function HistoricalData() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,6 +76,9 @@ export default function HistoricalData() {
   const [candles, setCandles] = useState<Candle[]>([]);
   const [loadingChart, setLoadingChart] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [queueStatus, setQueueStatus] = useState<QueueSummary | null>(null);
+  const [jobs, setJobs] = useState<HistoricalJobSummary[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(true);
   
   // Request form state
   const [symbol, setSymbol] = useState('');
@@ -43,7 +94,13 @@ export default function HistoricalData() {
 
   useEffect(() => {
     loadDatasets();
-    const interval = setInterval(loadDatasets, 10000); // Refresh every 10s
+    loadQueueStatus();
+    loadJobs();
+    const interval = setInterval(() => {
+      loadDatasets();
+      loadQueueStatus();
+      loadJobs();
+    }, 10000); // Refresh every 10s
     return () => clearInterval(interval);
   }, []);
 
@@ -55,6 +112,35 @@ export default function HistoricalData() {
       console.error('Failed to load datasets:', error);
     } finally {
       setLoading(false);
+    }
+  };
+  
+  const loadQueueStatus = async () => {
+    try {
+      const data = await api.getHistoricalQueue();
+      const normalized: QueueSummary = {
+        queue_size: data.queue_size ?? 0,
+        active_requests: data.active_requests ?? [],
+        recent_completions: data.recent_completions ?? [],
+        db_summary: data.db_summary,
+      };
+      setQueueStatus(normalized);
+    } catch (error) {
+      console.error('Failed to load queue status:', error);
+    }
+  };
+
+  const loadJobs = async () => {
+    try {
+      if (jobs.length === 0) {
+        setJobsLoading(true);
+      }
+      const data = await api.getHistoricalJobs();
+      setJobs(data.jobs || []);
+    } catch (error) {
+      console.error('Failed to load historical jobs:', error);
+    } finally {
+      setJobsLoading(false);
     }
   };
 
@@ -186,7 +272,8 @@ export default function HistoricalData() {
         const modeStr = dateRangeMode === 'absolute' 
           ? `from ${startDate} to ${endDate}` 
           : `${duration}`;
-        alert(`Queued ${response.requests?.length || 0} requests for all watchlist symbols (${barSize}, ${modeStr})`);
+        const jobCount = response.jobs?.length || 0;
+        alert(`Queued ${response.total_chunks || 0} chunks across ${jobCount} job(s) for all watchlist symbols (${barSize}, ${modeStr})`);
       } else {
         // Individual symbol request
         const response = await api.requestHistoricalData({
@@ -195,10 +282,18 @@ export default function HistoricalData() {
           duration: requestParams.duration,
           end_datetime: requestParams.end_datetime
         });
-        alert(`Request queued: ${response.message || 'Success'}`);
+        if (response.job_id) {
+          alert(`Job #${response.job_id} queued (${response.chunks || 1} chunk${response.chunks === 1 ? '' : 's'})`);
+        } else {
+          alert(`Request queued: ${response.message || 'Success'}`);
+        }
         setSymbol('');
       }
-      setTimeout(loadDatasets, 2000); // Refresh after 2s
+      setTimeout(() => {
+        loadDatasets();
+        loadQueueStatus();
+        loadJobs();
+      }, 2000); // Refresh after 2s
     } catch (error: any) {
       alert(`Failed to submit request: ${error.response?.data?.detail || error.message}`);
     } finally {
@@ -381,6 +476,205 @@ export default function HistoricalData() {
             </div>
           </div>
         </div>
+      </Card>
+
+      {/* Queue Overview */}
+      <Card title="Historical Queue Overview">
+        {!queueStatus ? (
+          <div className="text-center py-6 text-slate-600">Loading queue status...</div>
+        ) : (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <div className="text-xs text-slate-600 uppercase tracking-wide">Queue Size</div>
+                <div className="text-lg font-bold text-slate-900">{queueStatus.queue_size}</div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-600 uppercase tracking-wide">Pending Chunks</div>
+                <div className="text-lg font-bold text-slate-900">
+                  {queueStatus.db_summary?.pending_chunks ?? 0}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-600 uppercase tracking-wide">In Progress</div>
+                <div className="text-lg font-bold text-slate-900">
+                  {queueStatus.db_summary?.in_progress_chunks ?? 0}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs text-slate-600 uppercase tracking-wide">Failed Chunks</div>
+                <div className="text-lg font-bold text-rose-600">
+                  {queueStatus.db_summary?.failed_chunks ?? 0}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-4">
+              <div>
+                <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
+                  Active Requests
+                </h3>
+                {queueStatus.active_requests.length === 0 ? (
+                  <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    None currently running.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {queueStatus.active_requests.slice(0, 5).map((req) => (
+                      <div
+                        key={req.id}
+                        className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm"
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-semibold text-slate-900">
+                            {req.symbol} · {req.bar_size}
+                          </span>
+                          <span className="text-xs uppercase font-semibold text-blue-600">
+                            {req.status.replace('_', ' ')}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {req.started_at
+                            ? `Started ${new Date(req.started_at).toLocaleTimeString()}`
+                            : 'Pending start'}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <h3 className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
+                  Recent Completions
+                </h3>
+                {queueStatus.recent_completions.length === 0 ? (
+                  <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+                    No recent activity.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {queueStatus.recent_completions.slice().reverse().slice(0, 5).map((req) => (
+                      <div
+                        key={req.id}
+                        className="border border-slate-200 rounded-lg p-3 bg-white shadow-sm"
+                      >
+                        <div className="flex justify-between items-center">
+                          <span className="text-sm font-semibold text-slate-900">
+                            {req.symbol} · {req.bar_size}
+                          </span>
+                          <span
+                            className={`text-xs uppercase font-semibold ${
+                              req.status === 'failed' ? 'text-rose-600' :
+                              req.status === 'skipped' ? 'text-amber-600' : 'text-emerald-600'
+                            }`}
+                          >
+                            {req.status.replace('_', ' ')}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-1">
+                          {req.completed_at
+                            ? new Date(req.completed_at).toLocaleTimeString()
+                            : 'Time unavailable'}
+                          {' · '}
+                          {req.bars_count.toLocaleString()} bars
+                          {req.error ? ` · ${req.error}` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* Historical Jobs */}
+      <Card title={`Historical Jobs (${jobs.length})`}>
+        {jobsLoading ? (
+          <div className="text-center py-6 text-slate-600">Loading jobs...</div>
+        ) : jobs.length === 0 ? (
+          <div className="text-center py-6 text-slate-600">
+            No jobs yet. Submit a request to start collecting data.
+          </div>
+        ) : (
+          <div className="overflow-x-auto border border-gray-200 rounded-lg">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
+                    Job
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
+                    Symbol
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
+                    Timeframe
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
+                    Progress
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
+                    Status
+                  </th>
+                  <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
+                    Updated
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {jobs.map((job) => {
+                  const progress = job.total_chunks > 0
+                    ? Math.round((job.completed_chunks / job.total_chunks) * 100)
+                    : 0;
+                  return (
+                    <tr key={job.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="text-sm font-semibold text-slate-900">#{job.id}</div>
+                        <div className="text-xs text-slate-500">{job.job_key}</div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                        {job.symbol}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                        {job.bar_size}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="text-sm text-slate-700">
+                          {progress}% ({job.completed_chunks}/{job.total_chunks})
+                        </div>
+                        {job.failed_chunks > 0 && (
+                          <div className="text-xs text-rose-600">
+                            {job.failed_chunks} failed chunk{job.failed_chunks === 1 ? '' : 's'}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span
+                          className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                            job.status === 'completed'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : job.status === 'failed'
+                              ? 'bg-rose-50 text-rose-700'
+                              : job.status === 'pending'
+                              ? 'bg-slate-50 text-slate-700'
+                              : 'bg-blue-50 text-blue-700'
+                          }`}
+                        >
+                          {job.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-500">
+                        {job.updated_at ? new Date(job.updated_at).toLocaleString() : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </Card>
 
       {/* Available Datasets */}
@@ -580,4 +874,3 @@ export default function HistoricalData() {
     </div>
   );
 }
-

@@ -164,6 +164,21 @@ class ApiClient {
     return response.data;
   }
 
+  async getHistoricalJobs(limit: number = 50) {
+    const response = await this.client.get('/api/historical/jobs', { params: { limit } });
+    return response.data;
+  }
+
+  async getHistoricalJob(jobId: number) {
+    const response = await this.client.get(`/api/historical/jobs/${jobId}`);
+    return response.data;
+  }
+
+  async getHistoricalRequest(requestId: string) {
+    const response = await this.client.get(`/api/historical/request/${requestId}`);
+    return response.data;
+  }
+
   async getHistoricalDatasets() {
     const response = await this.client.get('/api/historical/datasets');
     return response.data;
@@ -379,4 +394,3 @@ export interface Strategy {
   params: Record<string, any>;
   created_at: string;
 }
-
