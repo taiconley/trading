@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, ChangeEvent } from 'react';
 import { LineChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts';
 import { Download, BarChart3, Search, Trash2, Calendar, Copy } from 'lucide-react';
 import { Card } from '../components/Card';
@@ -79,12 +79,15 @@ export default function HistoricalData() {
   const [queueStatus, setQueueStatus] = useState<QueueSummary | null>(null);
   const [jobs, setJobs] = useState<HistoricalJobSummary[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
+  const [uploadedSymbols, setUploadedSymbols] = useState<string[]>([]);
+  const [uploadFileName, setUploadFileName] = useState('');
+  const [uploadError, setUploadError] = useState<string | null>(null);
   
   // Request form state
   const [symbol, setSymbol] = useState('');
   const [barSize, setBarSize] = useState('1 min');
   const [duration, setDuration] = useState('1 D');
-  const [bulkMode, setBulkMode] = useState(false);
+  const [requestMode, setRequestMode] = useState<'single' | 'watchlist' | 'uploaded'>('single');
   const [submitting, setSubmitting] = useState(false);
   
   // Date range mode
@@ -144,6 +147,62 @@ export default function HistoricalData() {
     }
   };
 
+  const prepareRequestParams = () => {
+    const requestParams: Record<string, any> = {
+      bar_size: barSize
+    };
+
+    if (dateRangeMode === 'absolute') {
+      if (!endDate) {
+        throw new Error('Please enter an end date');
+      }
+      if (!startDate) {
+        throw new Error('Please enter a start date');
+      }
+      if (new Date(startDate) > new Date(endDate)) {
+        throw new Error('Start date must be before end date');
+      }
+
+      const endDateTime = new Date(endDate);
+      endDateTime.setHours(23, 59, 59);
+      const tws_end_datetime = endDateTime.toISOString()
+        .replace('T', '-')
+        .split('.')[0];
+      requestParams.end_datetime = tws_end_datetime;
+
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      const diffTime = Math.abs(end.getTime() - start.getTime());
+      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+      if (diffDays <= 1) {
+        requestParams.duration = '1 D';
+      } else if (diffDays <= 7) {
+        requestParams.duration = `${diffDays} D`;
+      } else if (diffDays <= 30) {
+        const weeks = Math.ceil(diffDays / 7);
+        requestParams.duration = `${weeks} W`;
+      } else if (diffDays <= 365) {
+        const months = Math.ceil(diffDays / 30);
+        requestParams.duration = `${months} M`;
+      } else {
+        const years = Math.ceil(diffDays / 365);
+        requestParams.duration = `${years} Y`;
+      }
+
+      return {
+        requestParams,
+        modeDescription: `from ${startDate} to ${endDate}`
+      };
+    }
+
+    requestParams.duration = duration;
+    return {
+      requestParams,
+      modeDescription: duration
+    };
+  };
+
   const loadCandles = async (dataset: Dataset) => {
     setLoadingChart(true);
     setSelectedDataset(dataset);
@@ -187,6 +246,47 @@ export default function HistoricalData() {
     }
   };
 
+  const handleSymbolFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
+    try {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      const text = await file.text();
+      const symbols = text
+        .split(/\r?\n/)
+        .map((line) => line.trim().toUpperCase())
+        .filter((line) => line.length > 0 && !line.startsWith('#'));
+
+      if (symbols.length === 0) {
+        setUploadError('No tickers found in the uploaded file.');
+        setUploadedSymbols([]);
+        setUploadFileName('');
+      } else {
+        setUploadedSymbols(symbols);
+        setUploadFileName(file.name);
+        setUploadError(null);
+        setRequestMode('uploaded');
+      }
+    } catch (error: any) {
+      console.error('Failed to read uploaded file:', error);
+      setUploadError(error.message || 'Failed to read uploaded file.');
+      setUploadedSymbols([]);
+      setUploadFileName('');
+    } finally {
+      if (event.target) {
+        event.target.value = '';
+      }
+    }
+  };
+
+  const clearUploadedSymbols = () => {
+    setUploadedSymbols([]);
+    setUploadFileName('');
+    setUploadError(null);
+  };
+
   const matchDateRange = (dataset: Dataset) => {
     // Convert dataset dates to date input format (YYYY-MM-DD)
     const start = new Date(dataset.start_date);
@@ -201,86 +301,44 @@ export default function HistoricalData() {
   };
 
   const submitRequest = async () => {
-    // Validate input for individual mode
-    if (!bulkMode && !symbol) {
+    if (requestMode === 'single' && !symbol) {
       alert('Please enter a symbol');
       return;
     }
-    
-    // Validate date range in absolute mode
-    if (dateRangeMode === 'absolute') {
-      if (!endDate) {
-        alert('Please enter an end date');
-        return;
-      }
-      if (!startDate) {
-        alert('Please enter a start date');
-        return;
-      }
-      if (new Date(startDate) > new Date(endDate)) {
-        alert('Start date must be before end date');
-        return;
-      }
+
+    if (requestMode === 'uploaded' && uploadedSymbols.length === 0) {
+      alert('Please upload a .txt file containing ticker symbols before submitting.');
+      return;
     }
-    
+
+    let requestConfig;
+    try {
+      requestConfig = prepareRequestParams();
+    } catch (error: any) {
+      alert(error.message || 'Invalid date range');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      // Prepare request parameters
-      let requestParams: any = {
-        bar_size: barSize,
-      };
+      const { requestParams, modeDescription } = requestConfig;
 
-      if (dateRangeMode === 'absolute') {
-        // Convert end date to TWS format: "YYYYMMDD-HH:MM:SS" (UTC)
-        const endDateTime = new Date(endDate);
-        endDateTime.setHours(23, 59, 59); // Set to end of day
-        const tws_end_datetime = endDateTime.toISOString()
-          .replace('T', '-')
-          .split('.')[0];
-        
-        requestParams.end_datetime = tws_end_datetime;
-        
-        // Calculate duration from start to end date
-        const start = new Date(startDate);
-        const end = new Date(endDate);
-        const diffTime = Math.abs(end.getTime() - start.getTime());
-        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
-        // Convert to appropriate TWS duration string
-        if (diffDays <= 1) {
-          requestParams.duration = '1 D';
-        } else if (diffDays <= 7) {
-          requestParams.duration = `${diffDays} D`;
-        } else if (diffDays <= 30) {
-          const weeks = Math.ceil(diffDays / 7);
-          requestParams.duration = `${weeks} W`;
-        } else if (diffDays <= 365) {
-          const months = Math.ceil(diffDays / 30);
-          requestParams.duration = `${months} M`;
-        } else {
-          const years = Math.ceil(diffDays / 365);
-          requestParams.duration = `${years} Y`;
-        }
-      } else {
-        // Relative mode - use duration
-        requestParams.duration = duration;
-      }
-
-      if (bulkMode) {
-        // Bulk request for all watchlist symbols
+      if (requestMode === 'watchlist') {
         const response = await api.bulkHistoricalRequest(requestParams);
-        const modeStr = dateRangeMode === 'absolute' 
-          ? `from ${startDate} to ${endDate}` 
-          : `${duration}`;
         const jobCount = response.jobs?.length || 0;
-        alert(`Queued ${response.total_chunks || 0} chunks across ${jobCount} job(s) for all watchlist symbols (${barSize}, ${modeStr})`);
+        alert(`Queued ${response.total_chunks || 0} chunks across ${jobCount} job(s) for all watchlist symbols (${barSize}, ${modeDescription})`);
+      } else if (requestMode === 'uploaded') {
+        const response = await api.bulkHistoricalUpload({
+          symbols: uploadedSymbols,
+          ...requestParams
+        });
+        const totalSymbols = response.symbols?.length || uploadedSymbols.length;
+        alert(`Queued ${response.total_chunks || 0} chunks for ${totalSymbols} uploaded symbols (${barSize}, ${modeDescription})`);
+        clearUploadedSymbols();
       } else {
-        // Individual symbol request
         const response = await api.requestHistoricalData({
           symbol: symbol.toUpperCase(),
-          bar_size: barSize,
-          duration: requestParams.duration,
-          end_datetime: requestParams.end_datetime
+          ...requestParams
         });
         if (response.job_id) {
           alert(`Job #${response.job_id} queued (${response.chunks || 1} chunk${response.chunks === 1 ? '' : 's'})`);
@@ -289,11 +347,12 @@ export default function HistoricalData() {
         }
         setSymbol('');
       }
+
       setTimeout(() => {
         loadDatasets();
         loadQueueStatus();
         loadJobs();
-      }, 2000); // Refresh after 2s
+      }, 2000);
     } catch (error: any) {
       alert(`Failed to submit request: ${error.response?.data?.detail || error.message}`);
     } finally {
@@ -334,18 +393,34 @@ export default function HistoricalData() {
       {/* Request Form */}
       <Card title="Request Historical Data">
         <div className="max-w-2xl mx-auto space-y-4">
-          {/* Bulk Mode Checkbox */}
-          <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200">
-            <input
-              type="checkbox"
-              id="bulkMode"
-              checked={bulkMode}
-              onChange={(e) => setBulkMode(e.target.checked)}
-              className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
-            />
-            <label htmlFor="bulkMode" className="text-sm font-medium text-slate-700 cursor-pointer">
-              Request data for all watchlist symbols
-            </label>
+          {/* Request Scope Selection */}
+          <div className="space-y-2 p-3 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="text-sm font-semibold text-slate-700">Request Scope</div>
+            <div className="flex flex-wrap gap-2">
+              {( [
+                { mode: 'single', label: 'Single Symbol' },
+                { mode: 'watchlist', label: 'Watchlist Symbols' },
+                { mode: 'uploaded', label: 'Uploaded List' },
+              ] as const).map(({ mode, label }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setRequestMode(mode)}
+                  className={`px-3 py-1 text-sm font-medium rounded transition-colors border ${
+                    requestMode === mode
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-slate-500">
+              {requestMode === 'single' && 'Fetch data for a specific symbol using the controls below.'}
+              {requestMode === 'watchlist' && 'Run the request for every symbol currently on your watchlist.'}
+              {requestMode === 'uploaded' && 'Use a .txt file with one ticker per line to drive this bulk request.'}
+            </p>
           </div>
 
           {/* Date Range Mode Toggle */}
@@ -377,17 +452,17 @@ export default function HistoricalData() {
 
           {/* Request Form */}
           <div className="space-y-4">
-            {/* Symbol Input - disabled when bulk mode is on */}
+            {/* Symbol Input - enabled for single mode */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
-                Symbol {bulkMode && <span className="text-slate-400">(all watchlist symbols)</span>}
+                Symbol {requestMode !== 'single' && <span className="text-slate-400">(not required for this mode)</span>}
               </label>
               <input
                 type="text"
                 value={symbol}
                 onChange={(e) => setSymbol(e.target.value.toUpperCase())}
                 placeholder="AAPL"
-                disabled={bulkMode}
+                disabled={requestMode !== 'single'}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-100 disabled:text-gray-500 disabled:cursor-not-allowed"
               />
             </div>
@@ -452,11 +527,15 @@ export default function HistoricalData() {
             {/* Submit Button */}
             <button
               onClick={submitRequest}
-              disabled={submitting}
+              disabled={
+                submitting ||
+                (requestMode === 'single' && symbol.length === 0) ||
+                (requestMode === 'uploaded' && uploadedSymbols.length === 0)
+              }
               className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <Download className="w-5 h-5" />
-              {submitting ? 'Submitting...' : (bulkMode ? 'Request All Watchlist Symbols' : 'Request Data')}
+              {submitting ? 'Submitting...' : 'Request Data'}
             </button>
 
             {/* Info Notes */}
@@ -470,6 +549,43 @@ export default function HistoricalData() {
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                   <p className="text-xs text-amber-800">
                     <strong>Tip:</strong> Use the "Match Range" button in the datasets table below to copy date ranges from existing data.
+                  </p>
+                </div>
+              )}
+              {requestMode === 'uploaded' && (
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Upload Symbol List (.txt)
+                    </label>
+                    <input
+                      type="file"
+                      accept=".txt"
+                      onChange={handleSymbolFileUpload}
+                      className="w-full text-sm text-slate-600"
+                    />
+                  </div>
+                  {uploadError && (
+                    <div className="text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2">
+                      {uploadError}
+                    </div>
+                  )}
+                  {uploadedSymbols.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                      <span>
+                        Loaded <span className="font-semibold">{uploadedSymbols.length.toLocaleString()}</span> tickers from <span className="font-semibold">{uploadFileName || 'uploaded file'}</span>.
+                      </span>
+                      <button
+                        onClick={clearUploadedSymbols}
+                        type="button"
+                        className="px-2 py-1 text-xs text-slate-600 border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+                      >
+                        Clear
+                      </button>
+                    </div>
+                  )}
+                  <p className="text-xs text-slate-500">
+                    Provide a .txt file with one symbol per line. Lines starting with <code>#</code> are ignored.
                   </p>
                 </div>
               )}

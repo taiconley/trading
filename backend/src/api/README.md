@@ -287,6 +287,31 @@ Request historical data for all watchlist symbols.
 }
 ```
 
+#### `POST /api/historical/bulk/upload`
+Request historical data for an uploaded list of symbols.
+
+**Request Body:**
+```json
+{
+  "symbols": ["AAPL", "MSFT", "SPY"],
+  "bar_size": "5 secs",
+  "duration": "1 D"
+}
+```
+
+**Response:**
+```json
+{
+  "message": "Queued 72 historical data chunks for 3 uploaded symbols",
+  "symbols": ["AAPL", "MSFT", "SPY"],
+  "bar_size": "5 secs",
+  "duration": "1 D",
+  "total_chunks": 72,
+  "requests": ["upload_AAPL_5 secs_1708000000", "..."],
+  "jobs": [101, 102, 103]
+}
+```
+
 #### `GET /api/historical/jobs`
 List persisted historical jobs.
 

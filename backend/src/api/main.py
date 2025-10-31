@@ -430,6 +430,11 @@ async def bulk_historical_request(body: Optional[Dict] = None):
     """Request historical data for all watchlist symbols."""
     return await proxy_post("historical", "/historical/bulk", json_data=body if body else {})
 
+@app.post("/api/historical/bulk/upload")
+async def bulk_historical_upload(request: Dict = Body(...)):
+    """Request historical data for an uploaded symbol list."""
+    return await proxy_post("historical", "/historical/bulk/upload", json_data=request)
+
 
 @app.get("/api/historical/queue")
 async def get_historical_queue():

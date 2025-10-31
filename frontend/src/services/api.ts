@@ -159,6 +159,18 @@ class ApiClient {
     return response.data;
   }
 
+  async bulkHistoricalUpload(request: {
+    symbols: string[];
+    bar_size?: string;
+    duration?: string;
+    end_datetime?: string;
+    use_rth?: boolean;
+    what_to_show?: string;
+  }) {
+    const response = await this.client.post('/api/historical/bulk/upload', request);
+    return response.data;
+  }
+
   async getHistoricalQueue() {
     const response = await this.client.get('/api/historical/queue');
     return response.data;

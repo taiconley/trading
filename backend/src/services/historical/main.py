@@ -10,6 +10,7 @@ import asyncio
 import signal
 import sys
 import time
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
@@ -56,6 +57,16 @@ class BulkHistoricalRequestBody(BaseModel):
     """Request body for bulk historical data requests."""
     bar_size: Optional[str] = None
     duration: Optional[str] = None
+
+
+class CustomBulkHistoricalRequestBody(BaseModel):
+    """Request body for bulk historical data requests with explicit symbols."""
+    symbols: List[str]
+    bar_size: Optional[str] = None
+    duration: Optional[str] = None
+    end_datetime: Optional[str] = None
+    use_rth: Optional[bool] = None
+    what_to_show: Optional[str] = None
 
 
 @dataclass
@@ -254,6 +265,32 @@ class HistoricalDataService:
             remaining_seconds -= chunk_seconds
         
         return chunk_plans, end_time
+
+    def _generate_request_id(self, prefix: str, symbol: str, bar_size: str) -> str:
+        """Generate a unique base identifier for historical jobs and chunks."""
+        timestamp_ms = int(time.time() * 1000)
+        unique_suffix = uuid.uuid4().hex[:8]
+        sanitized_bar_size = bar_size.replace(" ", "")
+        return f"{prefix}_{symbol}_{sanitized_bar_size}_{timestamp_ms}_{unique_suffix}"
+    
+    def _ensure_symbol_record(self, symbol: str):
+        """Ensure a symbol exists in the database (create placeholder if missing)."""
+        def _ensure(session):
+            existing = session.query(Symbol).filter(Symbol.symbol == symbol).first()
+            if existing:
+                return existing
+            
+            new_symbol = Symbol(
+                symbol=symbol,
+                currency='USD',
+                active=True,
+                updated_at=datetime.now(timezone.utc)
+            )
+            session.add(new_symbol)
+            session.flush()
+            return new_symbol
+        
+        return execute_with_retry(_ensure)
     
     async def _create_job_with_chunks(
         self,
@@ -276,6 +313,9 @@ class HistoricalDataService:
         
         now = datetime.now(timezone.utc)
         loop = asyncio.get_event_loop()
+        
+        # Ensure symbol exists (placeholder if necessary) before creating job records
+        await loop.run_in_executor(None, lambda: self._ensure_symbol_record(symbol))
         
         def _create(session):
             job = HistoricalJob(
@@ -728,7 +768,7 @@ class HistoricalDataService:
                 if not symbol:
                     raise HTTPException(status_code=400, detail="symbol is required")
                 
-                request_id = f"{symbol}_{bar_size}_{duration}_{int(time.time())}"
+                request_id = self._generate_request_id("req", symbol, bar_size)
                 
                 # Validate bar size
                 valid_bar_sizes = self.settings.historical.bar_sizes_list
@@ -796,7 +836,7 @@ class HistoricalDataService:
                 
                 for symbol in symbols:
                     for bar_size in bar_sizes:
-                        request_id = f"bulk_{symbol}_{bar_size}_{int(time.time())}"
+                        request_id = self._generate_request_id("bulk", symbol, bar_size)
                         
                         job, queued_requests = await self._create_job_with_chunks(
                             symbol=symbol,
@@ -826,6 +866,75 @@ class HistoricalDataService:
                 
             except Exception as e:
                 self.logger.error(f"Failed to queue bulk historical requests: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/historical/bulk/upload")
+        async def bulk_historical_upload(body: CustomBulkHistoricalRequestBody):
+            """Request historical data for a provided list of symbols."""
+            try:
+                symbols = [s.strip().upper() for s in body.symbols if s and s.strip()]
+                if not symbols:
+                    raise HTTPException(status_code=400, detail="symbols list cannot be empty")
+
+                # Deduplicate while preserving order
+                seen = set()
+                unique_symbols: List[str] = []
+                for symbol in symbols:
+                    if symbol not in seen:
+                        seen.add(symbol)
+                        unique_symbols.append(symbol)
+
+                bar_size = body.bar_size if body and body.bar_size else self.settings.historical.bar_sizes_list[0]
+                duration = body.duration if body and body.duration else self.settings.market_data.lookback
+                end_datetime = body.end_datetime if body else None
+                use_rth = body.use_rth if body and body.use_rth is not None else self.settings.market_data.rth
+                what_to_show = body.what_to_show if body and body.what_to_show else self.settings.market_data.what_to_show
+
+                # Validate bar size
+                valid_bar_sizes = self.settings.historical.bar_sizes_list
+                if bar_size not in valid_bar_sizes:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Invalid bar_size. Must be one of: {valid_bar_sizes}"
+                    )
+
+                request_ids = []
+                job_ids = []
+                total_chunks = 0
+
+                for symbol in unique_symbols:
+                    request_id = self._generate_request_id("upload", symbol, bar_size)
+                    job, queued_requests = await self._create_job_with_chunks(
+                        symbol=symbol,
+                        bar_size=bar_size,
+                        what_to_show=what_to_show,
+                        duration=duration,
+                        end_datetime=end_datetime,
+                        use_rth=use_rth,
+                        base_id=request_id
+                    )
+                    request_ids.append(request_id)
+                    job_ids.append(job.id)
+                    total_chunks += len(queued_requests)
+
+                self.logger.info(
+                    f"Queued {total_chunks} uploaded-symbol historical chunks ({len(request_ids)} symbols)"
+                )
+
+                return {
+                    "message": f"Queued {total_chunks} historical data chunks for {len(request_ids)} uploaded symbols",
+                    "symbols": unique_symbols,
+                    "bar_size": bar_size,
+                    "duration": duration,
+                    "total_chunks": total_chunks,
+                    "requests": request_ids,
+                    "jobs": job_ids
+                }
+
+            except HTTPException:
+                raise
+            except Exception as e:
+                self.logger.error(f"Failed to queue uploaded historical requests: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.get("/historical/request/{request_id}")
