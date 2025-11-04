@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card } from '../components/Card';
 import { api, Order, Position } from '../services/api';
-import { RefreshCw, TrendingUp, AlertCircle, Activity, CheckCircle, XCircle, Clock, AlertTriangle, Shield } from 'lucide-react';
+import { RefreshCw, TrendingUp, AlertCircle, Activity, CheckCircle, XCircle, Clock, Shield, DollarSign, TrendingDown } from 'lucide-react';
 
 export function Overview() {
   const [loading, setLoading] = useState(true);
@@ -120,11 +120,107 @@ export function Overview() {
             </div>
           </div>
         </Card>
+
+        <Card title="Daily P&L">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`text-3xl font-bold ${
+                account?.pnl?.daily_pnl && account.pnl.daily_pnl >= 0 
+                  ? 'text-green-600' 
+                  : account?.pnl?.daily_pnl && account.pnl.daily_pnl < 0 
+                  ? 'text-red-600' 
+                  : 'text-slate-900'
+              }`}>
+                {account?.pnl?.daily_pnl !== undefined 
+                  ? `$${account.pnl.daily_pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '$0.00'}
+              </p>
+              <p className="text-sm text-slate-500 mt-1">Today's Profit/Loss</p>
+            </div>
+            <div className={`p-3 rounded-lg ${
+              account?.pnl?.daily_pnl && account.pnl.daily_pnl >= 0 
+                ? 'bg-green-100' 
+                : account?.pnl?.daily_pnl && account.pnl.daily_pnl < 0 
+                ? 'bg-red-100' 
+                : 'bg-gray-100'
+            }`}>
+              {account?.pnl?.daily_pnl && account.pnl.daily_pnl >= 0 ? (
+                <TrendingUp className={`w-6 h-6 ${account.pnl.daily_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`} />
+              ) : (
+                <TrendingDown className="w-6 h-6 text-red-600" />
+              )}
+            </div>
+          </div>
+        </Card>
+
+        <Card title="Unrealized P&L">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`text-3xl font-bold ${
+                account?.pnl?.unrealized_pnl && account.pnl.unrealized_pnl >= 0 
+                  ? 'text-green-600' 
+                  : account?.pnl?.unrealized_pnl && account.pnl.unrealized_pnl < 0 
+                  ? 'text-red-600' 
+                  : 'text-slate-900'
+              }`}>
+                {account?.pnl?.unrealized_pnl !== undefined 
+                  ? `$${account.pnl.unrealized_pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '$0.00'}
+              </p>
+              <p className="text-sm text-slate-500 mt-1">Open Positions P&L</p>
+            </div>
+            <div className={`p-3 rounded-lg ${
+              account?.pnl?.unrealized_pnl && account.pnl.unrealized_pnl >= 0 
+                ? 'bg-green-100' 
+                : account?.pnl?.unrealized_pnl && account.pnl.unrealized_pnl < 0 
+                ? 'bg-red-100' 
+                : 'bg-gray-100'
+            }`}>
+              {account?.pnl?.unrealized_pnl && account.pnl.unrealized_pnl >= 0 ? (
+                <TrendingUp className="w-6 h-6 text-green-600" />
+              ) : (
+                <TrendingDown className="w-6 h-6 text-red-600" />
+              )}
+            </div>
+          </div>
+        </Card>
+
+        <Card title="Realized P&L">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className={`text-3xl font-bold ${
+                account?.pnl?.realized_pnl && account.pnl.realized_pnl >= 0 
+                  ? 'text-green-600' 
+                  : account?.pnl?.realized_pnl && account.pnl.realized_pnl < 0 
+                  ? 'text-red-600' 
+                  : 'text-slate-900'
+              }`}>
+                {account?.pnl?.realized_pnl !== undefined 
+                  ? `$${account.pnl.realized_pnl.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                  : '$0.00'}
+              </p>
+              <p className="text-sm text-slate-500 mt-1">Closed Trades P&L</p>
+            </div>
+            <div className={`p-3 rounded-lg ${
+              account?.pnl?.realized_pnl && account.pnl.realized_pnl >= 0 
+                ? 'bg-green-100' 
+                : account?.pnl?.realized_pnl && account.pnl.realized_pnl < 0 
+                ? 'bg-red-100' 
+                : 'bg-gray-100'
+            }`}>
+              <DollarSign className={`w-6 h-6 ${
+                account?.pnl?.realized_pnl && account.pnl.realized_pnl >= 0 
+                  ? 'text-green-600' 
+                  : 'text-red-600'
+              }`} />
+            </div>
+          </div>
+        </Card>
       </div>
 
       {/* Current Positions */}
       <Card title="Current Positions">
-        {account?.positions && account.positions.length > 0 ? (
+        {account?.positions && account.positions.filter((p: Position) => p.qty !== 0).length > 0 ? (
           <div className="overflow-x-auto">
             <table className="min-w-full">
               <thead>
@@ -144,7 +240,7 @@ export function Overview() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {account.positions.map((position: Position) => (
+                {account.positions.filter((p: Position) => p.qty !== 0).map((position: Position) => (
                   <tr key={position.symbol} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="font-bold text-slate-900">{position.symbol}</span>
@@ -176,7 +272,7 @@ export function Overview() {
 
       {/* Open Orders */}
       <Card title="Open Orders">
-        {orders && orders.filter((order: Order) => !['Filled', 'Cancelled'].includes(order.status)).length > 0 ? (
+        {orders && orders.filter((order: Order) => ['PendingSubmit', 'PendingCancel', 'Submitted'].includes(order.status)).length > 0 ? (
           <div className="overflow-x-auto">
             <table className="min-w-full">
               <thead>
@@ -205,7 +301,7 @@ export function Overview() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {orders.filter((order: Order) => !['Filled', 'Cancelled'].includes(order.status)).map((order) => (
+                {orders.filter((order: Order) => ['PendingSubmit', 'PendingCancel', 'Submitted'].includes(order.status)).map((order) => (
                   <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="font-bold text-slate-900">{order.symbol}</span>
@@ -228,7 +324,7 @@ export function Overview() {
                       {order.order_type}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-slate-700">
-                      {order.limit_price ? `$${parseFloat(order.limit_price).toFixed(2)}` : 'Market'}
+                      {order.limit_price ? `$${parseFloat(String(order.limit_price)).toFixed(2)}` : 'Market'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span
@@ -259,10 +355,10 @@ export function Overview() {
       {/* Recent Orders (All) */}
       <Card title="Recent Orders (All)">
         {orders && orders.length > 0 ? (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
             <table className="min-w-full">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50">
+              <thead className="bg-gray-50 sticky top-0 z-10">
+                <tr className="border-b border-gray-200">
                   <th className="px-6 py-3 text-left text-xs font-semibold text-slate-700 uppercase tracking-wider">
                     Symbol
                   </th>
@@ -286,8 +382,8 @@ export function Overview() {
                   </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {orders.map((order) => (
+              <tbody className="divide-y divide-gray-100 bg-white">
+                {[...orders].sort((a, b) => new Date(b.placed_at).getTime() - new Date(a.placed_at).getTime()).map((order) => (
                   <tr key={order.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className="font-bold text-slate-900">{order.symbol}</span>
@@ -310,7 +406,7 @@ export function Overview() {
                       {order.order_type}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-slate-700">
-                      {order.limit_price ? `$${parseFloat(order.limit_price).toFixed(2)}` : 'Market'}
+                      {order.limit_price ? `$${parseFloat(String(order.limit_price)).toFixed(2)}` : 'Market'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span

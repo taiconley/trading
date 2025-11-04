@@ -885,14 +885,24 @@ class TraderService:
             logger.error(f"Failed to cancel order {order_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
     
-    async def get_orders(self, limit: int = 100, status: Optional[str] = None) -> OrderListResponse:
-        """Get order list with filtering"""
+    async def get_orders(self, limit: int = 100, status: Optional[str] = None, active_only: bool = False) -> OrderListResponse:
+        """Get order list with filtering
+        
+        Args:
+            limit: Maximum number of orders to return
+            status: Filter by specific status (overrides active_only if provided)
+            active_only: If True, only return orders with active statuses (PendingSubmit, PendingCancel, Submitted)
+        """
         try:
             with self.db_session_factory() as session:
                 query = session.query(Order).order_by(desc(Order.placed_at))
                 
                 if status:
                     query = query.filter(Order.status == status)
+                elif active_only:
+                    # Only show truly active orders (exclude PreSubmitted, Inactive, Filled, Cancelled)
+                    active_statuses = ['PendingSubmit', 'PendingCancel', 'Submitted']
+                    query = query.filter(Order.status.in_(active_statuses))
                 
                 orders = query.limit(limit).all()
                 
@@ -1083,9 +1093,15 @@ async def get_order(order_id: int):
     return await trader_service.get_order(order_id)
 
 @app.get("/orders", response_model=OrderListResponse)
-async def get_orders(limit: int = 100, status: Optional[str] = None):
-    """Get order list with filtering"""
-    return await trader_service.get_orders(limit, status)
+async def get_orders(limit: int = 100, status: Optional[str] = None, active_only: bool = False):
+    """Get order list with filtering
+    
+    Args:
+        limit: Maximum number of orders to return
+        status: Filter by specific status (overrides active_only if provided)
+        active_only: If True, only return orders with active statuses (PendingSubmit, PendingCancel, Submitted)
+    """
+    return await trader_service.get_orders(limit, status, active_only)
 
 # Risk Management Endpoints
 @app.post("/risk/emergency-stop")

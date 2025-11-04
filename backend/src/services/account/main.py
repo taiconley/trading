@@ -572,9 +572,41 @@ class AccountService:
                     available_funds = float(values_dict.get('AvailableFunds', 0)) if 'AvailableFunds' in values_dict else None
                     buying_power = float(values_dict.get('BuyingPower', 0)) if 'BuyingPower' in values_dict else None
                     
-                    # Get current positions from database
+                    # Extract P&L values from database (from accountValueEvent)
+                    # TWS sends these via accountValueEvent with tags like "RealizedPnL", "UnrealizedPnL"
+                    realized_pnl = float(values_dict.get('RealizedPnL', 0)) if 'RealizedPnL' in values_dict else None
+                    unrealized_pnl = float(values_dict.get('UnrealizedPnL', 0)) if 'UnrealizedPnL' in values_dict else None
+                    
+                    # Calculate Daily P&L from Realized + Unrealized (or use memory fallback)
+                    daily_pnl = None
+                    if realized_pnl is not None and unrealized_pnl is not None:
+                        daily_pnl = realized_pnl + unrealized_pnl
+                    elif self.pnl_data and self.pnl_data.get('daily_pnl') is not None:
+                        daily_pnl = self.pnl_data.get('daily_pnl')
+                    
+                    # Fallback to memory if database values not available (for backward compatibility)
+                    pnl_data = {
+                        'daily_pnl': daily_pnl,
+                        'unrealized_pnl': unrealized_pnl if unrealized_pnl is not None else (self.pnl_data.get('unrealized_pnl') if self.pnl_data else None),
+                        'realized_pnl': realized_pnl if realized_pnl is not None else (self.pnl_data.get('realized_pnl') if self.pnl_data else None),
+                        'timestamp': self.stats['last_update'].isoformat() if self.stats['last_update'] else None
+                    }
+                    
+                    # Additional useful metrics for risk management
+                    total_cash_value = float(values_dict.get('TotalCashValue', 0)) if 'TotalCashValue' in values_dict else None
+                    cash_balance = float(values_dict.get('CashBalance', 0)) if 'CashBalance' in values_dict else None
+                    equity_with_loan = float(values_dict.get('EquityWithLoanValue', 0)) if 'EquityWithLoanValue' in values_dict else None
+                    cushion = float(values_dict.get('Cushion', 0)) if 'Cushion' in values_dict else None
+                    excess_liquidity = float(values_dict.get('ExcessLiquidity', 0)) if 'ExcessLiquidity' in values_dict else None
+                    maint_margin_req = float(values_dict.get('MaintMarginReq', 0)) if 'MaintMarginReq' in values_dict else None
+                    gross_position_value = float(values_dict.get('GrossPositionValue', 0)) if 'GrossPositionValue' in values_dict else None
+                    
+                    # Get current positions from database (exclude zero quantity positions)
                     db_positions = session.query(Position).filter(
-                        Position.account_id == self.account
+                        and_(
+                            Position.account_id == self.account,
+                            Position.qty != 0  # Only show positions with non-zero quantity
+                        )
                     ).all()
                     
                     positions = [{
@@ -592,7 +624,14 @@ class AccountService:
                         'available_funds': available_funds,
                         'buying_power': buying_power,
                         'positions': positions,
-                        'pnl': self.pnl_data,  # Still from memory as it's not persisted
+                        'pnl': pnl_data,  # Now from database with fallback to memory
+                        'total_cash_value': total_cash_value,
+                        'cash_balance': cash_balance,
+                        'equity_with_loan': equity_with_loan,
+                        'cushion': cushion,
+                        'excess_liquidity': excess_liquidity,
+                        'maint_margin_req': maint_margin_req,
+                        'gross_position_value': gross_position_value,
                         'last_update': self.stats['last_update'].isoformat() if self.stats['last_update'] else None,
                         'tws_connected': self.ib.isConnected() if self.ib else False,
                         'stats': self.stats

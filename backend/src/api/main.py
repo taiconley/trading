@@ -288,7 +288,8 @@ async def get_positions():
 async def get_orders(
     status: Optional[str] = None,
     symbol: Optional[str] = None,
-    limit: int = 100
+    limit: int = 100,
+    active_only: bool = False
 ):
     """Get order history with optional filters."""
     params = {"limit": limit}
@@ -296,6 +297,8 @@ async def get_orders(
         params["status"] = status
     if symbol:
         params["symbol"] = symbol
+    if active_only:
+        params["active_only"] = "true"
     return await proxy_get("trader", "/orders", params=params)
 
 

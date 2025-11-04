@@ -63,7 +63,7 @@ class ApiClient {
   // Orders
   // ============================================================================
 
-  async getOrders(params?: { status?: string; symbol?: string; limit?: number }) {
+  async getOrders(params?: { status?: string; symbol?: string; limit?: number; active_only?: boolean }) {
     const response = await this.client.get('/api/orders', { params });
     return response.data;
   }
