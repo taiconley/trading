@@ -697,9 +697,10 @@ class TraderService:
                 raise HTTPException(status_code=403, detail="Trading mode validation failed")
             
             # Risk validation
-            strategy_id = int(order_request.strategy_id) if order_request.strategy_id else None
+            # Note: strategy_id is a string identifier (e.g., 'pairs_trading'), not an integer
+            # Pass None for risk validation since it's not used for validation logic
             is_valid, error_msg = await self.risk_manager.validate_order(
-                order_request, account_id, strategy_id=strategy_id
+                order_request, account_id, strategy_id=None
             )
             if not is_valid:
                 raise HTTPException(status_code=400, detail=f"Risk check failed: {error_msg}")

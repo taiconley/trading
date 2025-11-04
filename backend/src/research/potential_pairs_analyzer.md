@@ -13,6 +13,19 @@ docker compose exec backend-api python -m src.research.potential_pairs_analyzer 
   --parallelism 8 \
   --replace-existing
 ```
+
+Another example:
+
+docker compose exec backend-api python -m src.research.potential_pairs_analyzer \
+  --timeframe "1 day" \
+  --start-date 2023-09-25T00:00:00Z \
+  --end-date 2025-10-29T23:59:59Z \
+  --min-bars 60 \
+  --min-trades 1 \
+  --max-symbols 2303 \
+  --max-pairs 250000 \
+  --parallelism 26
+
 - Use `--help` to see all options without running an analysis:
 ```
 docker compose exec backend-api python -m src.research.potential_pairs_analyzer --help

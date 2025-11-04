@@ -678,10 +678,12 @@ class StrategyService:
         """Store signal in database."""
         try:
             with self.db_session_factory() as db:
+                # Handle both Enum and string signal_type
+                signal_type_str = signal.signal_type.value if hasattr(signal.signal_type, 'value') else str(signal.signal_type)
                 db_signal = Signal(
                     strategy_id=strategy_id,
                     symbol=signal.symbol,
-                    signal_type=signal.signal_type.value,
+                    signal_type=signal_type_str,
                     strength=signal.strength,
                     ts=signal.timestamp,
                     meta_json=signal.metadata
@@ -698,47 +700,72 @@ class StrategyService:
         return signal.signal_type in [SignalType.BUY, SignalType.SELL]
     
     async def _place_order_for_signal(self, signal: Any, strategy_id: str):
-        """Place order through Trader service REST API."""
+        """Place order through Trader service REST API.
+        
+        This follows the exact same order placement logic as tested in test_order_placement.sh.
+        The order request format matches exactly: symbol, side, quantity, order_type, 
+        limit_price, time_in_force, strategy_id.
+        """
         try:
-            # Determine order side
+            # Determine order side - must be "BUY" or "SELL" string
             order_side = "BUY" if signal.signal_type == SignalType.BUY else "SELL"
             
-            # Build order request
+            # Determine order type - use LIMIT if price provided, otherwise MARKET
+            # Note: pairs_trading always provides price, so orders will be LIMIT
+            has_price = signal.price is not None and float(signal.price) > 0
+            order_type = "LMT" if has_price else "MKT"
+            
+            # Build order request - format matches exactly what we tested
             order_request = {
                 "symbol": signal.symbol,
                 "side": order_side,
                 "quantity": signal.quantity or 100,
-                "order_type": "LMT" if signal.price else "MKT",
-                "limit_price": float(signal.price) if signal.price else None,
+                "order_type": order_type,
+                "limit_price": float(signal.price) if has_price else None,
                 "time_in_force": "DAY",
                 "strategy_id": strategy_id
             }
             
-            # Send to Trader service
-            trader_url = f"http://backend-trader:8004/orders"  # Internal Docker network
+            # Send to Trader service (same endpoint as test)
+            trader_url = f"http://backend-trader:8004/orders"
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(trader_url, json=order_request) as response:
                     if response.status == 200:
                         order_data = await response.json()
-                        logger.info(f"Order placed for signal: {order_data.get('order_id')}")
+                        # Response uses 'id' field, not 'order_id'
+                        order_id = order_data.get('id') or order_data.get('order_id')
+                        logger.info(
+                            f"Order placed successfully: ID={order_id}, "
+                            f"symbol={signal.symbol}, side={order_side}, "
+                            f"qty={order_request['quantity']}, type={order_type}"
+                        )
                     else:
                         error_text = await response.text()
-                        logger.error(f"Failed to place order: {response.status} - {error_text}")
+                        logger.error(
+                            f"Failed to place order: HTTP {response.status} - {error_text}. "
+                            f"Request: symbol={signal.symbol}, side={order_side}, "
+                            f"quantity={order_request['quantity']}, order_type={order_type}"
+                        )
                         
         except Exception as e:
-            logger.error(f"Error placing order for signal: {e}")
+            logger.error(
+                f"Error placing order for signal {signal.symbol}: {e}",
+                exc_info=True
+            )
     
     async def _broadcast_signal(self, signal: Any, strategy_id: str):
         """Broadcast signal via WebSocket."""
         try:
+            # Handle both Enum and string signal_type
+            signal_type_str = signal.signal_type.value if hasattr(signal.signal_type, 'value') else str(signal.signal_type)
             signal_data = {
                 "type": "signal_generated",
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "data": {
                     "strategy_id": strategy_id,
                     "symbol": signal.symbol,
-                    "signal_type": signal.signal_type.value,
+                    "signal_type": signal_type_str,
                     "strength": float(signal.strength) if signal.strength else None,
                     "price": float(signal.price) if signal.price else None,
                     "quantity": signal.quantity,
