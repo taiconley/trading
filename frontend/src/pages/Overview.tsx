@@ -34,11 +34,123 @@ export function Overview() {
     fetchData();
   }, []);
 
-  // Poll for updates every 2 seconds
+  // WebSocket connection for real-time account updates from TWS
   useEffect(() => {
-    const pollInterval = setInterval(() => {
-      fetchData();
-    }, 2000); // Poll every 2 seconds
+    // Determine WebSocket URL based on environment
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsHost = window.location.host;
+    const wsUrl = `${wsProtocol}//${wsHost}/ws/account`;
+    
+    let ws: WebSocket | null = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+    const reconnectDelay = 2000;
+
+    const connectWebSocket = () => {
+      try {
+        ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+          console.log('Account WebSocket connected - receiving real-time TWS updates');
+          reconnectAttempts = 0;
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            
+            // If this is the full account stats object (from initial load or after event)
+            if (data.account_id || (data.net_liquidation !== undefined && data.positions)) {
+              setAccount(data);
+            }
+            // If this is an individual TWS event, update immediately
+            else if (data.type && data.data) {
+              console.log('Received TWS event:', data.type, data.data);
+              
+              // Update specific account values immediately when received from TWS
+              if (data.type === 'account_value' && data.data.tag) {
+                setAccount((prev: any) => {
+                  if (!prev) return prev;
+                  const updated = { ...prev };
+                  
+                  // Update specific value based on tag
+                  const tag = data.data.tag;
+                  const value = parseFloat(data.data.value) || 0;
+                  
+                  if (tag === 'NetLiquidation') updated.net_liquidation = value;
+                  else if (tag === 'AvailableFunds') updated.available_funds = value;
+                  else if (tag === 'BuyingPower') updated.buying_power = value;
+                  else if (tag === 'RealizedPnL') {
+                    updated.pnl = { ...updated.pnl, realized_pnl: value };
+                  }
+                  else if (tag === 'UnrealizedPnL') {
+                    updated.pnl = { ...updated.pnl, unrealized_pnl: value };
+                  }
+                  
+                  return updated;
+                });
+              }
+              // The API gateway will also send full stats after each event
+            }
+          } catch (err) {
+            console.error('Error parsing WebSocket message:', err);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+        };
+
+        ws.onclose = () => {
+          console.log('Account WebSocket disconnected');
+          // Reconnect with exponential backoff
+          if (reconnectAttempts < maxReconnectAttempts) {
+            setTimeout(() => {
+              reconnectAttempts++;
+              connectWebSocket();
+            }, reconnectDelay * reconnectAttempts);
+          } else {
+            console.warn('Max reconnection attempts reached, falling back to polling');
+            // Fallback to polling if WebSocket fails
+            const pollInterval = setInterval(() => {
+              fetchData();
+            }, 2000);
+            return () => clearInterval(pollInterval);
+          }
+        };
+      } catch (err) {
+        console.error('Failed to create WebSocket:', err);
+        // Fallback to polling
+        const pollInterval = setInterval(() => {
+          fetchData();
+        }, 2000);
+        return () => clearInterval(pollInterval);
+      }
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (ws) {
+        ws.close();
+      }
+    };
+  }, []);
+
+  // Poll for orders and health updates (less frequent, not critical for real-time)
+  useEffect(() => {
+    const pollInterval = setInterval(async () => {
+      try {
+        const [ordersData, healthData] = await Promise.all([
+          api.getOrders({ limit: 50 }).catch(() => ({ orders: [] })),
+          api.getAggregateHealth().catch(() => null),
+        ]);
+        setOrders(ordersData.orders || ordersData);
+        setHealth(healthData);
+      } catch (err: any) {
+        console.error('Polling error:', err);
+      }
+    }, 5000); // Poll every 5 seconds for orders/health (less critical)
 
     return () => clearInterval(pollInterval);
   }, []);

@@ -1056,23 +1056,85 @@ active_websockets: Dict[str, List[WebSocket]] = {
 
 @app.websocket("/ws/account")
 async def websocket_account(websocket: WebSocket):
-    """WebSocket proxy for account updates."""
+    """WebSocket proxy for real-time account updates from TWS."""
     await websocket.accept()
     active_websockets["account"].append(websocket)
     
     try:
-        # Connect to account service WebSocket
-        async with httpx.AsyncClient() as client:
-            # For now, send periodic updates (polling)
+        # Connect to account service WebSocket to receive real-time TWS events
+        account_ws_url = "ws://backend-account:8001/ws"
+        
+        # Use websockets library to connect to account service
+        try:
+            import websockets
+        except ImportError:
+            logger.error("websockets library not installed. Falling back to polling.")
+            # Fallback to polling if websockets not available
+            async with httpx.AsyncClient() as client:
+                while True:
+                    try:
+                        stats = await proxy_get("account", "/account/stats")
+                        await websocket.send_json(stats)
+                    except Exception as e:
+                        logger.error(f"Error in account WebSocket polling: {e}")
+                    await asyncio.sleep(2)
+            return
+        
+        # Forward real-time events from account service
+        async with websockets.connect(account_ws_url) as account_ws:
+            logger.info("Connected to account service WebSocket, forwarding TWS events")
+            
+            # Send initial account stats
+            try:
+                stats = await proxy_get("account", "/account/stats")
+                await websocket.send_json(stats)
+            except Exception as e:
+                logger.error(f"Error sending initial stats: {e}")
+            
+            # Forward all events from account service
             while True:
                 try:
-                    # Get account stats
+                    # Receive event from account service
+                    event_data = await asyncio.wait_for(account_ws.recv(), timeout=30.0)
+                    event = json.loads(event_data)
+                    
+                    # Forward to frontend
+                    await websocket.send_json(event)
+                    
+                    # If this is an account_value, position, or pnl event, also send updated stats
+                    if event.get('type') in ['account_value', 'position', 'pnl']:
+                        # Get latest aggregated stats from database
+                        try:
+                            stats = await proxy_get("account", "/account/stats")
+                            await websocket.send_json(stats)
+                        except Exception as e:
+                            logger.debug(f"Error getting stats after event: {e}")
+                    
+                except asyncio.TimeoutError:
+                    # Send keepalive/ping to keep connection alive
+                    try:
+                        await account_ws.ping()
+                    except:
+                        logger.warning("Account service WebSocket connection lost, reconnecting...")
+                        break
+                except websockets.exceptions.ConnectionClosed:
+                    logger.warning("Account service WebSocket closed, reconnecting...")
+                    break
+                except Exception as e:
+                    logger.error(f"Error forwarding account WebSocket event: {e}")
+                    await asyncio.sleep(1)
+                    
+    except Exception as e:
+        logger.error(f"Error in account WebSocket proxy: {e}")
+        # Fallback to polling if WebSocket connection fails
+        async with httpx.AsyncClient() as client:
+            while True:
+                try:
                     stats = await proxy_get("account", "/account/stats")
                     await websocket.send_json(stats)
                 except Exception as e:
-                    logger.error(f"Error in account WebSocket: {e}")
-                
-                await asyncio.sleep(2)  # Update every 2 seconds
+                    logger.error(f"Error in account WebSocket polling fallback: {e}")
+                await asyncio.sleep(2)
                 
     except WebSocketDisconnect:
         active_websockets["account"].remove(websocket)
