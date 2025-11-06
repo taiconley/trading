@@ -383,12 +383,14 @@ class Order(Base):
     symbol = Column(String(20), ForeignKey('symbols.symbol'), nullable=False)
     side = Column(String(4), nullable=False)  # BUY, SELL
     qty = Column(Numeric(15, 2), nullable=False)
-    order_type = Column(String(10), nullable=False)  # MKT, LMT, STP, STP-LMT
+    order_type = Column(String(15), nullable=False)  # MKT, LMT, STP, STP-LMT, ADAPTIVE, PEG BEST, PEG MID
     limit_price = Column(Numeric(10, 4), nullable=True)
     stop_price = Column(Numeric(10, 4), nullable=True)
     tif = Column(String(10), nullable=False, default='DAY')  # DAY, GTC, IOC, FOK
     status = Column(String(20), nullable=False, default='PendingSubmit')
     external_order_id = Column(String(50), nullable=True)  # IB order ID
+    algo_strategy = Column(String(50), nullable=True)  # Algorithm strategy name (e.g., 'Adaptive')
+    algo_params = Column(JSON, nullable=True)  # Algorithm-specific parameters as JSON
     placed_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
     
@@ -401,7 +403,7 @@ class Order(Base):
     # Constraints
     __table_args__ = (
         CheckConstraint("side IN ('BUY', 'SELL')", name='ck_orders_side'),
-        CheckConstraint("order_type IN ('MKT', 'LMT', 'STP', 'STP-LMT')", name='ck_orders_type'),
+        CheckConstraint("order_type IN ('MKT', 'LMT', 'STP', 'STP-LMT', 'ADAPTIVE', 'PEG BEST', 'PEG MID')", name='ck_orders_type'),
         CheckConstraint("tif IN ('DAY', 'GTC', 'IOC', 'FOK')", name='ck_orders_tif'),
         CheckConstraint("qty > 0", name='ck_orders_qty_positive'),
         Index('ix_orders_updated_at', 'updated_at'),

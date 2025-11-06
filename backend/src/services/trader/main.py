@@ -685,6 +685,67 @@ class TraderService:
             logger.error(f"Failed to ensure symbol exists: {e}")
             raise
     
+    def _build_ib_order_with_algo(self, order_request: OrderRequest) -> IBOrder:
+        """
+        Build IB order with support for advanced order types and algorithms.
+        
+        Args:
+            order_request: Order request with type and algorithm parameters
+            
+        Returns:
+            Configured IBOrder object
+        """
+        ib_order = IBOrder()
+        ib_order.action = order_request.side.value if hasattr(order_request.side, 'value') else str(order_request.side)
+        ib_order.totalQuantity = float(order_request.quantity)
+        ib_order.tif = order_request.time_in_force.value if hasattr(order_request.time_in_force, 'value') else str(order_request.time_in_force)
+        
+        order_type = order_request.order_type.value if hasattr(order_request.order_type, 'value') else str(order_request.order_type)
+        
+        # Handle different order types
+        if order_type == "ADAPTIVE":
+            # Adaptive order: limit order with adaptive algorithm
+            ib_order.orderType = "LMT"
+            if order_request.limit_price:
+                ib_order.lmtPrice = float(order_request.limit_price)
+            
+            # Set adaptive algorithm
+            ib_order.algoStrategy = "Adaptive"
+            ib_order.algoParams = []
+            
+            # Add adaptive priority parameter
+            priority = "Normal"  # Default
+            if order_request.algo_params:
+                priority = order_request.algo_params.get("adaptivePriority", "Normal")
+            
+            ib_order.algoParams.append(("adaptivePriority", priority))
+            
+        elif order_type == "PEG BEST":
+            # IBKR ATS Pegged to Best
+            ib_order.orderType = "PEG BEST"
+            # Optional offset from best price (in auxPrice)
+            if order_request.algo_params and "offset" in order_request.algo_params:
+                ib_order.auxPrice = float(order_request.algo_params["offset"])
+            
+        elif order_type == "PEG MID":
+            # Pegged to Midpoint
+            ib_order.orderType = "PEG MID"
+            # Offset from midpoint (default 0.01 if not specified)
+            offset = 0.01
+            if order_request.algo_params and "offset" in order_request.algo_params:
+                offset = float(order_request.algo_params["offset"])
+            ib_order.auxPrice = offset
+            
+        else:
+            # Standard order types (MKT, LMT, STP, STP-LMT)
+            ib_order.orderType = order_type
+            if order_request.limit_price:
+                ib_order.lmtPrice = float(order_request.limit_price)
+            if order_request.stop_price:
+                ib_order.auxPrice = float(order_request.stop_price)
+        
+        return ib_order
+    
     async def place_order(self, order_request: OrderRequest, account_id: str) -> OrderResponse:
         """Place a new order"""
         try:
@@ -721,6 +782,8 @@ class TraderService:
                     limit_price=Decimal(str(order_request.limit_price)) if order_request.limit_price else None,
                     stop_price=Decimal(str(order_request.stop_price)) if order_request.stop_price else None,
                     tif=order_request.time_in_force.value if hasattr(order_request.time_in_force, 'value') else str(order_request.time_in_force),
+                    algo_strategy=order_request.algo_strategy,
+                    algo_params=order_request.algo_params,  # JSON column handles dict serialization
                     status=OrderStatus.PENDING_SUBMIT.value,
                     placed_at=datetime.now(timezone.utc),
                     updated_at=datetime.now(timezone.utc)
@@ -732,16 +795,8 @@ class TraderService:
                 # Create IB contract and order
                 contract = Stock(order_request.symbol, 'SMART', 'USD')
                 
-                ib_order = IBOrder()
-                ib_order.action = order_request.side.value if hasattr(order_request.side, 'value') else str(order_request.side)
-                ib_order.totalQuantity = float(order_request.quantity)
-                ib_order.orderType = order_request.order_type.value if hasattr(order_request.order_type, 'value') else str(order_request.order_type)
-                ib_order.tif = order_request.time_in_force.value if hasattr(order_request.time_in_force, 'value') else str(order_request.time_in_force)
-                
-                if order_request.limit_price:
-                    ib_order.lmtPrice = float(order_request.limit_price)
-                if order_request.stop_price:
-                    ib_order.auxPrice = float(order_request.stop_price)
+                # Build IB order with algorithm support
+                ib_order = self._build_ib_order_with_algo(order_request)
                 
                 # Place order with TWS
                 trade = self.ib_client.ib.placeOrder(contract, ib_order)
@@ -754,6 +809,17 @@ class TraderService:
                 self.active_orders[db_order.id] = trade
                 
                 logger.info(f"Order placed: {db_order.id} -> IB:{trade.order.orderId}")
+                
+                # Parse algo_params from JSON if stored
+                algo_params_dict = None
+                if db_order.algo_params:
+                    try:
+                        if isinstance(db_order.algo_params, str):
+                            algo_params_dict = json.loads(db_order.algo_params)
+                        else:
+                            algo_params_dict = db_order.algo_params
+                    except (json.JSONDecodeError, TypeError):
+                        algo_params_dict = None
                 
                 return OrderResponse(
                     id=db_order.id,
@@ -768,6 +834,8 @@ class TraderService:
                     tif=TimeInForce(db_order.tif),
                     status=OrderStatus(db_order.status),
                     external_order_id=db_order.external_order_id,
+                    algo_strategy=db_order.algo_strategy,
+                    algo_params=algo_params_dict,
                     placed_at=db_order.placed_at,
                     updated_at=db_order.updated_at
                 )
@@ -793,6 +861,8 @@ class TraderService:
                 limit_price=Decimal(str(order_request.limit_price)) if order_request.limit_price else None,
                 stop_price=Decimal(str(order_request.stop_price)) if order_request.stop_price else None,
                 tif=order_request.time_in_force.value if hasattr(order_request.time_in_force, 'value') else str(order_request.time_in_force),
+                algo_strategy=order_request.algo_strategy,
+                algo_params=order_request.algo_params,  # JSON column handles dict serialization
                 status=OrderStatus.FILLED.value,  # Simulate immediate fill
                 external_order_id=f"DRY_{int(datetime.now().timestamp())}",
                 placed_at=datetime.now(timezone.utc),
@@ -803,6 +873,17 @@ class TraderService:
             session.refresh(db_order)
             
             logger.info(f"DRY_RUN: Simulated order {db_order.id} as FILLED")
+            
+            # Parse algo_params from JSON if stored
+            algo_params_dict = None
+            if db_order.algo_params:
+                try:
+                    if isinstance(db_order.algo_params, str):
+                        algo_params_dict = json.loads(db_order.algo_params)
+                    else:
+                        algo_params_dict = db_order.algo_params
+                except (json.JSONDecodeError, TypeError):
+                    algo_params_dict = None
             
             return OrderResponse(
                 id=db_order.id,
@@ -817,6 +898,8 @@ class TraderService:
                 tif=TimeInForce(db_order.tif),
                 status=OrderStatus(db_order.status),
                 external_order_id=db_order.external_order_id,
+                algo_strategy=db_order.algo_strategy,
+                algo_params=algo_params_dict,
                 placed_at=db_order.placed_at,
                 updated_at=db_order.updated_at
             )

@@ -30,6 +30,9 @@ class OrderType(str, Enum):
     LIMIT = "LMT"
     STOP = "STP"
     STOP_LIMIT = "STP-LMT"
+    ADAPTIVE = "ADAPTIVE"
+    PEG_BEST = "PEG BEST"  # IBKR ATS Pegged to Best
+    PEG_MID = "PEG MID"  # Pegged to Midpoint
 
 
 class TimeInForce(str, Enum):
@@ -162,12 +165,15 @@ class OrderRequest(BaseSchema):
     stop_price: Optional[confloat(gt=0)] = Field(None, description="Stop price")
     time_in_force: TimeInForce = Field(default=TimeInForce.DAY, alias="tif", description="Time in force")
     strategy_id: Optional[str] = Field(None, description="Strategy ID")
+    algo_strategy: Optional[str] = Field(None, description="Algorithm strategy name (e.g., 'Adaptive')")
+    algo_params: Optional[Dict[str, Any]] = Field(None, description="Algorithm-specific parameters")
     
     @validator('limit_price')
     def limit_price_required_for_limit_orders(cls, v, values):
         """Validate limit price for limit orders."""
-        if values.get('order_type') in [OrderType.LIMIT, OrderType.STOP_LIMIT] and v is None:
-            raise ValueError('Limit price required for limit orders')
+        order_type = values.get('order_type')
+        if order_type in [OrderType.LIMIT, OrderType.STOP_LIMIT, OrderType.ADAPTIVE] and v is None:
+            raise ValueError('Limit price required for limit and adaptive orders')
         return v
     
     @validator('stop_price')
@@ -175,6 +181,18 @@ class OrderRequest(BaseSchema):
         """Validate stop price for stop orders."""
         if values.get('order_type') in [OrderType.STOP, OrderType.STOP_LIMIT] and v is None:
             raise ValueError('Stop price required for stop orders')
+        return v
+    
+    @validator('algo_strategy')
+    def validate_algo_strategy(cls, v, values):
+        """Validate algorithm strategy matches order type."""
+        order_type = values.get('order_type')
+        if order_type == OrderType.ADAPTIVE:
+            if v is None or v != "Adaptive":
+                raise ValueError('Adaptive orders require algo_strategy="Adaptive"')
+        elif order_type in [OrderType.PEG_BEST, OrderType.PEG_MID]:
+            if v is not None:
+                raise ValueError('Pegged orders should not have algo_strategy set')
         return v
 
 
@@ -190,6 +208,8 @@ class OrderResponse(TimestampedSchema):
     time_in_force: TimeInForce = Field(..., alias="tif", description="Time in force")
     status: OrderStatus = Field(..., description="Order status")
     external_order_id: Optional[str] = Field(None, description="External order ID")
+    algo_strategy: Optional[str] = Field(None, description="Algorithm strategy name")
+    algo_params: Optional[Dict[str, Any]] = Field(None, description="Algorithm-specific parameters")
     strategy_id: Optional[str] = Field(None, description="Strategy ID")
     account_id: str = Field(..., description="Account ID")
     placed_at: datetime = Field(..., description="Order placement timestamp")

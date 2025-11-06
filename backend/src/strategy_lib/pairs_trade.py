@@ -15,7 +15,7 @@ Classic pairs trading strategy:
 from collections import deque
 from datetime import datetime, time, timedelta
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -45,6 +45,14 @@ class PairsTradingConfig(StrategyConfig):
     
     # Position sizing
     position_size: int = 100  # Shares per leg
+    
+    # Order execution type
+    execution_type: str = "LMT"  # Default: Limit order. Options: "MKT", "LMT", "ADAPTIVE", "PEG BEST", "PEG MID"
+    use_adaptive: bool = False  # If True, use Adaptive order (overrides execution_type)
+    use_pegged: bool = False  # If True, use pegged order (overrides execution_type)
+    pegged_type: Optional[str] = None  # "BEST" or "MID" for pegged orders
+    adaptive_priority: str = "Normal"  # "Patient", "Normal", "Urgent" for Adaptive orders
+    pegged_offset: float = 0.01  # Offset from midpoint/best for pegged orders (in dollars)
     
     # Risk management (for 5-second bars: 720 bars = 1 hour)
     max_hold_bars: int = 720  # Maximum bars to hold a position
@@ -629,6 +637,43 @@ class PairsTradingStrategy(BaseStrategy):
             except Exception as exc:  # pragma: no cover - defensive logging
                 self.log_warning(f"Cointegration test failed for {pair_key}: {exc}")
     
+    def _get_execution_params(self) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
+        """
+        Determine execution type and algorithm parameters based on config.
+        
+        Returns:
+            Tuple of (execution_type, algo_strategy, algo_params)
+        """
+        if self.config.use_adaptive:
+            return (
+                "ADAPTIVE",
+                "Adaptive",
+                {"adaptivePriority": self.config.adaptive_priority}
+            )
+        elif self.config.use_pegged:
+            if self.config.pegged_type == "BEST":
+                return (
+                    "PEG BEST",
+                    None,
+                    {"offset": self.config.pegged_offset} if self.config.pegged_offset != 0.01 else None
+                )
+            elif self.config.pegged_type == "MID":
+                return (
+                    "PEG MID",
+                    None,
+                    {"offset": self.config.pegged_offset} if self.config.pegged_offset != 0.01 else None
+                )
+            else:
+                # Default to MID if pegged_type not specified
+                return (
+                    "PEG MID",
+                    None,
+                    {"offset": self.config.pegged_offset} if self.config.pegged_offset != 0.01 else None
+                )
+        else:
+            # Use configured execution_type (default: "LMT")
+            return (self.config.execution_type, None, None)
+    
     def _generate_entry_signals(
         self,
         pair_key: str,
@@ -665,6 +710,9 @@ class PairsTradingStrategy(BaseStrategy):
         }
         signal_strength = Decimal(str(min(abs(zscore) / max(entry_threshold, 1e-6), 1.0)))
         
+        # Get execution parameters
+        exec_type, algo_strategy, algo_params = self._get_execution_params()
+        
         if position_type == "short_a_long_b":
             # Short A, Long B
             signals.append(self.create_signal(
@@ -673,6 +721,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=signal_strength,
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
             
@@ -682,6 +733,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=signal_strength,
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
             
@@ -699,6 +753,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=signal_strength,
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
             
@@ -708,6 +765,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=signal_strength,
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
             
@@ -767,6 +827,9 @@ class PairsTradingStrategy(BaseStrategy):
             'timestamp': timestamp.isoformat()
         }
         
+        # Get execution parameters (same as entry)
+        exec_type, algo_strategy, algo_params = self._get_execution_params()
+        
         # Close both legs of the position
         if pair_state['current_position'] == "short_a_long_b":
             # Cover short A, Sell long B
@@ -776,6 +839,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
             
@@ -785,6 +851,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
         
@@ -796,6 +865,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_a)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
             
@@ -805,6 +877,9 @@ class PairsTradingStrategy(BaseStrategy):
                 strength=Decimal('1.0'),
                 price=Decimal(str(price_b)),
                 quantity=self.config.position_size,
+                execution_type=exec_type,
+                algo_strategy=algo_strategy,
+                algo_params=algo_params,
                 **metadata_common
             ))
         

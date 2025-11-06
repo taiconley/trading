@@ -47,6 +47,9 @@ class StrategySignal(BaseModel):
     strength: Optional[Decimal] = Field(None, description="Signal strength (0.0-1.0)")
     price: Optional[Decimal] = Field(None, description="Suggested execution price")
     quantity: Optional[int] = Field(None, description="Suggested position size")
+    execution_type: Optional[str] = Field(None, description="Order execution type (MKT, LMT, ADAPTIVE, PEG BEST, PEG MID)")
+    algo_strategy: Optional[str] = Field(None, description="Algorithm strategy name (e.g., 'Adaptive')")
+    algo_params: Optional[Dict[str, Any]] = Field(None, description="Algorithm-specific parameters")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional signal metadata")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     
@@ -329,6 +332,9 @@ class BaseStrategy(ABC):
                      strength: Optional[Union[Decimal, float, str]] = None,
                      price: Optional[Union[Decimal, float]] = None,
                      quantity: Optional[int] = None,
+                     execution_type: Optional[str] = None,
+                     algo_strategy: Optional[str] = None,
+                     algo_params: Optional[Dict[str, Any]] = None,
                      **metadata) -> StrategySignal:
         """
         Helper method to create a properly formatted signal.
@@ -369,6 +375,9 @@ class BaseStrategy(ABC):
             strength=strength,
             price=price,
             quantity=quantity,
+            execution_type=execution_type,
+            algo_strategy=algo_strategy,
+            algo_params=algo_params,
             metadata=metadata
         )
     

@@ -710,10 +710,16 @@ class StrategyService:
             # Determine order side - must be "BUY" or "SELL" string
             order_side = "BUY" if signal.signal_type == SignalType.BUY else "SELL"
             
-            # Determine order type - use LIMIT if price provided, otherwise MARKET
-            # Note: pairs_trading always provides price, so orders will be LIMIT
+            # Determine order type - use signal's execution_type if provided, otherwise default logic
             has_price = signal.price is not None and float(signal.price) > 0
-            order_type = "LMT" if has_price else "MKT"
+            
+            if signal.execution_type:
+                # Use execution type from signal (e.g., "ADAPTIVE", "PEG BEST", "PEG MID")
+                order_type = signal.execution_type
+            else:
+                # Default: use LIMIT if price provided, otherwise MARKET
+                # Note: pairs_trading always provides price, so orders will be LIMIT by default
+                order_type = "LMT" if has_price else "MKT"
             
             # Build order request - format matches exactly what we tested
             order_request = {
@@ -725,6 +731,12 @@ class StrategyService:
                 "time_in_force": "DAY",
                 "strategy_id": strategy_id
             }
+            
+            # Add algorithm parameters if provided
+            if signal.algo_strategy:
+                order_request["algo_strategy"] = signal.algo_strategy
+            if signal.algo_params:
+                order_request["algo_params"] = signal.algo_params
             
             # Send to Trader service (same endpoint as test)
             trader_url = f"http://backend-trader:8004/orders"

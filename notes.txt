@@ -127,3 +127,9 @@ b1f92cd19e5c (historical job tables)
 1b68dceab27 (pairs analysis table)
 Both branch from 84403efd8a90. This won’t affect current functionality, but to avoid confusion later you may want to create a merge migration. For now, you can upgrade to specific revisions as needed, or upgrade both heads separately.
 The immediate issue is resolved, and the service should work normally.
+
+potential pairs:
+ONEW, OSIS
+EVRG, HSII
+CHCO, PRTH
+KEYS, ONDS
