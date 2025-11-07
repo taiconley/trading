@@ -574,8 +574,10 @@ class PairsAnalysis(Base):
     hedge_intercept = Column(Numeric(18, 8), nullable=False)
     
     # Statistical tests
-    adf_pvalue = Column(Numeric(10, 6), nullable=True)
-    coint_pvalue = Column(Numeric(10, 6), nullable=True)
+    adf_statistic = Column(Numeric(18, 8), nullable=True)  # Test statistic (more negative = more stationary)
+    adf_pvalue = Column(Numeric(10, 6), nullable=True)  # P-value (lower = more significant)
+    coint_statistic = Column(Numeric(18, 8), nullable=True)  # Test statistic (more negative = stronger)
+    coint_pvalue = Column(Numeric(10, 6), nullable=True)  # P-value (lower = more significant)
     half_life_minutes = Column(Numeric(18, 6), nullable=True)
     
     # Spread characteristics

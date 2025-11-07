@@ -39,7 +39,13 @@ from common.models import Candle, Symbol
 
 try:
     from statsmodels.tsa.stattools import adfuller, coint
-except Exception:  # pragma: no cover - optional dependency
+except ImportError as e:  # pragma: no cover - optional dependency
+    LOGGER.warning(f"statsmodels not available: {e}. Cointegration and ADF tests will be skipped.")
+    LOGGER.warning("Install statsmodels with: pip install statsmodels")
+    adfuller = None
+    coint = None
+except Exception as e:  # pragma: no cover - defensive
+    LOGGER.warning(f"Unexpected error importing statsmodels: {e}")
     adfuller = None
     coint = None
 
@@ -238,25 +244,51 @@ def symbol_data_to_frame(data: SymbolData) -> pd.DataFrame:
     return df
 
 
-def compute_adf(series: np.ndarray) -> Optional[float]:
-    if adfuller is None or len(series) < 20:
-        return None
+def compute_adf(series: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Compute Augmented Dickey-Fuller test for stationarity.
+    
+    Returns:
+        Tuple of (test_statistic, pvalue) or (None, None) if test fails.
+        Test statistic: more negative = more stationary (typically < -3.0 for strong stationarity)
+        P-value: lower = more significant (typically < 0.05 for stationarity)
+    """
+    if adfuller is None:
+        return None, None
+    if len(series) < 20:
+        return None, None
     try:
-        return float(adfuller(series, maxlag=1, regression="c")[1])
-    except Exception:
-        LOGGER.debug("ADF test failed", exc_info=True)
-        return None
+        result = adfuller(series, maxlag=1, regression="c")
+        # result[0] = test statistic, result[1] = p-value
+        return float(result[0]), float(result[1])
+    except Exception as e:
+        LOGGER.debug(f"ADF test failed for series of length {len(series)}: {e}", exc_info=True)
+        return None, None
 
 
-def compute_cointegration(series_a: np.ndarray, series_b: np.ndarray) -> Optional[float]:
-    if coint is None or len(series_a) < 20:
-        return None
+def compute_cointegration(series_a: np.ndarray, series_b: np.ndarray) -> Tuple[Optional[float], Optional[float]]:
+    """
+    Compute cointegration test between two series.
+    
+    Returns:
+        Tuple of (test_statistic, pvalue) or (None, None) if test fails.
+        Test statistic: more negative = stronger cointegration
+        P-value: lower = more significant (typically < 0.05 for cointegration)
+    """
+    if coint is None:
+        return None, None
+    if len(series_a) < 20 or len(series_b) < 20:
+        return None, None
+    if len(series_a) != len(series_b):
+        LOGGER.debug(f"Series length mismatch: {len(series_a)} vs {len(series_b)}")
+        return None, None
     try:
         result = coint(series_a, series_b)
-        return float(result[1])
-    except Exception:
-        LOGGER.debug("Cointegration test failed", exc_info=True)
-        return None
+        # result[0] = test statistic, result[1] = p-value
+        return float(result[0]), float(result[1])
+    except Exception as e:
+        LOGGER.debug(f"Cointegration test failed for series of length {len(series_a)}: {e}", exc_info=True)
+        return None, None
 
 
 def estimate_half_life_minutes(spread: np.ndarray, bar_seconds: int) -> Optional[float]:
@@ -413,8 +445,8 @@ def analyze_pair(
 
     zscore = (spread - spread_mean) / spread_std
 
-    adf_pvalue = compute_adf(spread)
-    coint_pvalue = compute_cointegration(log_a, log_b)
+    adf_statistic, adf_pvalue = compute_adf(spread)
+    coint_statistic, coint_pvalue = compute_cointegration(log_a, log_b)
     half_life_minutes = estimate_half_life_minutes(spread, params.bar_seconds)
 
     (
@@ -451,8 +483,10 @@ def analyze_pair(
         "avg_dollar_volume_b": profile_b.avg_dollar_volume,
         "hedge_ratio": float(beta),
         "hedge_intercept": float(alpha),
-        "adf_pvalue": adf_pvalue,
-        "coint_pvalue": coint_pvalue,
+        "adf_statistic": adf_statistic,  # Test statistic (more negative = more stationary)
+        "adf_pvalue": adf_pvalue,  # P-value (lower = more significant)
+        "coint_statistic": coint_statistic,  # Test statistic (more negative = stronger)
+        "coint_pvalue": coint_pvalue,  # P-value (lower = more significant)
         "half_life_minutes": half_life_minutes,
         "spread_mean": spread_mean,
         "spread_std": spread_std,
@@ -493,7 +527,9 @@ def insert_results(results: List[Dict[str, object]], status: str, replace_existi
                 "avg_dollar_volume_b": to_decimal(result["avg_dollar_volume_b"]),
                 "hedge_ratio": to_decimal(result["hedge_ratio"]),
                 "hedge_intercept": to_decimal(result["hedge_intercept"]),
+                "adf_statistic": to_decimal(result["adf_statistic"]) if result["adf_statistic"] is not None else None,
                 "adf_pvalue": to_decimal(result["adf_pvalue"]) if result["adf_pvalue"] is not None else None,
+                "coint_statistic": to_decimal(result["coint_statistic"]) if result["coint_statistic"] is not None else None,
                 "coint_pvalue": to_decimal(result["coint_pvalue"]) if result["coint_pvalue"] is not None else None,
                 "half_life_minutes": to_decimal(result["half_life_minutes"]) if result["half_life_minutes"] is not None else None,
                 "spread_mean": to_decimal(result["spread_mean"]),
@@ -511,6 +547,8 @@ def insert_results(results: List[Dict[str, object]], status: str, replace_existi
                     "total_pnl": result["total_pnl"],
                     "trade_pnls": result["pnls"],
                     "equity_curve": result["equity_curve"],
+                    "adf_statistic": result.get("adf_statistic"),  # Store ADF test statistic in meta
+                    "coint_statistic": result.get("coint_statistic"),  # Store cointegration test statistic in meta
                 },
             }
         )

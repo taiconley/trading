@@ -19,6 +19,7 @@ tzdata==2023.3
 # Data Processing (required for strategy service)
 pandas==2.1.3
 numpy==1.25.2
+statsmodels==0.14.0  # Required for cointegration and ADF tests in pairs analysis
 
 # HTTP client (required for strategy service to call trader API)
 aiohttp==3.9.1
