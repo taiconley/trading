@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
 Script to update the Pairs_Trading strategy parameters in the database.
+
+This script reads from the single source of truth:
+    backend/src/strategy_lib/pairs_trading_config.py
+
+To change pairs or parameters, edit that file and then run this script.
 """
 
 import sys
@@ -8,52 +13,22 @@ import os
 import json
 
 # Add backend to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'backend', 'src'))
+# Handle both cases: running from project root or from backend directory
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir.endswith('/backend'):
+    # Running from backend directory
+    src_path = os.path.join(script_dir, 'src')
+else:
+    # Running from project root (or container /app)
+    src_path = os.path.join(script_dir, 'src') if os.path.exists(os.path.join(script_dir, 'src')) else '/app/src'
+sys.path.insert(0, src_path)
 
 from common.db import get_db_session
 from common.models import Strategy
-from sqlalchemy import text
+from strategy_lib.pairs_trading_config import PAIRS_TRADING_CONFIG
 
-# Optimized parameters from genetic algorithm (Run ID: 33, Sharpe: 0.7863)
-DEFAULT_PARAMS = {
-    "pairs": [
-        ["AAPL", "MSFT"],   # Tech Large Cap
-        ["JPM", "BAC"],     # Banks
-        ["GS", "MS"],       # Investment Banks
-        ["XOM", "CVX"],     # Energy
-        ["V", "MA"],        # Payments
-        ["KO", "PEP"],      # Beverages
-        ["WMT", "TGT"],     # Retail
-        ["PFE", "MRK"],     # Pharma
-        ["DIS", "NFLX"]     # Media
-    ],
-    "lookback_periods": 250,        # Number of bars to fetch for strategy
-    "lookback_window": 120,         # Optimized: 240 → 120
-    "entry_threshold": 1.5,         # Optimized: 2.0 → 1.5
-    "exit_threshold": 1.0,          # Optimized: 0.5 → 1.0
-    "position_size": 25,            # Optimized: 100 → 25
-    "max_hold_bars": 360,           # Optimized: 720 → 360
-    "stop_loss_zscore": 4.0,        # Optimized: 3.0 → 4.0
-    "market_close_hour": 16,
-    "market_close_minute": 0,
-    "close_before_eod_minutes": 5,
-    "cooldown_bars": 90,            # Optimized: 60 → 90
-    "timezone": "US/Eastern",
-    "spread_history_bars": 1000,
-    "hedge_refresh_bars": 30,
-    "min_hedge_lookback": 120,
-    "stationarity_checks_enabled": True,
-    "adf_pvalue_threshold": 0.05,
-    "cointegration_pvalue_threshold": 0.05,
-    "stationarity_check_interval": 60,
-    "volatility_adaptation_enabled": True,
-    "volatility_window": 240,
-    "volatility_ema_alpha": 0.2,
-    "min_volatility_ratio": 0.75,
-    "max_volatility_ratio": 1.5,
-    "min_exit_volatility_ratio": 0.8,
-    "max_exit_volatility_ratio": 1.3
-}
+# Use the shared configuration as the single source of truth
+DEFAULT_PARAMS = PAIRS_TRADING_CONFIG
 
 
 def list_strategies():
