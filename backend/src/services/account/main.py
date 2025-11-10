@@ -168,14 +168,25 @@ class AccountService:
             logger.info("   📍 Starting position updates...")
             positions = await self.ib.reqPositionsAsync()
             logger.info(f"   ✅ Position updates started - received {len(positions) if positions else 0} initial positions")
+            
+            # Track which symbols TWS reports as having positions (non-zero quantities only)
+            tws_position_symbols = set()
             if positions:
                 for pos in positions:
                     logger.info(f"      📍 {pos.contract.symbol}: {pos.position} shares @ ${pos.avgCost:.2f} (account: {pos.account})")
                     # Process initial positions
                     if pos.account == self.account:
+                        # Only track non-zero positions for sync purposes
+                        # Zero-quantity positions will be deleted by handle_position_update
+                        if pos.position != 0:
+                            tws_position_symbols.add(pos.contract.symbol)
                         await self.handle_position_update(pos)
             else:
                 logger.info("      No positions found")
+            
+            # Sync database with TWS: remove any positions in DB that TWS doesn't report
+            # This handles the case where positions were closed but TWS didn't send zero-quantity updates
+            await self._sync_positions_with_tws(tws_position_symbols)
             
             # Start P&L updates
             logger.info("   💰 Starting P&L updates...")
@@ -252,6 +263,7 @@ class AccountService:
             
             # Store in memory cache
             symbol = position.contract.symbol
+            position_qty = position.position
             
             # ib-insync Position objects don't always have marketPrice/marketValue/unrealizedPNL
             # These come separately or need to be calculated
@@ -259,22 +271,31 @@ class AccountService:
             market_value = getattr(position, 'marketValue', None)
             unrealized_pnl = getattr(position, 'unrealizedPNL', None)
             
-            self.current_positions[symbol] = {
-                'symbol': symbol,
-                'qty': position.position,
-                'avg_price': position.avgCost,
-                'market_price': market_price,
-                'market_value': market_value,
-                'unrealized_pnl': unrealized_pnl,
-                'conid': position.contract.conId,
-                'timestamp': self.stats['last_update']
-            }
+            # Remove from in-memory cache if quantity is zero (for display purposes)
+            # But still store qty=0 in database for audit trail
+            if position_qty == 0:
+                if symbol in self.current_positions:
+                    del self.current_positions[symbol]
+                    logger.info(f"📍 Position closed: {symbol} (qty=0, removed from cache, kept in DB for audit)")
+            else:
+                # Update in-memory cache
+                self.current_positions[symbol] = {
+                    'symbol': symbol,
+                    'qty': position_qty,
+                    'avg_price': position.avgCost,
+                    'market_price': market_price,
+                    'market_value': market_value,
+                    'unrealized_pnl': unrealized_pnl,
+                    'conid': position.contract.conId,
+                    'timestamp': self.stats['last_update']
+                }
             
-            # Store to database
+            # Always store position to database (including qty=0 for audit trail)
+            # Frontend and queries filter out qty=0 positions
             await self._store_position(
                 symbol=symbol,
                 conid=position.contract.conId,
-                qty=position.position,
+                qty=position_qty,
                 avg_price=position.avgCost,
                 market_price=market_price,
                 market_value=market_value,
@@ -287,8 +308,8 @@ class AccountService:
                 'data': {
                     'account': position.account,
                     'symbol': symbol,
-                    'position': position.position,
-                    'avg_cost': position.avgCost,
+                    'position': position_qty,
+                    'avg_cost': position.avgCost if position_qty != 0 else 0,
                     'market_price': market_price,
                     'market_value': market_value,
                     'unrealized_pnl': unrealized_pnl,
@@ -296,7 +317,8 @@ class AccountService:
                 }
             })
             
-            logger.info(f"📍 Position: {symbol} = {position.position} shares @ ${position.avgCost}")
+            if position_qty != 0:
+                logger.info(f"📍 Position: {symbol} = {position_qty} shares @ ${position.avgCost}")
             
         except Exception as e:
             logger.error(f"Error handling position update: {e}")
@@ -385,7 +407,7 @@ class AccountService:
                              avg_price: float, market_price: Optional[float] = None,
                              market_value: Optional[float] = None, 
                              unrealized_pnl: Optional[float] = None):
-        """Store position to database"""
+        """Store position to database (including qty=0 for audit trail)"""
         try:
             with get_db_session() as session:
                 # Ensure account exists
@@ -428,6 +450,35 @@ class AccountService:
                 session.commit()
         except Exception as e:
             logger.error(f"Error storing position to database: {e}")
+    
+    async def _sync_positions_with_tws(self, tws_position_symbols: set):
+        """Sync database positions with TWS: set qty=0 for positions that TWS doesn't report"""
+        try:
+            with get_db_session() as session:
+                # Get all positions in database for this account (including zero-quantity)
+                db_positions = session.query(Position).filter(
+                    Position.account_id == self.account
+                ).all()
+                
+                stale_count = 0
+                for db_pos in db_positions:
+                    if db_pos.symbol not in tws_position_symbols and db_pos.qty != 0:
+                        logger.info(f"   🔄 Closing stale position: {db_pos.symbol} (qty={db_pos.qty} -> 0, not in TWS)")
+                        db_pos.qty = Decimal('0')
+                        db_pos.ts = datetime.now(timezone.utc)  # Update timestamp to show when it was closed
+                        stale_count += 1
+                        
+                        # Also remove from in-memory cache if present
+                        if db_pos.symbol in self.current_positions:
+                            del self.current_positions[db_pos.symbol]
+                
+                if stale_count > 0:
+                    session.commit()
+                    logger.info(f"   ✅ Closed {stale_count} stale position(s) (set qty=0 for audit trail)")
+                else:
+                    logger.info(f"   ✅ Database positions are in sync with TWS")
+        except Exception as e:
+            logger.error(f"Error syncing positions with TWS: {e}")
     
     def get_current_account_state(self) -> Dict[str, Any]:
         """Get current account state from in-memory cache"""
@@ -502,6 +553,19 @@ class AccountService:
             # Wait a moment for initial data
             await asyncio.sleep(2)
             logger.info(f"🎯 TWS ready - {self.stats['account_updates']} account updates, {self.stats['position_updates']} positions, {len(self.current_positions)} in memory")
+            
+            # Ensure positions are synced after connection (in case sync didn't run during startup)
+            # Get current positions from TWS and sync with database
+            try:
+                positions = await self.ib.reqPositionsAsync()
+                tws_position_symbols = set()
+                if positions:
+                    for pos in positions:
+                        if pos.account == self.account and pos.position != 0:
+                            tws_position_symbols.add(pos.contract.symbol)
+                await self._sync_positions_with_tws(tws_position_symbols)
+            except Exception as sync_error:
+                logger.warning(f"Position sync after TWS connection failed: {sync_error}")
         except Exception as e:
             logger.error(f"❌ TWS connection failed: {e}")
             # Retry after 5 seconds
@@ -543,6 +607,34 @@ class AccountService:
                 "stats": self.stats,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             }
+        
+        @app.post("/account/sync-positions")
+        async def sync_positions():
+            """Manually trigger position sync with TWS"""
+            if not self.ib or not self.ib.isConnected():
+                return {"error": "TWS not connected", "tws_connected": False}
+            
+            try:
+                # Get current positions from TWS
+                positions = await self.ib.reqPositionsAsync()
+                tws_position_symbols = set()
+                
+                if positions:
+                    for pos in positions:
+                        if pos.account == self.account and pos.position != 0:
+                            tws_position_symbols.add(pos.contract.symbol)
+                
+                # Sync with database
+                await self._sync_positions_with_tws(tws_position_symbols)
+                
+                return {
+                    "success": True,
+                    "tws_positions": list(tws_position_symbols),
+                    "message": "Position sync completed"
+                }
+            except Exception as e:
+                logger.error(f"Error in manual position sync: {e}")
+                return {"error": str(e), "success": False}
         
         @app.get("/account/stats")
         async def get_account_stats():
