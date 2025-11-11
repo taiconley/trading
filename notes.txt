@@ -31,13 +31,16 @@ $ docker compose exec backend-historical curl -s -X POST "http://localhost:8003/
 
 To run the backtester:
 docker compose exec backend-strategy python /app/src/services/backtester/main.py cli --strategy SMA_Crossover --symbols AAPL --params '{"short_period": 5, "long_period": 20}' --timeframe "1 day" --lookback 100 2>&1 | tail -40
+
+# Pairs Trading backtest with new pairs (from notes.txt lines 150-162)
+docker compose exec backend-api python -m src.services.backtester.main cli --strategy Pairs_Trading --symbols ABR ACA ACT ADPT AHCO AIN AMN ANDE ANET AORT CORT DUK ESE GRPN IBEX KTB LYEL MGY --timeframe "5 secs" --lookback 350 --initial-capital 100000 --params '{"pairs": [["AMN","CORT"],["ACA","KTB"],["ANET","AORT"],["ANDE","LYEL"],["ABR","GRPN"],["AHCO","MGY"],["AIN","ESE"],["ADPT","IBEX"],["ACT","DUK"]], "lookback_window": 240, "entry_threshold": 2.0, "exit_threshold": 0.5, "position_size": 25, "max_hold_bars": 720, "stop_loss_zscore": 3.0, "market_close_hour": 16, "market_close_minute": 0, "close_before_eod_minutes": 5, "cooldown_bars": 60, "timezone": "US/Eastern", "spread_history_bars": 1000, "hedge_refresh_bars": 30, "min_hedge_lookback": 120, "stationarity_checks_enabled": true, "adf_pvalue_threshold": 0.05, "cointegration_pvalue_threshold": 0.05, "stationarity_check_interval": 60, "volatility_adaptation_enabled": true, "volatility_window": 240, "volatility_ema_alpha": 0.2, "min_volatility_ratio": 0.75, "max_volatility_ratio": 1.5, "min_exit_volatility_ratio": 0.8, "max_exit_volatility_ratio": 1.3}' 2>&1 | tail -40
 docker compose exec backend-api python -m src.services.backtester.main cli --strategy Pairs_Trading --symbols AAPL MSFT JPM BAC GS MS XOM CVX V MA KO PEP WMT TGT PFE MRK DIS NFLX --timeframe "5 secs" --lookback 250 --initial-capital 100000 --params '{"pairs": [["AAPL", "MSFT"], ["JPM", "BAC"], ["GS", "MS"], ["XOM", "CVX"], ["V", "MA"], ["KO", "PEP"], ["WMT", "TGT"], ["PFE", "MRK"], ["DIS", "NFLX"]], "lookback_window": 240, "entry_threshold": 2.0, "exit_threshold": 0.5, "position_size": 100, "max_hold_bars": 720, "stop_loss_zscore": 3.0, "market_close_hour": 16, "market_close_minute": 0, "close_before_eod_minutes": 5, "cooldown_bars": 60, "timezone": "US/Eastern", "spread_history_bars": 1000, "hedge_refresh_bars": 30, "min_hedge_lookback": 120, "stationarity_checks_enabled": true, "adf_pvalue_threshold": 0.05, "cointegration_pvalue_threshold": 0.05, "stationarity_check_interval": 60, "volatility_adaptation_enabled": true, "volatility_window": 240, "volatility_ema_alpha": 0.2, "min_volatility_ratio": 0.75, "max_volatility_ratio": 1.5, "min_exit_volatility_ratio": 0.8, "max_exit_volatility_ratio": 1.3}'
 
 
 To run the optimizer:
 docker compose exec backend-api python -m src.services.optimizer.main optimize \
   --strategy Pairs_Trading \
-  --symbols AAPL,MSFT,JPM,BAC,GS,MS,XOM,CVX,V,MA,KO,PEP,WMT,TGT,PFE,MRK,DIS,NFLX \
+  --symbols ABR,ACA,ACT,ADPT,AHCO,AIN,AMN,ANDE,ANET,AORT,CORT,DUK,ESE,GRPN,IBEX,KTB,LYEL,MGY \
   --timeframe "5 secs" \
   --lookback 350 \
   --algorithm bayesian \
@@ -45,7 +48,7 @@ docker compose exec backend-api python -m src.services.optimizer.main optimize \
   --max-iterations 30 \
   --workers 24 \
   --params '{"lookback_window": [120, 180, 240, 300], "entry_threshold": [1.5, 2.0, 2.5, 3.0], "exit_threshold": [0.3, 0.5, 0.7, 1.0], "position_size": [10, 25, 50], "max_hold_bars": [360, 720, 1080], "stop_loss_zscore": [2.5, 3.0, 3.5, 4.0], "cooldown_bars": [30, 60, 90]}' \
-  --config '{"pairs": [["AAPL", "MSFT"], ["JPM", "BAC"], ["GS", "MS"], ["XOM", "CVX"], ["V", "MA"], ["KO", "PEP"], ["WMT", "TGT"], ["PFE", "MRK"], ["DIS", "NFLX"]], "population_size": 20, "elite_size": 3, "mutation_rate": 0.15, "crossover_rate": 0.8, "hedge_refresh_bars": 30, "min_hedge_lookback": 120, "stationarity_checks_enabled": true, "adf_pvalue_threshold": 0.05, "cointegration_pvalue_threshold": 0.05, "stationarity_check_interval": 60, "volatility_adaptation_enabled": true, "volatility_window": 240, "volatility_ema_alpha": 0.2, "min_volatility_ratio": 0.75, "max_volatility_ratio": 1.5, "min_exit_volatility_ratio": 0.8, "max_exit_volatility_ratio": 1.3, "market_close_hour": 16, "market_close_minute": 0, "close_before_eod_minutes": 5, "timezone": "US/Eastern", "spread_history_bars": 1000}'
+  --config '{"pairs": [["AMN","CORT"],["ACA","KTB"],["ANET","AORT"],["ANDE","LYEL"],["ABR","GRPN"],["AHCO","MGY"],["AIN","ESE"],["ADPT","IBEX"],["ACT","DUK"]], "population_size": 20, "elite_size": 3, "mutation_rate": 0.15, "crossover_rate": 0.8, "hedge_refresh_bars": 30, "min_hedge_lookback": 120, "stationarity_checks_enabled": true, "adf_pvalue_threshold": 0.05, "cointegration_pvalue_threshold": 0.05, "stationarity_check_interval": 60, "volatility_adaptation_enabled": true, "volatility_window": 240, "volatility_ema_alpha": 0.2, "min_volatility_ratio": 0.75, "max_volatility_ratio": 1.5, "min_exit_volatility_ratio": 0.8, "max_exit_volatility_ratio": 1.3, "market_close_hour": 16, "market_close_minute": 0, "close_before_eod_minutes": 5, "timezone": "US/Eastern", "spread_history_bars": 1000}'
 
 
 
@@ -160,3 +163,19 @@ Rank   Pair                 Coint Stat   Coint p    ADF Stat     ADF p      Half
 8      AIN/ESE              -4.60        0.0008     -4.60        0.0001     8.9d       3.6391     8       
 9      ADPT/IBEX            -5.70        0.0000     -5.99        N/A        5.9d       3.4970     6       
 10     ACT/DUK              -4.55        0.0010     -4.38        0.0003     9.4d       4.0833     7       
+
+
+docker compose exec backend-api python -m src.services.optimizer.main optimize \
+  --strategy Pairs_Trading \
+  --symbols AAPL,MSFT,JPM,BAC,GS,MS,XOM,CVX,V,MA,KO,PEP,WMT,TGT,PFE,MRK,DIS,NFLX \
+  --timeframe "5 secs" \
+  --lookback 350 \
+  --algorithm bayesian \
+  --objective win_rate \
+  --max-iterations 30 \
+  --workers 24 \
+  --params '{"lookback_window": [120, 180, 240, 300], "entry_threshold": [1.5, 2.0, 2.5, 3.0], "exit_threshold": [0.3, 0.5, 0.7, 1.0], "position_size": [10, 25, 50], "max_hold_bars": [360, 720, 1080], "stop_loss_zscore": [2.5, 3.0, 3.5, 4.0], "cooldown_bars": [30, 60, 90]}' \
+  --config '{"pairs": [["AAPL", "MSFT"], ["JPM", "BAC"], ["GS", "MS"], ["XOM", "CVX"], ["V", "MA"], ["KO", "PEP"], ["WMT", "TGT"], ["PFE", "MRK"], ["DIS", "NFLX"]], "population_size": 20, "elite_size": 3, "mutation_rate": 0.15, "crossover_rate": 0.8, "hedge_refresh_bars": 30, "min_hedge_lookback": 120, "stationarity_checks_enabled": true, "adf_pvalue_threshold": 0.05, "cointegration_pvalue_threshold": 0.05, "stationarity_check_interval": 60, "volatility_adaptation_enabled": true, "volatility_window": 240, "volatility_ema_alpha": 0.2, "min_volatility_ratio": 0.75, "max_volatility_ratio": 1.5, "min_exit_volatility_ratio": 0.8, "max_exit_volatility_ratio": 1.3, "market_close_hour": 16, "market_close_minute": 0, "close_before_eod_minutes": 5, "timezone": "US/Eastern", "spread_history_bars": 1000}'
+
+
+docker compose exec postgres psql -U bot -d trading -c "UPDATE optimization_runs SET status = 'failed', end_time = NOW(), error_message = 'Stuck - no progress after initialization' WHERE id = 40; SELECT id, status FROM optimization_runs WHERE id = 40;"

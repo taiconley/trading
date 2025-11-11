@@ -273,9 +273,14 @@ class OptimizationEngine:
             
             try:
                 # Generate and evaluate parameter combinations in batches
+                logger.info("Starting to generate parameter candidates...")
                 batch = []
+                candidate_count = 0
                 
                 for params in self.optimizer.generate_candidates():
+                    candidate_count += 1
+                    if candidate_count <= 3:
+                        logger.info(f"Generated candidate {candidate_count}: {list(params.keys())[:3]}...")
                     batch.append(params)
                     
                     # Check if we should stop adding to batch (respecting max_iterations)
@@ -343,8 +348,10 @@ class OptimizationEngine:
     def _process_batch(self, db: Session, run: OptimizationRun, batch: List[Dict[str, Any]]):
         """Process a batch of parameter combinations."""
         logger.info(f"Processing batch of {len(batch)} combinations")
+        logger.info(f"Batch parameters: {[list(p.keys())[:3] for p in batch[:3]]}...")  # Show first 3 param keys
         
         # Execute backtests in parallel
+        logger.info(f"Starting parallel execution with {self.executor.num_workers} workers...")
         results = self.executor.execute_batch(
             param_combinations=batch,
             strategy_name=self.strategy_name,
@@ -354,6 +361,7 @@ class OptimizationEngine:
             objective=self.objective,
             config=self.config
         )
+        logger.info(f"Batch execution returned {len(results)} results")
         
         # Process results
         for task_result in results:

@@ -32,16 +32,42 @@ def run_backtest_task(args: tuple) -> TaskResult:
     Returns:
         TaskResult with backtest results or error
     """
+    import logging
+    import sys
+    
+    # Configure logging for this worker process (multiprocessing workers don't inherit logging config)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        stream=sys.stdout,
+        force=True  # Override any existing config
+    )
+    
+    worker_logger = logging.getLogger(f"{__name__}.worker")
+    
+    # Also use print as fallback (always works, even if logging fails)
+    print("=" * 60, flush=True)
+    print("WORKER: Starting backtest task", flush=True)
+    worker_logger.info("=" * 60)
+    worker_logger.info("WORKER: Starting backtest task")
+    
     params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data_arg = args
     
     try:
+        symbol_count = len(symbols) if isinstance(symbols, list) else 1
+        msg = f"WORKER: Task params - strategy={strategy_name}, symbols={symbol_count}, timeframe={timeframe}"
+        print(msg, flush=True)
+        worker_logger.info(msg)
+        
         # Import here to avoid pickling issues with multiprocessing
-        import sys
         import os
         import pandas as pd
         from decimal import Decimal
         from datetime import datetime, timedelta
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+        
+        print("WORKER: Imports complete", flush=True)
+        worker_logger.info("WORKER: Imports complete")
         
         from services.backtester.engine import BacktestEngine
         from common.config import settings
@@ -51,24 +77,40 @@ def run_backtest_task(args: tuple) -> TaskResult:
         from strategy_lib import get_strategy_registry
         from sqlalchemy.orm import sessionmaker
         
+        print("WORKER: Module imports complete", flush=True)
+        worker_logger.info("WORKER: Module imports complete")
+        
         # Ensure symbols is a list
         if not isinstance(symbols, list):
             symbols = [symbols]
         
+        msg = f"WORKER: Processing {len(symbols)} symbols"
+        print(msg, flush=True)
+        worker_logger.info(msg)
+        
         # Use pre-loaded data if provided, otherwise load from database
         if bars_data_arg is not None:
+            print("WORKER: Using pre-loaded data", flush=True)
+            worker_logger.info("WORKER: Using pre-loaded data")
             bars_data = bars_data_arg
         else:
+            print("WORKER: Loading data from database...", flush=True)
+            worker_logger.info("WORKER: Loading data from database...")
             # Create a NEW database engine for THIS worker process
             # This is critical - each process needs its own connection pool
             engine = create_database_engine()
+            print("WORKER: Database engine created", flush=True)
+            worker_logger.info("WORKER: Database engine created")
             SessionLocal = sessionmaker(bind=engine)
             
             # Load historical data from database
             bars_data = {}
             session = SessionLocal()
             try:
-                for symbol in symbols:
+                for i, symbol in enumerate(symbols):
+                    msg = f"WORKER: Loading data for symbol {i+1}/{len(symbols)}: {symbol}"
+                    print(msg, flush=True)
+                    worker_logger.info(msg)
                     candles_list = session.query(
                         Candle.ts,
                         Candle.open,
@@ -102,13 +144,26 @@ def run_backtest_task(args: tuple) -> TaskResult:
                     ])
                     # Don't set index - keep timestamp as a column
                     bars_data[symbol] = df
+                    msg = f"WORKER: Loaded {len(df)} bars for {symbol}"
+                    print(msg, flush=True)
+                    worker_logger.info(msg)
             finally:
                 # Close session and dispose of engine for this worker
                 session.close()
                 engine.dispose()
+                print("WORKER: Database connection closed", flush=True)
+                worker_logger.info("WORKER: Database connection closed")
+        
+        msg = f"WORKER: Data loading complete. Total symbols: {len(bars_data)}"
+        print(msg, flush=True)
+        worker_logger.info(msg)
         
         # Get strategy class from registry
+        print("WORKER: Getting strategy from registry...", flush=True)
+        worker_logger.info("WORKER: Getting strategy from registry...")
         registry = get_strategy_registry()
+        print("WORKER: Strategy registry obtained", flush=True)
+        worker_logger.info("WORKER: Strategy registry obtained")
         strategy_class = registry.get_strategy_class(strategy_name)
         if not strategy_class:
             return TaskResult(
@@ -116,6 +171,10 @@ def run_backtest_task(args: tuple) -> TaskResult:
                 success=False,
                 error=f"Strategy '{strategy_name}' not found in registry"
             )
+        
+        msg = f"WORKER: Strategy class obtained: {strategy_class.__name__}"
+        print(msg, flush=True)
+        worker_logger.info(msg)
         
         # Create strategy config
         config_data = {
@@ -127,13 +186,33 @@ def run_backtest_task(args: tuple) -> TaskResult:
             'lookback_periods': lookback,
             'parameters': params
         }
+        # Merge config first (contains pairs, etc.), then params (params override config for optimization)
+        # This ensures pairs from config are preserved, but param values override defaults
+        if config:
+            config_data.update(config)
+        # Params come last so optimization parameters override any defaults in config
         config_data.update(params)
+        
+        # Ensure pairs is preserved (it's in config, not params)
+        if 'pairs' not in config_data and config and 'pairs' in config:
+            config_data['pairs'] = config['pairs']
+        
+        print("WORKER: Creating strategy config...", flush=True)
+        worker_logger.info("WORKER: Creating strategy config...")
         strategy_config = StrategyConfig(**config_data)
+        print("WORKER: Strategy config created", flush=True)
+        worker_logger.info("WORKER: Strategy config created")
         
         # Instantiate strategy
+        print("WORKER: Instantiating strategy...", flush=True)
+        worker_logger.info("WORKER: Instantiating strategy...")
         strategy = strategy_class(strategy_config)
+        print("WORKER: Strategy instantiated", flush=True)
+        worker_logger.info("WORKER: Strategy instantiated")
         
         # Create backtest engine
+        print("WORKER: Creating backtest engine...", flush=True)
+        worker_logger.info("WORKER: Creating backtest engine...")
         engine = BacktestEngine(
             strategy=strategy,
             initial_capital=Decimal(str(config.get('initial_capital', 100000.0))),
@@ -142,10 +221,16 @@ def run_backtest_task(args: tuple) -> TaskResult:
             slippage_ticks=config.get('slippage_ticks', settings.backtest.default_slippage_ticks),
             tick_size=Decimal(str(config.get('tick_size', settings.backtest.tick_size_us_equity)))
         )
+        print("WORKER: Backtest engine created", flush=True)
+        worker_logger.info("WORKER: Backtest engine created")
         
         # Run backtest (run is async but we'll use asyncio to run it)
+        print("WORKER: Starting backtest execution...", flush=True)
+        worker_logger.info("WORKER: Starting backtest execution...")
         import asyncio
         metrics = asyncio.run(engine.run(bars_data, start_date=None, end_date=None))
+        print("WORKER: Backtest execution complete", flush=True)
+        worker_logger.info("WORKER: Backtest execution complete")
         
         if not metrics:
             return TaskResult(
@@ -201,6 +286,12 @@ def run_backtest_task(args: tuple) -> TaskResult:
             'total_slippage': float(metrics.total_slippage) if metrics.total_slippage else None
         }
         
+        msg = f"WORKER: Backtest completed successfully. Score: {score}"
+        print(msg, flush=True)
+        print("=" * 60, flush=True)
+        worker_logger.info(msg)
+        worker_logger.info("=" * 60)
+        
         return TaskResult(
             params=params,
             success=True,
@@ -212,6 +303,13 @@ def run_backtest_task(args: tuple) -> TaskResult:
         )
         
     except Exception as e:
+        error_msg = f"WORKER: Backtest failed for params {params}: {str(e)}"
+        print(error_msg, flush=True)
+        print(f"WORKER: Traceback: {traceback.format_exc()}", flush=True)
+        print("=" * 60, flush=True)
+        worker_logger.error(error_msg)
+        worker_logger.error(f"WORKER: Traceback: {traceback.format_exc()}")
+        worker_logger.info("=" * 60)
         logger.error(f"Backtest failed for params {params}: {str(e)}")
         return TaskResult(
             params=params,

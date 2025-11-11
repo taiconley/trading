@@ -12,28 +12,34 @@ To change pairs: Edit the `PAIRS` list below.
 # Pairs definition - list of [stock_a, stock_b] pairs
 # Modify this list to change which pairs are tracked
 PAIRS = [
-    ["AMN", "CORT"],   
-    ["ACA", "KTB"],     
-    ["ANET", "AORT"],           
+    ["AMN", "CORT"],
+    ["ACA", "KTB"],
+    ["ANET", "AORT"],
+    ["ANDE", "LYEL"],
+    ["ABR", "GRPN"],
+    ["AHCO", "MGY"],
+    ["AIN", "ESE"],
+    ["ADPT", "IBEX"],
+    ["ACT", "DUK"]
 ]
 
 
 
 # Complete strategy configuration
-# Optimized parameters from genetic algorithm (Run ID: 33, Sharpe: 0.7863)
+# Optimized parameters from Bayesian optimization (latest run)
 PAIRS_TRADING_CONFIG = {
     "pairs": PAIRS,
-    "lookback_periods": 250,        # Number of bars to fetch for strategy
-    "lookback_window": 120,         # Optimized: 240 → 120
-    "entry_threshold": 1.5,         # Optimized: 2.0 → 1.5
-    "exit_threshold": 1.0,          # Optimized: 0.5 → 1.0
-    "position_size": 25,            # Optimized: 100 → 25
-    "max_hold_bars": 360,           # Optimized: 720 → 360
-    "stop_loss_zscore": 4.0,        # Optimized: 3.0 → 4.0
+    "lookback_periods": 350,        # Number of bars to fetch for strategy
+    "lookback_window": 222,         # Optimized via Bayesian
+    "entry_threshold": 1.5,         # Optimized via Bayesian (rounded from 1.50)
+    "exit_threshold": 0.4,          # Optimized via Bayesian (rounded from 0.39)
+    "position_size": 48,            # Optimized via Bayesian
+    "max_hold_bars": 747,           # Optimized via Bayesian
+    "stop_loss_zscore": 2.8,        # Optimized via Bayesian (rounded from 2.78)
     "market_close_hour": 16,
     "market_close_minute": 0,
     "close_before_eod_minutes": 5,
-    "cooldown_bars": 90,            # Optimized: 60 → 90
+    "cooldown_bars": 34,            # Optimized via Bayesian
     "timezone": "US/Eastern",
     "spread_history_bars": 1000,
     "hedge_refresh_bars": 30,

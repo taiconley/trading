@@ -296,11 +296,15 @@ class PairsTradingStrategy(BaseStrategy):
                           bars_data: Dict[str, pd.DataFrame]) -> List[StrategySignal]:
         """Process bar data for all pairs simultaneously."""
         
+        # Suppress verbose logs during optimization (strategy_id starts with 'opt_')
+        is_optimization = self.config.strategy_id.startswith('opt_')
+        
         # DEBUG: Log data availability (only occasionally to avoid spam)
-        import random
-        if random.random() < 0.05:  # 5% of the time
-            bar_counts = {sym: len(df) for sym, df in bars_data.items()}
-            self.log_info(f"[DATA] Processing {len(bars_data)} symbols, bar counts: {bar_counts}")
+        if not is_optimization:
+            import random
+            if random.random() < 0.05:  # 5% of the time
+                bar_counts = {sym: len(df) for sym, df in bars_data.items()}
+                self.log_info(f"[DATA] Processing {len(bars_data)} symbols, bar counts: {bar_counts}")
         
         all_signals = []
         # Process each pair independently
@@ -375,8 +379,8 @@ class PairsTradingStrategy(BaseStrategy):
             # Require sufficient spread history for statistics
             spread_hist_len = len(pair_state['spread_history'])
             if spread_hist_len < self.config.lookback_window:
-                # DEBUG: Log first few times to show progress
-                if spread_hist_len % 20 == 0 or spread_hist_len < 10:
+                # DEBUG: Log first few times to show progress (suppress during optimization)
+                if not is_optimization and (spread_hist_len % 20 == 0 or spread_hist_len < 10):
                     self.log_info(
                         f"[WARMING UP] {stock_a}/{stock_b}: {spread_hist_len}/{self.config.lookback_window} bars collected"
                     )
@@ -391,8 +395,8 @@ class PairsTradingStrategy(BaseStrategy):
             zscore = (spread - mean_spread) / std_spread
             pair_state['last_zscore'] = zscore
             
-            # DEBUG: Log z-score calculations every ~30 bars
-            if pair_state['bars_since_entry'] % 30 == 0:
+            # DEBUG: Log z-score calculations every ~30 bars (suppress during optimization)
+            if not is_optimization and pair_state['bars_since_entry'] % 30 == 0:
                 self.log_info(
                     f"[Z-SCORE] {stock_a}/{stock_b}: z={zscore:.3f}, spread={spread:.4f}, "
                     f"mean={mean_spread:.4f}, std={std_spread:.4f}, pos={pair_state['current_position']}"

@@ -300,8 +300,9 @@ class BacktestEngine:
             # Update positions and equity
             self._update_positions(current_bars, timestamp)
             
-            # Record progress
-            if i % 50 == 0:
+            # Record progress (suppress during optimization to reduce log noise)
+            is_optimization = self.strategy.config.strategy_id.startswith('opt_')
+            if not is_optimization and i % 50 == 0:
                 self.logger.info(f"Progress: {i}/{len(all_timestamps)} bars, Equity: ${self._get_total_equity(current_bars):,.2f}")
         
         # Stop strategy
@@ -317,10 +318,16 @@ class BacktestEngine:
         # Calculate metrics
         metrics = self._calculate_metrics(all_timestamps[0], all_timestamps[-1])
         
-        self.logger.info("Backtest completed")
-        self.logger.info(f"Final equity: ${self._get_total_equity(filtered_data):,.2f}")
-        self.logger.info(f"Total P&L: ${metrics.total_pnl:,.2f}")
-        self.logger.info(f"Total trades: {metrics.total_trades}")
+        # Suppress detailed completion logs during optimization
+        is_optimization = self.strategy.config.strategy_id.startswith('opt_')
+        if not is_optimization:
+            self.logger.info("Backtest completed")
+            self.logger.info(f"Final equity: ${self._get_total_equity(filtered_data):,.2f}")
+            self.logger.info(f"Total P&L: ${metrics.total_pnl:,.2f}")
+            self.logger.info(f"Total trades: {metrics.total_trades}")
+        else:
+            # Minimal log for optimization
+            self.logger.debug(f"Backtest completed: {metrics.total_trades} trades, P&L: ${metrics.total_pnl:,.2f}")
         
         return metrics
     
