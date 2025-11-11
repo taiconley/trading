@@ -7,7 +7,7 @@ import asyncio
 import logging
 import signal
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 from decimal import Decimal
@@ -342,9 +342,35 @@ class TraderService:
             # Set up event handlers AFTER connection
             print("DEBUG: Setting up event handlers...")
             
-            # Test handler to verify events are flowing
-            def _test_error_handler(reqId, errorCode, errorString, contract):
+            # Enhanced error handler that links errors to orders
+            def _on_tws_error(reqId, errorCode, errorString, contract):
+                """Handle TWS error events and update order status if applicable"""
                 print(f"🔧 TWS EVENT RECEIVED: Error {errorCode} - {errorString}")
+                logger.error(f"TWS Error {errorCode}: {errorString}")
+                
+                # Error codes 200-299 are order-related errors
+                if 200 <= errorCode <= 299:
+                    # Try to find and update the most recent pending order for this contract
+                    if contract and hasattr(contract, 'symbol'):
+                        try:
+                            with self.db_session_factory() as session:
+                                # Find the most recent PendingSubmit order for this symbol
+                                db_order = session.query(Order).filter(
+                                    Order.symbol == contract.symbol,
+                                    Order.status == "PendingSubmit"
+                                ).order_by(Order.placed_at.desc()).first()
+                                
+                                if db_order:
+                                    # Mark as cancelled/rejected based on error
+                                    db_order.status = "Cancelled"
+                                    db_order.updated_at = datetime.now(timezone.utc)
+                                    session.commit()
+                                    logger.warning(
+                                        f"Updated order {db_order.id} ({contract.symbol}) to Cancelled "
+                                        f"due to TWS error {errorCode}: {errorString}"
+                                    )
+                        except Exception as e:
+                            logger.error(f"Error updating order status from TWS error: {e}")
             
             # Also add a new order event handler
             def _test_new_order_handler(trade):
@@ -352,7 +378,7 @@ class TraderService:
                 # Forward to the main handler
                 self._on_order_status(trade)
             
-            self.ib_client.ib.errorEvent += _test_error_handler
+            self.ib_client.ib.errorEvent += _on_tws_error
             self.ib_client.ib.newOrderEvent += _test_new_order_handler
             self.ib_client.ib.orderStatusEvent += self._on_order_status
             self.ib_client.ib.execDetailsEvent += self._on_execution
@@ -801,8 +827,27 @@ class TraderService:
                 # Place order with TWS
                 trade = self.ib_client.ib.placeOrder(contract, ib_order)
                 
+                # Validate that TWS accepted the order (orderId should be > 0)
+                if not trade.order.orderId or trade.order.orderId == 0:
+                    # Order was rejected by TWS - update status immediately
+                    db_order.status = "Cancelled"
+                    db_order.updated_at = datetime.now(timezone.utc)
+                    session.commit()
+                    logger.error(f"Order {db_order.id} rejected by TWS: invalid orderId (orderId={trade.order.orderId})")
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Order rejected by TWS: invalid order ID. This usually means the order was rejected immediately."
+                    )
+                
                 # Update database with IB order ID
                 db_order.external_order_id = str(trade.order.orderId)
+                
+                # Check if we got an immediate status update (TWS sometimes sends status immediately)
+                if trade.orderStatus and trade.orderStatus.status:
+                    # Update status from TWS response if available
+                    db_order.status = trade.orderStatus.status
+                    logger.info(f"Order {db_order.id} got immediate status: {trade.orderStatus.status}")
+                
                 session.commit()
                 
                 # Store active order
@@ -1104,6 +1149,90 @@ class TraderService:
             # Wait 30 seconds before next update
             await asyncio.sleep(30)
     
+    async def _sync_orders_with_tws(self):
+        """
+        Periodically sync order statuses with TWS to catch stuck orders.
+        
+        Since order placement takes < 1 second, any order in PendingSubmit
+        for more than 5 seconds is likely stuck and needs reconciliation.
+        """
+        while not self.shutdown_event.is_set():
+            try:
+                await asyncio.sleep(5)  # Run every 5 seconds
+                
+                if not self.ib_client or not self.ib_client.state.connected:
+                    continue
+                
+                # Get all orders stuck in PendingSubmit for more than 5 seconds
+                with self.db_session_factory() as session:
+                    cutoff_time = datetime.now(timezone.utc) - timedelta(seconds=5)
+                    stuck_orders = session.query(Order).filter(
+                        Order.status == "PendingSubmit",
+                        Order.placed_at < cutoff_time
+                    ).all()
+                    
+                    if not stuck_orders:
+                        continue
+                    
+                    logger.debug(f"Found {len(stuck_orders)} orders stuck in PendingSubmit, syncing with TWS...")
+                    
+                    # Get all active trades from TWS
+                    try:
+                        trades = self.ib_client.ib.trades()
+                        tws_order_ids = {str(trade.order.orderId) for trade in trades if trade.order.orderId}
+                    except Exception as e:
+                        logger.error(f"Error getting trades from TWS: {e}")
+                        continue
+                    
+                    # Check each stuck order
+                    for db_order in stuck_orders:
+                        try:
+                            if db_order.external_order_id:
+                                # Check if order exists in TWS
+                                if db_order.external_order_id in tws_order_ids:
+                                    # Order exists in TWS - find the trade and get current status
+                                    matching_trade = None
+                                    for trade in trades:
+                                        if str(trade.order.orderId) == db_order.external_order_id:
+                                            matching_trade = trade
+                                            break
+                                    
+                                    if matching_trade and matching_trade.orderStatus:
+                                        new_status = matching_trade.orderStatus.status
+                                        if new_status != db_order.status:
+                                            db_order.status = new_status
+                                            db_order.updated_at = datetime.now(timezone.utc)
+                                            session.commit()
+                                            logger.info(
+                                                f"Synced order {db_order.id} status from TWS: "
+                                                f"PendingSubmit -> {new_status}"
+                                            )
+                                else:
+                                    # Order not found in TWS - likely rejected or cancelled
+                                    db_order.status = "Cancelled"
+                                    db_order.updated_at = datetime.now(timezone.utc)
+                                    session.commit()
+                                    logger.warning(
+                                        f"Order {db_order.id} (ext_id={db_order.external_order_id}) "
+                                        f"not found in TWS after 5+ seconds, marking as Cancelled"
+                                    )
+                            else:
+                                # No external_order_id means order was never accepted by TWS
+                                # This shouldn't happen if validation works, but handle it anyway
+                                db_order.status = "Cancelled"
+                                db_order.updated_at = datetime.now(timezone.utc)
+                                session.commit()
+                                logger.warning(
+                                    f"Order {db_order.id} has no external_order_id after 5+ seconds, "
+                                    f"marking as Cancelled"
+                                )
+                        except Exception as e:
+                            logger.error(f"Error syncing order {db_order.id}: {e}")
+                            session.rollback()
+                            
+            except Exception as e:
+                logger.error(f"Error in order sync task: {e}")
+    
     async def shutdown(self):
         """Graceful shutdown"""
         logger.info("Shutting down trader service...")
@@ -1140,6 +1269,9 @@ async def startup_event():
         
         # Start periodic health update in background
         asyncio.create_task(trader_service._periodic_health_update())
+        
+        # Start order status sync task (runs every 5 seconds to catch stuck orders)
+        asyncio.create_task(trader_service._sync_orders_with_tws())
         
         logger.info("Trader Service started successfully")
     except Exception as e:
