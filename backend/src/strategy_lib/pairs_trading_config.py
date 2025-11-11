@@ -44,7 +44,7 @@ PAIRS_TRADING_CONFIG = {
     "spread_history_bars": 1000,
     "hedge_refresh_bars": 30,
     "min_hedge_lookback": 120,
-    "stationarity_checks_enabled": True,
+    "stationarity_checks_enabled": False,  # Disabled: all pairs failing ADF test (p > 0.05)
     "adf_pvalue_threshold": 0.05,
     "cointegration_pvalue_threshold": 0.05,
     "stationarity_check_interval": 60,

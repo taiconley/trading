@@ -16,7 +16,7 @@ import json
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
 from fastapi.responses import JSONResponse
 import uvicorn
-from ib_insync import IB, Stock, Order as IBOrder, Trade
+from ib_insync import IB, Stock, Order as IBOrder, Trade, TagValue
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, desc
 from pydantic import BaseModel
@@ -744,7 +744,8 @@ class TraderService:
             if order_request.algo_params:
                 priority = order_request.algo_params.get("adaptivePriority", "Normal")
             
-            ib_order.algoParams.append(("adaptivePriority", priority))
+            # ib_insync requires TagValue objects, not tuples
+            ib_order.algoParams.append(TagValue("adaptivePriority", priority))
             
         elif order_type == "PEG BEST":
             # IBKR ATS Pegged to Best

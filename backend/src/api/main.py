@@ -562,22 +562,52 @@ async def delete_dataset(symbol: str, timeframe: str):
 
 @app.get("/api/strategies")
 async def get_strategies():
-    """Get all strategies from database."""
-    
+    """Get all strategies with detailed state from strategy service."""
+    # Get all strategies from database first (including disabled ones)
     with get_db_session() as db:
-        strategies = db.query(Strategy).all()
-        return {
-            "strategies": [
-                {
-                    "id": s.strategy_id,
-                    "name": s.name,
-                    "enabled": s.enabled,
-                    "params": s.params_json,
-                    "created_at": s.created_at.isoformat()
-                }
-                for s in strategies
-            ]
+        db_strategies = {s.strategy_id: s for s in db.query(Strategy).all()}
+    
+    # Try to get detailed state from strategy service for enabled/running strategies
+    strategy_service_data = {}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            try:
+                response = await client.get("http://backend-strategy:8005/strategies")
+                if response.status_code == 200:
+                    strategy_data = response.json()
+                    # Build a map of strategy_id -> service data
+                    for s in strategy_data.get("strategies", []):
+                        strategy_id = s.get("strategy_id")
+                        if strategy_id:
+                            strategy_service_data[strategy_id] = s
+            except (httpx.RequestError, httpx.TimeoutException):
+                # Strategy service unavailable - continue with DB data only
+                pass
+    except Exception as e:
+        logger.warning(f"Failed to get strategies from service: {e}")
+    
+    # Merge database strategies with service data
+    strategies = []
+    for strategy_id, db_strategy in db_strategies.items():
+        service_data = strategy_service_data.get(strategy_id, {})
+        
+        # Build strategy info, merging DB and service data
+        strategy_info = {
+            "id": db_strategy.strategy_id,
+            "name": service_data.get("name") or db_strategy.name,
+            "enabled": db_strategy.enabled,
+            "running": service_data.get("running", False),
+            "state": service_data.get("state", "stopped" if not db_strategy.enabled else "unknown"),
+            "symbols": service_data.get("symbols", []),
+            "metrics": service_data.get("metrics", {}),
+            "state_details": service_data.get("state_details"),  # Include detailed pair state if available
+            "params": db_strategy.params_json,
+            "created_at": db_strategy.created_at.isoformat()
         }
+        
+        strategies.append(strategy_info)
+    
+    return {"strategies": strategies, "total": len(strategies)}
 
 
 @app.post("/api/strategies/{strategy_id}/enable")
@@ -593,12 +623,25 @@ async def enable_strategy(strategy_id: str, data: Dict = Body(...)):
         
         strategy.enabled = enabled
         db.commit()
-        
-        return {
-            "message": f"Strategy {'enabled' if enabled else 'disabled'}",
-            "strategy_id": strategy_id,
-            "enabled": enabled
-        }
+    
+    # Trigger strategy service to reload strategies immediately
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            try:
+                await client.post("http://backend-strategy:8005/strategies/reload-all")
+                logger.info(f"Triggered strategy service reload after {'enabling' if enabled else 'disabling'} strategy {strategy_id}")
+            except (httpx.RequestError, httpx.TimeoutException) as e:
+                logger.warning(f"Failed to trigger strategy service reload: {e}")
+                # Continue anyway - the periodic reload will pick it up
+    except Exception as e:
+        logger.warning(f"Error triggering strategy reload: {e}")
+        # Continue anyway - the periodic reload will pick it up
+    
+    return {
+        "message": f"Strategy {'enabled' if enabled else 'disabled'}",
+        "strategy_id": strategy_id,
+        "enabled": enabled
+    }
 
 
 @app.put("/api/strategies/{strategy_id}/params")

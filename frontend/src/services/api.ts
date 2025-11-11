@@ -403,6 +403,40 @@ export interface Strategy {
   id: string;
   name: string;
   enabled: boolean;
+  running?: boolean;
+  state?: string;
+  symbols?: string[];
+  metrics?: {
+    total_signals?: number;
+    successful_signals?: number;
+    total_pnl?: number;
+    win_rate?: number;
+  };
+  state_details?: {
+    config?: {
+      pairs?: string[][];
+      entry_threshold?: number;
+      exit_threshold?: number;
+      position_size?: number;
+    };
+    num_pairs?: number;
+    pairs_state?: Record<string, {
+      position: string;
+      current_zscore?: number;
+      current_spread?: number;
+      spread_history_length?: number;
+      price_history_length?: number;
+      bars_in_trade?: number;
+      entry_zscore?: number;
+      hedge_ratio?: number;
+      entry_proximity?: number;
+      exit_proximity?: number;
+      cooldown_remaining?: number;
+      has_sufficient_data?: boolean;
+      data_readiness_pct?: number;
+      lookback_window?: number;
+    }>;
+  };
   params: Record<string, any>;
   created_at: string;
 }

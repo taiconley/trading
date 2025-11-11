@@ -319,6 +319,80 @@ class PairsTradingStrategy(BaseStrategy):
             bars_a = bars_data[stock_a]
             bars_b = bars_data[stock_b]
             
+            # Ensure both DataFrames have the same length and are aligned
+            if len(bars_a) != len(bars_b):
+                # Align by timestamp if possible
+                common_timestamps = bars_a['timestamp'].isin(bars_b['timestamp'])
+                if common_timestamps.sum() == 0:
+                    continue
+                bars_a = bars_a[common_timestamps]
+                bars_b = bars_b[bars_b['timestamp'].isin(bars_a['timestamp'])]
+            
+            if len(bars_a) == 0 or len(bars_b) == 0:
+                continue
+            
+            # Get pair state
+            pair_state = self._pair_states[pair_key]
+            
+            # Process all bars in the DataFrame to build up history quickly
+            # This is important on startup when we have historical data
+            initial_spread_len = len(pair_state['spread_history'])
+            
+            for idx in range(len(bars_a)):
+                if idx >= len(bars_b):
+                    break
+                
+                bar_a = bars_a.iloc[idx]
+                bar_b = bars_b.iloc[idx]
+                
+                # Extract timestamp from bar
+                if 'timestamp' not in bar_a.index:
+                    continue
+                timestamp = pd.to_datetime(bar_a['timestamp'])
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.to_pydatetime().replace(tzinfo=self.market_timezone)
+                else:
+                    timestamp = timestamp.to_pydatetime().astimezone(self.market_timezone)
+                
+                # Get prices
+                price_a = float(bar_a['close'])
+                price_b = float(bar_b['close'])
+                
+                if price_b == 0 or price_a <= 0 or price_b <= 0:
+                    continue
+                
+                # Update counters
+                pair_state['bars_since_hedge'] += 1
+                pair_state['bars_since_stationarity'] += 1
+                pair_state['bars_since_entry'] += 1
+                
+                # Reduce cooldown when flat
+                if pair_state['current_position'] == "flat" and pair_state['cooldown_remaining'] > 0:
+                    pair_state['cooldown_remaining'] = max(0, pair_state['cooldown_remaining'] - 1)
+                
+                # Append price history
+                pair_state['price_history_a'].append(price_a)
+                pair_state['price_history_b'].append(price_b)
+                
+                # Need enough data to build hedge ratio before computing spreads
+                if len(pair_state['price_history_a']) < self.config.min_hedge_lookback:
+                    continue  # Skip spread calculation until we have enough price history
+                
+                # Refresh hedge ratio periodically
+                if pair_state['bars_since_hedge'] >= self.config.hedge_refresh_bars or pair_state['hedge_ratio'] is None:
+                    self._refresh_hedge_ratio(pair_key, pair_state)
+                
+                # Compute current spread using hedge ratio
+                spread = self._compute_spread(pair_state, price_a, price_b)
+                if spread is None:
+                    continue
+                pair_state['spread_history'].append(spread)
+            
+            # After processing all bars, check if we have enough data for trading decisions
+            # Only process trading logic on the LAST bar to avoid duplicate signals
+            if len(bars_a) == 0:
+                continue
+            
             last_timestamp = self._extract_timestamp(bars_a)
             if last_timestamp is None:
                 continue
@@ -330,42 +404,9 @@ class PairsTradingStrategy(BaseStrategy):
             ) - timedelta(minutes=self.config.close_before_eod_minutes)
             is_near_close = last_timestamp >= close_dt
             
-            # Get current prices
+            # Get current prices (from last bar)
             price_a = float(bars_a['close'].iloc[-1])
             price_b = float(bars_b['close'].iloc[-1])
-            
-            if price_b == 0:  # Avoid division by zero
-                continue
-            if price_a <= 0 or price_b <= 0:
-                continue
-            
-            # Get pair state
-            pair_state = self._pair_states[pair_key]
-            pair_state['bars_since_hedge'] += 1
-            pair_state['bars_since_stationarity'] += 1
-            pair_state['bars_since_entry'] += 1
-            
-            # Reduce cooldown when flat
-            if pair_state['current_position'] == "flat" and pair_state['cooldown_remaining'] > 0:
-                pair_state['cooldown_remaining'] = max(0, pair_state['cooldown_remaining'] - 1)
-            
-            # Append price history
-            pair_state['price_history_a'].append(price_a)
-            pair_state['price_history_b'].append(price_b)
-            
-            # Need enough data to build hedge ratio
-            if len(pair_state['price_history_a']) < self.config.min_hedge_lookback:
-                continue
-            
-            # Refresh hedge ratio periodically
-            if pair_state['bars_since_hedge'] >= self.config.hedge_refresh_bars or pair_state['hedge_ratio'] is None:
-                self._refresh_hedge_ratio(pair_key, pair_state)
-            
-            # Compute current spread using hedge ratio
-            spread = self._compute_spread(pair_state, price_a, price_b)
-            if spread is None:
-                continue
-            pair_state['spread_history'].append(spread)
             
             if pair_state['current_position'] != "flat":
                 pair_state['bars_in_trade'] += 1
@@ -386,30 +427,61 @@ class PairsTradingStrategy(BaseStrategy):
                     )
                 continue
             
+            # Get current spread for z-score calculation
+            current_spread = self._compute_spread(pair_state, price_a, price_b)
+            if current_spread is None:
+                continue
+            
             recent_spreads = list(pair_state['spread_history'])[-self.config.lookback_window:]
             mean_spread = float(np.mean(recent_spreads))
             std_spread = float(np.std(recent_spreads))
             if std_spread == 0:
                 continue
             
-            zscore = (spread - mean_spread) / std_spread
+            zscore = (current_spread - mean_spread) / std_spread
             pair_state['last_zscore'] = zscore
             
             # DEBUG: Log z-score calculations every ~30 bars (suppress during optimization)
             if not is_optimization and pair_state['bars_since_entry'] % 30 == 0:
                 self.log_info(
-                    f"[Z-SCORE] {stock_a}/{stock_b}: z={zscore:.3f}, spread={spread:.4f}, "
+                    f"[Z-SCORE] {stock_a}/{stock_b}: z={zscore:.3f}, spread={current_spread:.4f}, "
                     f"mean={mean_spread:.4f}, std={std_spread:.4f}, pos={pair_state['current_position']}"
                 )
             
             # Stationarity gating
             if self.config.stationarity_checks_enabled:
-                if adfuller is not None and pair_state['adf_pvalue'] is not None:
-                    if pair_state['adf_pvalue'] > self.config.adf_pvalue_threshold:
+                adf_pval = pair_state.get('adf_pvalue')
+                coint_pval = pair_state.get('cointegration_pvalue')
+                
+                if adfuller is not None and adf_pval is not None:
+                    if adf_pval > self.config.adf_pvalue_threshold:
+                        if not is_optimization:
+                            self.log_info(
+                                f"[STATIONARITY BLOCK] {stock_a}/{stock_b}: "
+                                f"ADF p-value {adf_pval:.4f} > threshold {self.config.adf_pvalue_threshold}, "
+                                f"z={zscore:.3f}, skipping entry"
+                            )
                         continue
-                if coint is not None and pair_state['cointegration_pvalue'] is not None:
-                    if pair_state['cointegration_pvalue'] > self.config.cointegration_pvalue_threshold:
+                
+                if coint is not None and coint_pval is not None:
+                    if coint_pval > self.config.cointegration_pvalue_threshold:
+                        if not is_optimization:
+                            self.log_info(
+                                f"[STATIONARITY BLOCK] {stock_a}/{stock_b}: "
+                                f"Cointegration p-value {coint_pval:.4f} > threshold {self.config.cointegration_pvalue_threshold}, "
+                                f"z={zscore:.3f}, skipping entry"
+                            )
                         continue
+                
+                # Log when stationarity checks pass but we're near entry
+                if not is_optimization and abs(zscore) > adjusted_entry * 0.8:
+                    adf_str = f"{adf_pval:.4f}" if adf_pval is not None else "N/A"
+                    coint_str = f"{coint_pval:.4f}" if coint_pval is not None else "N/A"
+                    self.log_info(
+                        f"[STATIONARITY OK] {stock_a}/{stock_b}: "
+                        f"ADF={adf_str}, Coint={coint_str}, "
+                        f"z={zscore:.3f}, entry={adjusted_entry:.3f}"
+                    )
             
             # Force exit near the close
             if is_near_close and pair_state['current_position'] != "flat":
@@ -417,7 +489,7 @@ class PairsTradingStrategy(BaseStrategy):
                     pair_key=pair_key,
                     exit_reason="end_of_day",
                     zscore=zscore,
-                    spread=spread,
+                    spread=current_spread,
                     mean_spread=mean_spread,
                     std_spread=std_spread,
                     price_a=price_a,
@@ -432,16 +504,28 @@ class PairsTradingStrategy(BaseStrategy):
             
             signals = []
             if pair_state['current_position'] == "flat":
-                if pair_state['cooldown_remaining'] > 0:
+                cooldown = pair_state.get('cooldown_remaining', 0)
+                if cooldown > 0:
+                    if not is_optimization:
+                        self.log_info(
+                            f"[SKIP ENTRY] {stock_a}/{stock_b}: z={zscore:.3f}, "
+                            f"entry_threshold={adjusted_entry:.3f}, cooldown={cooldown}"
+                        )
                     continue
+                
                 # Look for entry signals
                 if zscore > adjusted_entry:
                     # Ratio is too high: short A, long B
+                    if not is_optimization:
+                        self.log_info(
+                            f"[ENTRY SIGNAL] {stock_a}/{stock_b}: z={zscore:.3f} > "
+                            f"entry={adjusted_entry:.3f}, generating SHORT A / LONG B signals"
+                        )
                     signals = self._generate_entry_signals(
                         pair_key=pair_key,
                         position_type="short_a_long_b",
                         zscore=zscore,
-                        spread=spread,
+                        spread=current_spread,
                         mean_spread=mean_spread,
                         std_spread=std_spread,
                         price_a=price_a,
@@ -455,11 +539,16 @@ class PairsTradingStrategy(BaseStrategy):
                     
                 elif zscore < -adjusted_entry:
                     # Ratio is too low: long A, short B
+                    if not is_optimization:
+                        self.log_info(
+                            f"[ENTRY SIGNAL] {stock_a}/{stock_b}: z={zscore:.3f} < "
+                            f"-entry={-adjusted_entry:.3f}, generating LONG A / SHORT B signals"
+                        )
                     signals = self._generate_entry_signals(
                         pair_key=pair_key,
                         position_type="long_a_short_b",
                         zscore=zscore,
-                        spread=spread,
+                        spread=current_spread,
                         mean_spread=mean_spread,
                         std_spread=std_spread,
                         price_a=price_a,
@@ -470,6 +559,14 @@ class PairsTradingStrategy(BaseStrategy):
                         entry_threshold=adjusted_entry,
                         volatility_ratio=vol_ratio
                     )
+                else:
+                    # Not at entry threshold yet
+                    if not is_optimization and abs(zscore) > adjusted_entry * 0.8:
+                        # Log when close to entry (80% of threshold)
+                        self.log_info(
+                            f"[NEAR ENTRY] {stock_a}/{stock_b}: z={zscore:.3f}, "
+                            f"entry={adjusted_entry:.3f}, proximity={abs(zscore)/adjusted_entry:.1%}"
+                        )
             
             else:
                 # Already in a position - check for exit signals
@@ -911,16 +1008,42 @@ class PairsTradingStrategy(BaseStrategy):
         pairs_state = {}
         for pair_key, state in self._pair_states.items():
             current_spread = state['spread_history'][-1] if state['spread_history'] else None
+            last_zscore = state.get('last_zscore')
+            
+            # Calculate proximity to entry/exit thresholds
+            entry_proximity = None
+            exit_proximity = None
+            if last_zscore is not None:
+                # How close are we to entry threshold? (0 = at threshold, 1 = far away)
+                if state['current_position'] == 'flat':
+                    entry_proximity = abs(last_zscore) / self.config.entry_threshold if self.config.entry_threshold > 0 else None
+                # How close are we to exit threshold? (0 = at threshold, 1 = far away)
+                if state['current_position'] != 'flat':
+                    exit_proximity = abs(last_zscore) / self.config.exit_threshold if self.config.exit_threshold > 0 else None
+            
+            # Calculate data readiness
+            spread_history_len = len(state['spread_history'])
+            price_history_len = len(state.get('price_history_a', []))
+            has_sufficient_data = spread_history_len >= self.config.lookback_window
+            data_readiness_pct = min(100, (spread_history_len / self.config.lookback_window * 100)) if self.config.lookback_window > 0 else 0
+            
             pairs_state[pair_key] = {
                 "position": state['current_position'],
                 "current_spread": current_spread,
-                "spread_history_length": len(state['spread_history']),
+                "current_zscore": last_zscore,
+                "spread_history_length": spread_history_len,
+                "price_history_length": price_history_len,
                 "bars_in_trade": state['bars_in_trade'],
                 "entry_zscore": state['entry_zscore'],
                 "hedge_ratio": state['hedge_ratio'],
                 "adf_pvalue": state.get('adf_pvalue'),
                 "cointegration_pvalue": state.get('cointegration_pvalue'),
-                "cooldown_remaining": state.get('cooldown_remaining')
+                "cooldown_remaining": state.get('cooldown_remaining'),
+                "entry_proximity": entry_proximity,  # 0-1, how close to entry threshold
+                "exit_proximity": exit_proximity,  # 0-1, how close to exit threshold
+                "has_sufficient_data": has_sufficient_data,
+                "data_readiness_pct": data_readiness_pct,
+                "lookback_window": self.config.lookback_window
             }
         
         return {
