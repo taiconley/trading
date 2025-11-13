@@ -313,6 +313,37 @@ class TraderService:
         self.websocket_manager = WebSocketManager()
         self.active_orders: Dict[int, Trade] = {}  # order_id -> Trade
         self.shutdown_event = asyncio.Event()
+    
+    @staticmethod
+    def _is_valid_price(price: Optional[float]) -> bool:
+        """
+        Validate that a price value is within database limits.
+        
+        NUMERIC(10,4) can store values up to 999,999.9999.
+        IB sometimes uses sentinel values like 1.7976931348623157E+308 for "no price".
+        
+        Args:
+            price: Price value to validate (can be None)
+            
+        Returns:
+            True if price is valid and within bounds, False otherwise
+        """
+        if price is None:
+            return False
+        
+        # Check if price is within reasonable bounds (max for NUMERIC(10,4) is 999,999.9999)
+        # Also check for sentinel values (very large numbers that IB uses to mean "no price")
+        MAX_VALID_PRICE = 999999.9999
+        MIN_VALID_PRICE = 0.0001
+        
+        try:
+            price_float = float(price)
+            # Check for sentinel values (very large numbers)
+            if price_float > MAX_VALID_PRICE or price_float < MIN_VALID_PRICE:
+                return False
+            return True
+        except (ValueError, TypeError, OverflowError):
+            return False
         
     async def initialize(self):
         print("DEBUG: initialize() ENTRY POINT")
@@ -495,6 +526,15 @@ class TraderService:
                         session.flush()
                     
                     # Create new order
+                    # Validate prices to avoid database overflow (IB uses sentinel values for "no price")
+                    limit_price = None
+                    if self._is_valid_price(trade.order.lmtPrice):
+                        limit_price = Decimal(str(trade.order.lmtPrice))
+                    
+                    stop_price = None
+                    if self._is_valid_price(trade.order.auxPrice):
+                        stop_price = Decimal(str(trade.order.auxPrice))
+                    
                     db_order = Order(
                         account_id=account_id,
                         strategy_id=None,  # External order, no strategy
@@ -502,8 +542,8 @@ class TraderService:
                         side=trade.order.action,  # BUY or SELL
                         qty=Decimal(str(trade.order.totalQuantity)),
                         order_type=trade.order.orderType,  # MKT, LMT, etc.
-                        limit_price=Decimal(str(trade.order.lmtPrice)) if trade.order.lmtPrice else None,
-                        stop_price=Decimal(str(trade.order.auxPrice)) if trade.order.auxPrice else None,
+                        limit_price=limit_price,
+                        stop_price=stop_price,
                         tif=trade.order.tif,
                         status=order_status,
                         external_order_id=str(ib_order_id),
@@ -620,6 +660,15 @@ class TraderService:
                         exec_time = datetime.now(timezone.utc)
                     
                     # Create order record from execution
+                    # Validate prices to avoid database overflow (IB uses sentinel values for "no price")
+                    limit_price = None
+                    if self._is_valid_price(trade.order.lmtPrice):
+                        limit_price = Decimal(str(trade.order.lmtPrice))
+                    
+                    stop_price = None
+                    if self._is_valid_price(trade.order.auxPrice):
+                        stop_price = Decimal(str(trade.order.auxPrice))
+                    
                     db_order = Order(
                         account_id=account_id,
                         strategy_id=None,  # External order
@@ -627,8 +676,8 @@ class TraderService:
                         side=trade.order.action,  # BUY or SELL
                         qty=Decimal(str(trade.order.totalQuantity)),
                         order_type=trade.order.orderType,  # MKT, LMT, etc.
-                        limit_price=Decimal(str(trade.order.lmtPrice)) if trade.order.lmtPrice else None,
-                        stop_price=Decimal(str(trade.order.auxPrice)) if trade.order.auxPrice else None,
+                        limit_price=limit_price,
+                        stop_price=stop_price,
                         tif=trade.order.tif,
                         status='Filled',  # Must be filled if we're getting execution
                         external_order_id=str(trade.order.orderId),

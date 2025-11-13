@@ -176,6 +176,34 @@ def run_backtest_task(args: tuple) -> TaskResult:
         print(msg, flush=True)
         worker_logger.info(msg)
         
+        # Handle pair_selection parameter if present (before creating config_data)
+        filtered_params = params.copy()  # Work with a copy
+        if 'pair_selection' in filtered_params and isinstance(filtered_params['pair_selection'], dict):
+            # Get all pairs from config
+            all_pairs = []
+            if config and 'pairs' in config:
+                all_pairs = config['pairs']
+            
+            # Filter pairs based on selection
+            pair_selection = filtered_params['pair_selection']
+            filtered_pairs = []
+            for pair in all_pairs:
+                pair_key = f"{pair[0]}/{pair[1]}"
+                # Include pair if selection is True
+                if pair_key in pair_selection and pair_selection[pair_key]:
+                    filtered_pairs.append(pair)
+                elif pair_key not in pair_selection:
+                    # If not in selection dict, include by default
+                    filtered_pairs.append(pair)
+            
+            # Remove pair_selection from params so it doesn't get passed to strategy
+            filtered_params = {k: v for k, v in filtered_params.items() if k != 'pair_selection'}
+        else:
+            # Get pairs from config if not using pair_selection
+            filtered_pairs = None
+            if config and 'pairs' in config:
+                filtered_pairs = config['pairs']
+        
         # Create strategy config
         config_data = {
             'strategy_id': f'opt_{strategy_name}',
@@ -184,17 +212,20 @@ def run_backtest_task(args: tuple) -> TaskResult:
             'enabled': True,
             'bar_timeframe': timeframe,
             'lookback_periods': lookback,
-            'parameters': params
+            'parameters': filtered_params
         }
         # Merge config first (contains pairs, etc.), then params (params override config for optimization)
         # This ensures pairs from config are preserved, but param values override defaults
         if config:
             config_data.update(config)
         # Params come last so optimization parameters override any defaults in config
-        config_data.update(params)
+        config_data.update(filtered_params)
         
-        # Ensure pairs is preserved (it's in config, not params)
-        if 'pairs' not in config_data and config and 'pairs' in config:
+        # Set filtered pairs if we have them
+        if filtered_pairs is not None:
+            config_data['pairs'] = filtered_pairs
+        # Ensure pairs is preserved if not already set
+        elif 'pairs' not in config_data and config and 'pairs' in config:
             config_data['pairs'] = config['pairs']
         
         print("WORKER: Creating strategy config...", flush=True)

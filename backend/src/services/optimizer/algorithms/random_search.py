@@ -66,7 +66,15 @@ class RandomSearchOptimizer(BaseOptimizer):
                 params[param_name] = random.choice(param_values)
             
             # Convert to hashable tuple for duplicate checking
-            params_tuple = tuple(sorted(params.items()))
+            # Handle dict values (like pair_selection) by converting to sorted tuple
+            def make_hashable(value):
+                if isinstance(value, dict):
+                    return tuple(sorted(value.items()))
+                return value
+            
+            params_tuple = tuple(sorted(
+                (k, make_hashable(v)) for k, v in params.items()
+            ))
             
             # Skip if already tested
             if params_tuple in self.tested_combinations:

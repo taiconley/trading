@@ -71,7 +71,7 @@ docker compose exec backend-api python -m src.services.optimizer.main optimize \
   --lookback 350 \
   --algorithm bayesian \
   --objective sharpe_ratio \
-  --max-iterations 100 \
+  --max-iterations 3 \
   --workers 22 \
   --batch-size 1 \
   --params "$PARAMS" \

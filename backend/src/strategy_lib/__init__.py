@@ -35,6 +35,7 @@ from .registry import (
 from . import sma_cross
 from . import mean_revert
 from . import pairs_trade
+from . import pairs_trade_adaptive
 
 __all__ = [
     # Base classes and types

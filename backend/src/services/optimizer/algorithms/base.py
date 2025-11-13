@@ -31,9 +31,27 @@ class ParameterSpace:
                     raise ValueError(
                         f"Parameter {param_name} range tuple must be (start, stop, step)"
                     )
+            elif isinstance(param_range, dict):
+                # Special handling for pair_selection: dict of pair_key -> [True, False]
+                if param_name == "pair_selection":
+                    if not param_range:
+                        raise ValueError(f"Parameter {param_name} has empty selection dict")
+                    for pair_key, choices in param_range.items():
+                        if not isinstance(choices, list) or not choices:
+                            raise ValueError(
+                                f"Parameter {param_name}[{pair_key}] must be a non-empty list"
+                            )
+                        if not all(isinstance(c, bool) for c in choices):
+                            raise ValueError(
+                                f"Parameter {param_name}[{pair_key}] must contain only booleans"
+                            )
+                else:
+                    raise ValueError(
+                        f"Parameter {param_name} dict type only supported for 'pair_selection'"
+                    )
             else:
                 raise ValueError(
-                    f"Parameter {param_name} must be list or (start, stop, step) tuple"
+                    f"Parameter {param_name} must be list, (start, stop, step) tuple, or dict (for pair_selection)"
                 )
     
     def expand_ranges(self) -> Dict[str, List[Any]]:
@@ -41,6 +59,7 @@ class ParameterSpace:
         Expand all ranges to lists of values.
         
         Converts (start, stop, step) tuples to explicit lists.
+        For pair_selection dict, expands to list of selection dicts.
         """
         expanded = {}
         for param_name, param_range in self.ranges.items():
@@ -60,6 +79,17 @@ class ParameterSpace:
                 else:
                     # Integer range
                     expanded[param_name] = list(range(start, stop + 1, step))
+            elif isinstance(param_range, dict) and param_name == "pair_selection":
+                # For pair_selection, we need to generate all combinations of True/False for each pair
+                # This creates a list of selection dicts, one for each combination
+                import itertools
+                pair_keys = list(param_range.keys())
+                choice_lists = [param_range[key] for key in pair_keys]
+                combinations = list(itertools.product(*choice_lists))
+                expanded[param_name] = [
+                    {pair_keys[i]: choice for i, choice in enumerate(combo)}
+                    for combo in combinations
+                ]
             else:
                 raise ValueError(f"Invalid parameter range for {param_name}")
         return expanded

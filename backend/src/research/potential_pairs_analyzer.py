@@ -642,7 +642,9 @@ def main(args: Optional[Sequence[str]] = None) -> None:
         for symbol in missing_symbols:
             profile_map.pop(symbol, None)
 
-    symbols = sorted(symbol_data_map.keys())
+    # Use symbols in original order (from data map) rather than alphabetical
+    # This avoids bias where pairs with alphabetically first symbols appear more frequently
+    symbols = list(symbol_data_map.keys())
     combinations = list(itertools.combinations(symbols, 2))
 
     if namespace.max_pairs is not None:

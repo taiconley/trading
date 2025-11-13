@@ -84,8 +84,14 @@ class BayesianOptimizer(BaseOptimizer):
         params = {}
         
         for param_name, param_values in self.expanded_ranges.items():
+            # Special handling for pair_selection
+            if param_name == "pair_selection":
+                # param_values is a list of selection dicts
+                # We need to suggest one of them
+                selected_dict = trial.suggest_categorical(param_name, param_values)
+                params[param_name] = selected_dict
             # Check if parameter is numeric
-            if all(isinstance(v, (int, float)) for v in param_values):
+            elif all(isinstance(v, (int, float)) for v in param_values):
                 # Determine if integer or float
                 if all(isinstance(v, int) for v in param_values):
                     # Integer parameter
