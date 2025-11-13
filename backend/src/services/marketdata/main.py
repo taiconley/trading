@@ -32,6 +32,7 @@ from common.models import WatchlistEntry, Tick, Symbol, HealthStatus, Candle
 from common.logging import configure_service_logging, log_market_data_event, log_system_event
 from common.notify import listen_for_watchlist_updates, get_notification_manager, initialize_notifications
 from common.sync_status import update_sync_status
+from sqlalchemy.dialects.postgresql import insert
 from tws_bridge.ib_client import create_ib_client
 from tws_bridge.client_ids import allocate_service_client_id, heartbeat_service_client_id, release_service_client_id
 
@@ -667,7 +668,7 @@ class MarketDataService:
         """Store a bar to the database."""
         try:
             def _store_candle(session):
-                candle = Candle(
+                stmt = insert(Candle).values(
                     symbol=symbol,
                     tf="5 secs",
                     ts=bar_data["timestamp"],
@@ -677,9 +678,19 @@ class MarketDataService:
                     close=bar_data["close"],
                     volume=bar_data["volume"]
                 )
-                session.add(candle)
+                update_cols = {
+                    "open": bar_data["open"],
+                    "high": bar_data["high"],
+                    "low": bar_data["low"],
+                    "close": bar_data["close"],
+                    "volume": bar_data["volume"]
+                }
+                on_conflict_stmt = stmt.on_conflict_do_update(
+                    index_elements=['symbol', 'tf', 'ts'],
+                    set_=update_cols
+                )
+                session.execute(on_conflict_stmt)
                 session.commit()
-                return candle
             
             await asyncio.get_event_loop().run_in_executor(
                 None, lambda: execute_with_retry(_store_candle)
