@@ -1,6 +1,9 @@
 #!/bin/bash
 # Add 20 tickers (10 pairs) to watchlist
 
+# Change to project root directory (where compose.yaml is located)
+cd "$(dirname "$0")/.." || exit 1
+
 echo "Adding 20 tickers to watchlist..."
 
 TICKERS=(

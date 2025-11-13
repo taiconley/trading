@@ -2,6 +2,9 @@
 # Optimizer command for new pairs from notes.txt (lines 150-162)
 # Date range: 10/22/25 - 11/10/25 (note: optimizer uses all available data, filter in DB if needed)
 
+# Change to project root directory (where compose.yaml is located)
+cd "$(dirname "$0")/.." || exit 1
+
 # Unique symbols extracted from pairs (sorted alphabetically)
 SYMBOLS="ABR,ACA,ACT,ADPT,AHCO,AIN,AMN,ANDE,ANET,AORT,CORT,DUK,ESE,GRPN,IBEX,KTB,LYEL,MGY"
 

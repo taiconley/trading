@@ -1,6 +1,9 @@
 #!/bin/bash
 # Test script to verify order placement after market hours
 
+# Change to project root directory (where compose.yaml is located)
+cd "$(dirname "$0")/.." || exit 1
+
 echo "=========================================="
 echo "   ORDER PLACEMENT TEST (After Hours)"
 echo "=========================================="

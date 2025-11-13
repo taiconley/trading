@@ -127,23 +127,6 @@ options:
   --verbose             Enable debug logging.
 
 
-Service is running. Summary:
-Problem resolved
-Identified the issue: The historical_job_chunks table was missing, causing the service to crash on startup.
-Found the migration: Migration b1f92cd19e5c exists to create the historical job tables, but it wasn’t applied.
-Applied the migration: Ran alembic upgrade b1f92cd19e5c which created:
-historical_jobs table
-historical_job_chunks table
-historical_coverage table
-Restarted the service: The backend-historical service is running without errors.
-Note about migration heads
-There are two migration heads in your Alembic chain:
-b1f92cd19e5c (historical job tables)
-1b68dceab27 (pairs analysis table)
-Both branch from 84403efd8a90. This won’t affect current functionality, but to avoid confusion later you may want to create a merge migration. For now, you can upgrade to specific revisions as needed, or upgrade both heads separately.
-The immediate issue is resolved, and the service should work normally.
-
-
 
 run potentail_pairs_analyzer
 docker compose exec backend-api python -m src.research.potential_pairs_analyzer \
@@ -162,19 +145,20 @@ docker compose exec backend-api python -m src.research.verify_statistics
 run top pairs analyzer
 docker compose exec backend-api python -m src.research.top_pairs_analyzer
 
-potential pairs:
+================================================================================
+SUMMARY TABLE
+================================================================================
 Rank   Pair                 Coint Stat   Coint p    ADF Stat     ADF p      Half-Life  Sharpe     Trades  
 --------------------------------------------------------------------------------------------------------------
-1      AMN/CORT             -5.30        0.0000     -5.29        0.0000     7.5d       4.0255     8       
-2      ACA/KTB              -5.52        0.0000     -5.51        0.0000     6.6d       3.7447     8       
-3      ANET/AORT            -4.39        0.0018     -5.24        0.0000     7.3d       3.5592     9       
-4      ANDE/LYEL            -5.27        0.0001     -5.27        0.0000     6.8d       3.8695     7       
-5      ABR/GRPN             -4.48        0.0013     -4.48        0.0002     9.5d       3.6794     9       
-6      ANDE/PM              -4.39        0.0018     -4.39        0.0003     9.5d       3.9680     8       
-7      AHCO/MGY             -5.32        0.0000     -5.31        0.0000     6.8d       3.5617     7       
-8      AIN/ESE              -4.60        0.0008     -4.60        0.0001     8.9d       3.6391     8       
-9      ADPT/IBEX            -5.70        0.0000     -5.99        N/A        5.9d       3.4970     6       
-10     ACT/DUK              -4.55        0.0010     -4.38        0.0003     9.4d       4.0833     7       
+1      PG/MUSA              -4.42        0.0016     -4.42        0.0003     7.7d       4.0319     9       
+2      AMN/CORT             -5.30        0.0000     -5.29        0.0000     7.5d       4.0255     8       
+3      ACA/KTB              -5.52        0.0000     -5.51        0.0000     6.6d       3.7447     8       
+4      FITB/TMHC            -4.50        0.0012     -5.43        0.0000     6.3d       3.6745     8       
+5      ANET/AORT            -4.39        0.0018     -5.24        0.0000     7.3d       3.5592     9       
+6      ANDE/LYEL            -5.27        0.0001     -5.27        0.0000     6.8d       3.8695     7       
+7      ABR/GRPN             -4.48        0.0013     -4.48        0.0002     9.5d       3.6794     9       
+8      D/SPXC               -5.17        0.0001     -5.17        0.0000     7.4d       3.2735     9       
+10     AHCO/MGY             -5.32        0.0000     -5.31        0.0000     6.8d       3.5617     7       
 
 
 docker compose exec backend-api python -m src.services.optimizer.main optimize \

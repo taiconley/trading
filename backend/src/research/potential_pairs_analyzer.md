@@ -21,6 +21,7 @@ docker compose exec backend-api python -m src.research.potential_pairs_analyzer 
   --start-date 2023-09-25T00:00:00Z \
   --end-date 2025-10-29T23:59:59Z \
   --min-bars 60 \
+  --min-dollar-volume 10000000 \
   --min-trades 1 \
   --max-symbols 2303 \
   --max-pairs 250000 \

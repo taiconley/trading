@@ -1,6 +1,9 @@
 #!/bin/bash
 # Real-time Strategy Monitoring Script
 
+# Change to project root directory (where compose.yaml is located)
+cd "$(dirname "$0")/.." || exit 1
+
 echo "========================================"
 echo "   PAIRS TRADING STRATEGY MONITOR"
 echo "========================================"

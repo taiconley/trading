@@ -1,6 +1,9 @@
 #!/bin/bash
 # Optimize Pairs_Trading_Adaptive strategy WITH pair selection optimization
 
+# Change to project root directory (where compose.yaml is located)
+cd "$(dirname "$0")/.." || exit 1
+
 docker compose exec backend-api python -m src.services.optimizer.main optimize \
   --strategy Pairs_Trading_Adaptive \
   --symbols ABR,ACA,ACT,ADPT,AIN,AHCO,AMN,ANDE,ANET,AORT,CORT,DUK,ESE,GRPN,IBEX,KTB,LYEL,MGY \
