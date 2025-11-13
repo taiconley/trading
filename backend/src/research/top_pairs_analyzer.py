@@ -10,6 +10,8 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
+import csv
 import logging
 import numpy as np
 from decimal import Decimal
@@ -300,24 +302,118 @@ def format_pair_summary(pair: PairsAnalysis, rank: int) -> str:
     return "\n".join(lines)
 
 
+def export_to_csv(pairs: List[PairsAnalysis], filename: str):
+    """Export pairs to CSV file."""
+    with open(filename, 'w', newline='') as csvfile:
+        fieldnames = [
+            'rank', 'symbol_a', 'symbol_b', 'pair', 'timeframe',
+            'coint_statistic', 'coint_pvalue', 'adf_statistic', 'adf_pvalue',
+            'half_life_days', 'sharpe_ratio', 'profit_factor', 'win_rate',
+            'total_trades', 'max_drawdown', 'avg_holding_minutes',
+            'hedge_ratio', 'spread_mean', 'spread_std',
+            'avg_dollar_volume_a', 'avg_dollar_volume_b',
+            'window_start', 'window_end', 'sample_bars'
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for rank, pair in enumerate(pairs, 1):
+            half_life_days = float(pair.half_life_minutes) / 1440.0 if pair.half_life_minutes else None
+            writer.writerow({
+                'rank': rank,
+                'symbol_a': pair.symbol_a,
+                'symbol_b': pair.symbol_b,
+                'pair': f"{pair.symbol_a}/{pair.symbol_b}",
+                'timeframe': pair.timeframe,
+                'coint_statistic': float(pair.coint_statistic) if pair.coint_statistic else None,
+                'coint_pvalue': float(pair.coint_pvalue) if pair.coint_pvalue else None,
+                'adf_statistic': float(pair.adf_statistic) if pair.adf_statistic else None,
+                'adf_pvalue': float(pair.adf_pvalue) if pair.adf_pvalue else None,
+                'half_life_days': half_life_days,
+                'sharpe_ratio': float(pair.pair_sharpe) if pair.pair_sharpe else None,
+                'profit_factor': float(pair.pair_profit_factor) if pair.pair_profit_factor else None,
+                'win_rate': float(pair.pair_win_rate) if pair.pair_win_rate else None,
+                'total_trades': pair.pair_total_trades,
+                'max_drawdown': float(pair.pair_max_drawdown) if pair.pair_max_drawdown else None,
+                'avg_holding_minutes': float(pair.pair_avg_holding_minutes) if pair.pair_avg_holding_minutes else None,
+                'hedge_ratio': float(pair.hedge_ratio) if pair.hedge_ratio else None,
+                'spread_mean': float(pair.spread_mean) if pair.spread_mean else None,
+                'spread_std': float(pair.spread_std) if pair.spread_std else None,
+                'avg_dollar_volume_a': float(pair.avg_dollar_volume_a) if pair.avg_dollar_volume_a else None,
+                'avg_dollar_volume_b': float(pair.avg_dollar_volume_b) if pair.avg_dollar_volume_b else None,
+                'window_start': pair.window_start.isoformat() if pair.window_start else None,
+                'window_end': pair.window_end.isoformat() if pair.window_end else None,
+                'sample_bars': pair.sample_bars,
+            })
+
+
 def main():
     """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description="Analyze and rank potential pairs from the potential_pairs table"
+    )
+    parser.add_argument(
+        '--limit',
+        type=int,
+        default=10,
+        help='Number of top pairs to return (default: 10)'
+    )
+    parser.add_argument(
+        '--min-trades',
+        type=int,
+        default=5,
+        help='Minimum number of trades required (default: 5)'
+    )
+    parser.add_argument(
+        '--csv',
+        type=str,
+        default=None,
+        help='Output results to CSV file (optional)'
+    )
+    parser.add_argument(
+        '--quiet',
+        action='store_true',
+        help='Suppress detailed output, only show summary table'
+    )
+    
+    args = parser.parse_args()
+    
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )
     
-    LOGGER.info("Analyzing top pairs from potential_pairs table...")
+    LOGGER.info(f"Analyzing top {args.limit} pairs from potential_pairs table...")
     
-    # Get top 10 pairs
-    top_pairs = get_top_pairs(limit=10, min_trades=5)
+    # Get top pairs
+    top_pairs = get_top_pairs(limit=args.limit, min_trades=args.min_trades)
     
     if not top_pairs:
         LOGGER.warning("No pairs found matching criteria.")
         return
     
+    # Export to CSV if requested
+    if args.csv:
+        export_to_csv(top_pairs, args.csv)
+        LOGGER.info(f"Results exported to {args.csv}")
+    
+    if args.quiet:
+        # Only show summary table
+        print(f"{'Rank':<6} {'Pair':<20} {'Coint Stat':<12} {'Coint p':<10} {'ADF Stat':<12} {'ADF p':<10} {'Half-Life':<10} {'Sharpe':<10} {'Trades':<8}")
+        print("-" * 110)
+        for rank, pair in enumerate(top_pairs, 1):
+            coint_stat = f"{float(pair.coint_statistic):.2f}" if pair.coint_statistic else "N/A"
+            coint_p = f"{float(pair.coint_pvalue):.4f}" if pair.coint_pvalue else "N/A"
+            adf_stat = f"{float(pair.adf_statistic):.2f}" if pair.adf_statistic else "N/A"
+            adf_p = f"{float(pair.adf_pvalue):.4f}" if pair.adf_pvalue else "N/A"
+            sharpe = f"{float(pair.pair_sharpe):.4f}" if pair.pair_sharpe else "N/A"
+            half_life = f"{float(pair.half_life_minutes)/1440:.1f}d" if pair.half_life_minutes else "N/A"
+            pair_str = f"{pair.symbol_a}/{pair.symbol_b}"
+            print(f"{rank:<6} {pair_str:<20} {coint_stat:<12} {coint_p:<10} {adf_stat:<12} {adf_p:<10} {half_life:<10} {sharpe:<10} {pair.pair_total_trades:<8}")
+        return
+    
     print("\n" + "="*80)
-    print("TOP 10 POTENTIAL PAIRS FOR PAIRS TRADING STRATEGY")
+    print(f"TOP {args.limit} POTENTIAL PAIRS FOR PAIRS TRADING STRATEGY")
     print("="*80)
     print(f"\nTotal pairs analyzed: {len(top_pairs)}")
     print("\nRanked by composite score prioritizing:")
@@ -334,7 +430,7 @@ def main():
     print("  - ADF p-value ≤ 0.10 (statistically significant)")
     print("  - Half-life ≤ 14 days (filters slow mean reversion)")
     print("  - Sharpe ratio ≥ 2.0 (conservative threshold)")
-    print("  - Minimum 5 trades (statistical significance)")
+    print(f"  - Minimum {args.min_trades} trades (statistical significance)")
     
     for rank, pair in enumerate(top_pairs, 1):
         print(format_pair_summary(pair, rank))
@@ -355,6 +451,9 @@ def main():
         pair_str = f"{pair.symbol_a}/{pair.symbol_b}"
         
         print(f"{rank:<6} {pair_str:<20} {coint_stat:<12} {coint_p:<10} {adf_stat:<12} {adf_p:<10} {half_life:<10} {sharpe:<10} {pair.pair_total_trades:<8}")
+    
+    if args.csv:
+        print(f"\n✅ Results exported to: {args.csv}")
     
     print("\n" + "="*80)
     print("Next Steps:")
