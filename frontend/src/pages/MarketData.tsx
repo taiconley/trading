@@ -211,7 +211,9 @@ function SymbolCard({ symbol, onRemove }: SymbolCardProps) {
 
   useEffect(() => {
     // Connect to WebSocket for real-time updates
-    const wsUrl = 'ws://localhost:8002/ws';
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const host = window.location.host;
+    const wsUrl = `${protocol}//${host}/ws/market`;
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -223,7 +225,6 @@ function SymbolCard({ symbol, onRemove }: SymbolCardProps) {
       try {
         const message = JSON.parse(event.data);
         
-        // Handle tick updates for this symbol
         if (message.type === 'tick_update' && message.data.symbol === symbol) {
           setTicks({
             symbol: message.data.symbol,
@@ -234,6 +235,18 @@ function SymbolCard({ symbol, onRemove }: SymbolCardProps) {
             ask_size: message.data.ask_size,
             last_size: message.data.last_size,
             timestamp: message.data.timestamp
+          });
+        } else if (message.type === 'snapshot' && message.data[symbol]) {
+          const snapshot = message.data[symbol];
+          setTicks({
+            symbol,
+            bid: snapshot.bid,
+            ask: snapshot.ask,
+            last: snapshot.last,
+            bid_size: snapshot.bid_size,
+            ask_size: snapshot.ask_size,
+            last_size: snapshot.last_size,
+            timestamp: snapshot.timestamp
           });
         }
       } catch (err) {
@@ -310,4 +323,3 @@ function SymbolCard({ symbol, onRemove }: SymbolCardProps) {
     </div>
   );
 }
-

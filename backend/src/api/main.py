@@ -16,8 +16,10 @@ Service Ports:
 import httpx
 import asyncio
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable, Awaitable, Set
+from contextlib import suppress
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Query, Body
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -32,10 +34,16 @@ from common.models import (
     OptimizationRun, OptimizationResult, ParameterSensitivity,
     Signal, Execution, Order
 )
+from common.sync_status import list_sync_statuses, update_sync_status
 
 # Initialize logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+try:
+    import websockets  # type: ignore
+except ImportError:
+    websockets = None
 
 # Service URLs (internal Docker network)
 SERVICES = {
@@ -262,6 +270,13 @@ async def circuit_breaker_status():
     except Exception as e:
         logger.error(f"Error getting circuit breaker status: {e}")
         return {"error": str(e)}
+
+
+@app.get("/api/sync-status")
+async def get_sync_status():
+    """Return end-to-end data synchronization metrics."""
+    statuses = await run_in_threadpool(list_sync_statuses)
+    return {"statuses": statuses}
 
 
 # ============================================================================
@@ -1096,6 +1111,141 @@ active_websockets: Dict[str, List[WebSocket]] = {
     "orders": []
 }
 
+SYNC_CATEGORY_MAP = {
+    "account_value": "account_values",
+    "position": "positions",
+    "pnl": "pnl",
+    "tick_update": "market_ticks",
+    "bar_update": "market_bars",
+    "order_update": "orders"
+}
+
+
+async def _record_frontend_sync(category: str):
+    """Persist the latest time a category reached the frontend."""
+    timestamp = datetime.now(timezone.utc)
+    await run_in_threadpool(lambda: update_sync_status(category, frontend_ts=timestamp))
+
+
+async def _record_market_frontend_sync(event: Dict[str, Any]):
+    event_type = event.get("type")
+    category = SYNC_CATEGORY_MAP.get(event_type)
+    if category:
+        await _record_frontend_sync(category)
+
+
+async def _record_order_frontend_sync():
+    await _record_frontend_sync("orders")
+
+
+async def _market_transform(message: str) -> Optional[Dict[str, Any]]:
+    event = json.loads(message)
+    await _record_market_frontend_sync(event)
+    return event
+
+
+async def _order_transform(message: str) -> Optional[Dict[str, Any]]:
+    event = json.loads(message)
+    await _record_order_frontend_sync()
+    return event
+
+
+class BackendWebSocketBridge:
+    """Maintain a single upstream connection and fan out to frontend clients."""
+    
+    def __init__(
+        self,
+        name: str,
+        backend_url: str,
+        transform: Callable[[str], Awaitable[Optional[Dict[str, Any]]]],
+        reconnect_delay: float = 2.0
+    ):
+        self.name = name
+        self.backend_url = backend_url
+        self.transform = transform
+        self.reconnect_delay = reconnect_delay
+        self.clients: Set[WebSocket] = set()
+        self.backend_task: Optional[asyncio.Task] = None
+        self.backend_ws = None
+        self.lock = asyncio.Lock()
+    
+    async def register(self, websocket: WebSocket):
+        self.clients.add(websocket)
+        await self._ensure_backend()
+    
+    async def unregister(self, websocket: WebSocket):
+        self.clients.discard(websocket)
+        if not self.clients:
+            await self._stop_backend()
+    
+    async def _ensure_backend(self):
+        if not websockets:
+            return
+        async with self.lock:
+            if self.backend_task or not self.clients:
+                return
+            self.backend_task = asyncio.create_task(self._run_backend())
+    
+    async def _stop_backend(self):
+        async with self.lock:
+            if self.backend_ws:
+                with suppress(Exception):
+                    await self.backend_ws.close(code=1000, reason="no downstream clients")
+                self.backend_ws = None
+            if self.backend_task:
+                self.backend_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await self.backend_task
+                self.backend_task = None
+    
+    async def _run_backend(self):
+        while self.clients:
+            try:
+                async with websockets.connect(self.backend_url) as backend_ws:
+                    self.backend_ws = backend_ws
+                    logger.info("Backend WebSocket bridge %s connected to %s", self.name, self.backend_url)
+                    async for message in backend_ws:
+                        payload = await self.transform(message)
+                        if payload is None:
+                            continue
+                        await self._broadcast(payload)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                if self.clients:
+                    logger.warning("%s WebSocket bridge error: %s", self.name, e)
+                    await asyncio.sleep(self.reconnect_delay)
+                else:
+                    break
+            finally:
+                self.backend_ws = None
+        self.backend_task = None
+    
+    async def _broadcast(self, payload: Dict[str, Any]):
+        if not self.clients:
+            return
+        disconnected = []
+        for client in list(self.clients):
+            try:
+                await client.send_json(payload)
+            except Exception:
+                disconnected.append(client)
+        for client in disconnected:
+            self.clients.discard(client)
+
+
+market_ws_bridge = BackendWebSocketBridge(
+    name="market",
+    backend_url="ws://backend-marketdata:8002/ws",
+    transform=_market_transform
+)
+
+order_ws_bridge = BackendWebSocketBridge(
+    name="orders",
+    backend_url="ws://backend-trader:8004/ws",
+    transform=_order_transform
+)
+
 
 @app.websocket("/ws/account")
 async def websocket_account(websocket: WebSocket):
@@ -1131,6 +1281,7 @@ async def websocket_account(websocket: WebSocket):
             try:
                 stats = await proxy_get("account", "/account/stats")
                 await websocket.send_json(stats)
+                await _record_frontend_sync("account_values")
             except Exception as e:
                 logger.error(f"Error sending initial stats: {e}")
             
@@ -1143,6 +1294,9 @@ async def websocket_account(websocket: WebSocket):
                     
                     # Forward to frontend
                     await websocket.send_json(event)
+                    event_category = SYNC_CATEGORY_MAP.get(event.get('type'))
+                    if event_category:
+                        await _record_frontend_sync(event_category)
                     
                     # If this is an account_value, position, or pnl event, also send updated stats
                     if event.get('type') in ['account_value', 'position', 'pnl']:
@@ -1150,6 +1304,7 @@ async def websocket_account(websocket: WebSocket):
                         try:
                             stats = await proxy_get("account", "/account/stats")
                             await websocket.send_json(stats)
+                            await _record_frontend_sync("account_values")
                         except Exception as e:
                             logger.debug(f"Error getting stats after event: {e}")
                     
@@ -1175,6 +1330,7 @@ async def websocket_account(websocket: WebSocket):
                 try:
                     stats = await proxy_get("account", "/account/stats")
                     await websocket.send_json(stats)
+                    await _record_frontend_sync("account_values")
                 except Exception as e:
                     logger.error(f"Error in account WebSocket polling fallback: {e}")
                 await asyncio.sleep(2)
@@ -1189,35 +1345,83 @@ async def websocket_market(websocket: WebSocket):
     await websocket.accept()
     active_websockets["market"].append(websocket)
     
-    try:
-        while True:
-            # Poll recent ticks from database
-            from sqlalchemy import desc
-            
-            with get_db_session() as db:
-                watchlist = db.query(WatchlistEntry).all()
-                market_data = {}
+    async def polling_fallback():
+        """Fallback to DB polling if websocket proxying fails."""
+        try:
+            while True:
+                from sqlalchemy import desc
                 
-                for watch in watchlist[:10]:  # Limit to 10 symbols
-                    latest = db.query(Tick).filter(
-                        Tick.symbol == watch.symbol
-                    ).order_by(desc(Tick.ts)).first()
+                with get_db_session() as db:
+                    watchlist = db.query(WatchlistEntry).all()
+                    market_data = {}
                     
-                    if latest:
-                        market_data[watch.symbol] = {
-                            "bid": float(latest.bid) if latest.bid else None,
-                            "ask": float(latest.ask) if latest.ask else None,
-                            "last": float(latest.last) if latest.last else None,
-                            "timestamp": latest.ts.isoformat()
-                        }
+                    for watch in watchlist[:10]:
+                        latest = db.query(Tick).filter(
+                            Tick.symbol == watch.symbol
+                        ).order_by(desc(Tick.ts)).first()
+                        
+                        if latest:
+                            market_data[watch.symbol] = {
+                                "bid": float(latest.bid) if latest.bid else None,
+                                "ask": float(latest.ask) if latest.ask else None,
+                                "last": float(latest.last) if latest.last else None,
+                                "timestamp": latest.ts.isoformat()
+                            }
+                    
+                    if market_data:
+                        await websocket.send_json({
+                            "type": "snapshot",
+                            "data": market_data
+                        })
+                        await _record_frontend_sync("market_ticks")
                 
-                if market_data:
-                    await websocket.send_json(market_data)
-            
-            await asyncio.sleep(1)  # Update every second
-            
+                await asyncio.sleep(1)
+        except WebSocketDisconnect:
+            pass
+    
+    async def send_initial_snapshot():
+        from sqlalchemy import desc
+        with get_db_session() as db:
+            watchlist = db.query(WatchlistEntry).all()
+            market_data = {}
+            for watch in watchlist[:10]:
+                latest = db.query(Tick).filter(
+                    Tick.symbol == watch.symbol
+                ).order_by(desc(Tick.ts)).first()
+                if latest:
+                    market_data[watch.symbol] = {
+                        "bid": float(latest.bid) if latest.bid else None,
+                        "ask": float(latest.ask) if latest.ask else None,
+                        "last": float(latest.last) if latest.last else None,
+                        "timestamp": latest.ts.isoformat()
+                    }
+            if market_data:
+                await websocket.send_json({
+                    "type": "snapshot",
+                    "data": market_data
+                })
+                await _record_frontend_sync("market_ticks")
+    
+    bridge_registered = False
+    try:
+        if not websockets:
+            logger.error("websockets library not available for market data proxy; using polling fallback")
+            await polling_fallback()
+            return
+        
+        await market_ws_bridge.register(websocket)
+        bridge_registered = True
+        await send_initial_snapshot()
+        
+        while True:
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        active_websockets["market"].remove(websocket)
+        pass
+    finally:
+        if bridge_registered:
+            await market_ws_bridge.unregister(websocket)
+        if websocket in active_websockets["market"]:
+            active_websockets["market"].remove(websocket)
 
 
 @app.websocket("/ws/orders")
@@ -1226,35 +1430,75 @@ async def websocket_orders(websocket: WebSocket):
     await websocket.accept()
     active_websockets["orders"].append(websocket)
     
+    async def polling_fallback():
+        try:
+            while True:
+                from sqlalchemy import desc
+                with get_db_session() as db:
+                    recent_orders = db.query(Order).order_by(desc(Order.updated_at)).limit(20).all()
+                    orders_data = {
+                        "type": "orders_snapshot",
+                        "data": [
+                            {
+                                "id": o.id,
+                                "symbol": o.symbol,
+                                "side": o.side,
+                                "qty": float(o.qty),
+                                "order_type": o.order_type,
+                                "status": o.status,
+                                "updated_at": o.updated_at.isoformat()
+                            }
+                            for o in recent_orders
+                        ]
+                    }
+                    await websocket.send_json(orders_data)
+                    await _record_order_frontend_sync()
+                await asyncio.sleep(2)
+        except WebSocketDisconnect:
+            pass
+    
+    async def send_initial_orders():
+        from sqlalchemy import desc
+        with get_db_session() as db:
+            recent_orders = db.query(Order).order_by(desc(Order.updated_at)).limit(20).all()
+            payload = {
+                "type": "orders_snapshot",
+                "data": [
+                    {
+                        "id": o.id,
+                        "symbol": o.symbol,
+                        "side": o.side,
+                        "qty": float(o.qty),
+                        "order_type": o.order_type,
+                        "status": o.status,
+                        "updated_at": o.updated_at.isoformat()
+                    }
+                    for o in recent_orders
+                ]
+            }
+            await websocket.send_json(payload)
+            await _record_order_frontend_sync()
+    
+    bridge_registered = False
     try:
+        if not websockets:
+            logger.error("websockets library not available for order proxy; using polling fallback")
+            await polling_fallback()
+            return
+        
+        await order_ws_bridge.register(websocket)
+        bridge_registered = True
+        await send_initial_orders()
+        
         while True:
-            # Poll recent orders
-            from sqlalchemy import desc
-            
-            with get_db_session() as db:
-                recent_orders = db.query(Order).order_by(desc(Order.updated_at)).limit(20).all()
-                
-                orders_data = {
-                    "orders": [
-                        {
-                            "id": o.id,
-                            "symbol": o.symbol,
-                            "side": o.side,
-                            "qty": float(o.qty),
-                            "order_type": o.order_type,
-                            "status": o.status,
-                            "updated_at": o.updated_at.isoformat()
-                        }
-                        for o in recent_orders
-                    ]
-                }
-                
-                await websocket.send_json(orders_data)
-            
-            await asyncio.sleep(2)  # Update every 2 seconds
-            
+            await websocket.receive_text()
     except WebSocketDisconnect:
-        active_websockets["orders"].remove(websocket)
+        pass
+    finally:
+        if bridge_registered:
+            await order_ws_bridge.unregister(websocket)
+        if websocket in active_websockets["orders"]:
+            active_websockets["orders"].remove(websocket)
 
 
 # ============================================================================

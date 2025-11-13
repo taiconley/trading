@@ -45,6 +45,11 @@ class ApiClient {
     return response.data;
   }
 
+  async getSyncStatus() {
+    const response = await this.client.get('/api/sync-status');
+    return response.data;
+  }
+
   // ============================================================================
   // Account & Positions
   // ============================================================================

@@ -486,6 +486,7 @@ class TraderService:
             logger.info(f"Order status update: {ib_order_id} -> {order_status}")
             
             # Update or create order in database
+            payload_data = None
             with self.db_session_factory() as session:
                 db_order = session.query(Order).filter(
                     Order.external_order_id == str(ib_order_id)
@@ -497,6 +498,7 @@ class TraderService:
                     db_order.status = order_status
                     db_order.updated_at = datetime.now(timezone.utc)
                     session.commit()
+                    session.refresh(db_order)
                 else:
                     # Auto-create external order (placed directly in TWS)
                     print(f"   ➕ Creating NEW order in database: {trade.contract.symbol} {trade.order.action} {trade.order.totalQuantity}")
@@ -552,23 +554,35 @@ class TraderService:
                     )
                     session.add(db_order)
                     session.commit()
+                    session.refresh(db_order)
                     print(f"   ✅ Order saved to database! ID: {db_order.id}")
                     logger.info(f"✅ Created external order: {symbol} {trade.order.action} {trade.order.totalQuantity}")
                 
-                # Broadcast update via WebSocket (run in background)
-                asyncio.create_task(self.websocket_manager.broadcast({
-                    'type': 'order_status',
+                payload_data = {
+                    'type': 'order_update',
                     'data': {
-                        'order_id': db_order.id,
+                        'order_id': db_order.id if db_order else None,
                         'external_order_id': str(ib_order_id),
+                        'symbol': db_order.symbol if db_order else trade.contract.symbol,
+                        'side': db_order.side if db_order else trade.order.action,
                         'status': order_status,
-                        'symbol': db_order.symbol,
-                        'side': db_order.side,
-                        'qty': float(db_order.qty),
-                        'updated_at': db_order.updated_at.isoformat()
+                        'qty': float(db_order.qty) if db_order else float(trade.order.totalQuantity),
+                        'filled': float(trade.orderStatus.filled or 0),
+                        'remaining': float(trade.orderStatus.remaining or 0),
+                        'avg_fill_price': float(trade.orderStatus.avgFillPrice or 0),
+                        'client_id': trade.order.clientId,
+                        'timestamp': datetime.now(timezone.utc).isoformat()
                     }
-                }))
-                print(f"   📡 Order ID {db_order.id} ready - frontend will see it on next poll (2s)")
+                }
+                print(f"   📡 Order ID {db_order.id if db_order else 'external'} ready - broadcasting update")
+            
+            event_time = datetime.now(timezone.utc)
+            update_sync_status(
+                "orders",
+                source_ts=event_time,
+                db_ts=event_time
+            )
+            self._queue_order_broadcast(payload_data)
                     
         except Exception as e:
             logger.error(f"Error handling order status update: {e}")
@@ -720,6 +734,20 @@ class TraderService:
             logger.error(f"Error handling execution: {e}")
             import traceback
             traceback.print_exc()
+
+    def _queue_order_broadcast(self, message: Optional[dict]):
+        """Send order updates to websocket clients from sync context."""
+        if not message:
+            return
+        if not self.loop or not self.loop.is_running():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.websocket_manager.broadcast(message),
+                self.loop
+            )
+        except RuntimeError as exc:
+            logger.error(f"Failed to schedule order broadcast: {exc}")
     
     async def _ensure_account_exists(self, account_id: str):
         """Ensure account exists in database, create if not exists"""
@@ -1552,10 +1580,8 @@ async def websocket_endpoint(websocket: WebSocket):
     await trader_service.websocket_manager.connect(websocket)
     try:
         while True:
-            # Keep connection alive and handle any incoming messages
-            data = await websocket.receive_text()
-            # Echo back for testing
-            await websocket.send_json({"type": "echo", "data": data})
+            # Keep connection alive; we don't expect inbound messages
+            await websocket.receive_text()
     except WebSocketDisconnect:
         trader_service.websocket_manager.disconnect(websocket)
 

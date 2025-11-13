@@ -31,6 +31,7 @@ from common.db import get_db_session, execute_with_retry, initialize_database
 from common.models import WatchlistEntry, Tick, Symbol, HealthStatus, Candle
 from common.logging import configure_service_logging, log_market_data_event, log_system_event
 from common.notify import listen_for_watchlist_updates, get_notification_manager, initialize_notifications
+from common.sync_status import update_sync_status
 from tws_bridge.ib_client import create_ib_client
 from tws_bridge.client_ids import allocate_service_client_id, heartbeat_service_client_id, release_service_client_id
 
@@ -547,6 +548,16 @@ class MarketDataService:
                 None, lambda: execute_with_retry(_store_tick)
             )
             
+            # Record sync timing (source + database)
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: update_sync_status(
+                    "market_ticks",
+                    source_ts=tick_data['ts'],
+                    db_ts=datetime.now(timezone.utc)
+                )
+            )
+            
             # Broadcast to WebSocket clients
             await self._broadcast_websocket_update({
                 "type": "tick_update",
@@ -674,6 +685,15 @@ class MarketDataService:
                 None, lambda: execute_with_retry(_store_candle)
             )
             
+            await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: update_sync_status(
+                    "market_bars",
+                    source_ts=bar_data["timestamp"],
+                    db_ts=datetime.now(timezone.utc)
+                )
+            )
+            
         except Exception as e:
             self.logger.error(f"Error storing bar to database for {symbol}: {e}")
     
@@ -683,9 +703,9 @@ class MarketDataService:
             return
         
         message = {
-            "type": "bar",
-            "symbol": symbol,
+            "type": "bar_update",
             "data": {
+                "symbol": symbol,
                 "timestamp": bar_data["timestamp"].isoformat(),
                 "open": float(bar_data["open"]),
                 "high": float(bar_data["high"]),

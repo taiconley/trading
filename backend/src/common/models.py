@@ -150,6 +150,21 @@ class HealthStatus(Base):
     )
 
 
+class DataSyncStatus(Base):
+    """Track end-to-end latency between TWS, database, and frontend."""
+    __tablename__ = 'data_sync_status'
+    
+    category = Column(String(50), primary_key=True, nullable=False)
+    source_ts = Column(DateTime(timezone=True), nullable=True)
+    db_ts = Column(DateTime(timezone=True), nullable=True)
+    frontend_ts = Column(DateTime(timezone=True), nullable=True)
+    source_to_db_ms = Column(Integer, nullable=True)
+    db_to_frontend_ms = Column(Integer, nullable=True)
+    source_to_frontend_ms = Column(Integer, nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    note = Column(String(255), nullable=True)
+
+
 class LogEntry(Base):
     """Application logs (optional database storage)."""
     __tablename__ = 'logs'

@@ -8,19 +8,22 @@ export function Overview() {
   const [account, setAccount] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [health, setHealth] = useState<any>(null);
+  const [syncStatus, setSyncStatus] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
-      const [accountData, ordersData, healthData] = await Promise.all([
+      const [accountData, ordersData, healthData, syncData] = await Promise.all([
         api.getAccountStats().catch(() => null),
         api.getOrders({ limit: 50 }).catch(() => ({ orders: [] })),
         api.getAggregateHealth().catch(() => null),
+        api.getSyncStatus().catch(() => ({ statuses: [] })),
       ]);
       
       setAccount(accountData);
       setOrders(ordersData.orders || ordersData);
       setHealth(healthData);
+      setSyncStatus(syncData.statuses || []);
       setError(null);
     } catch (err: any) {
       setError(err.message);
@@ -141,12 +144,14 @@ export function Overview() {
   useEffect(() => {
     const pollInterval = setInterval(async () => {
       try {
-        const [ordersData, healthData] = await Promise.all([
+        const [ordersData, healthData, syncData] = await Promise.all([
           api.getOrders({ limit: 50 }).catch(() => ({ orders: [] })),
           api.getAggregateHealth().catch(() => null),
+          api.getSyncStatus().catch(() => ({ statuses: [] })),
         ]);
         setOrders(ordersData.orders || ordersData);
         setHealth(healthData);
+        setSyncStatus(syncData.statuses || []);
       } catch (err: any) {
         console.error('Polling error:', err);
       }
@@ -329,6 +334,37 @@ export function Overview() {
           </div>
         </Card>
       </div>
+
+      <Card title="Data Sync Monitor">
+        {syncStatus.length === 0 ? (
+          <p className="text-sm text-slate-500">No sync data recorded yet.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead>
+                <tr className="text-left text-slate-500">
+                  <th className="py-2 pr-4 font-medium">Category</th>
+                  <th className="py-2 pr-4 font-medium">Source→DB</th>
+                  <th className="py-2 pr-4 font-medium">DB→UI</th>
+                  <th className="py-2 pr-4 font-medium">Source→UI</th>
+                  <th className="py-2 pr-4 font-medium">Last Frontend Update</th>
+                </tr>
+              </thead>
+              <tbody>
+                {syncStatus.map((status) => (
+                  <tr key={status.category} className="border-t border-slate-200">
+                    <td className="py-2 pr-4 font-semibold text-slate-800">{status.category}</td>
+                    <td className="py-2 pr-4">{formatLag(status.source_to_db_ms)}</td>
+                    <td className="py-2 pr-4">{formatLag(status.db_to_frontend_ms)}</td>
+                    <td className="py-2 pr-4">{formatLag(status.source_to_frontend_ms)}</td>
+                    <td className="py-2 pr-4">{formatTimestamp(status.frontend_ts)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
       {/* Current Positions */}
       <Card title="Current Positions">
@@ -607,4 +643,21 @@ export function Overview() {
       </Card>
     </div>
   );
+}
+
+function formatLag(ms?: number | null) {
+  if (ms === null || ms === undefined) {
+    return '—';
+  }
+  if (ms < 1000) {
+    return `${ms} ms`;
+  }
+  const seconds = (ms / 1000).toFixed(2);
+  return `${seconds}s`;
+}
+
+function formatTimestamp(ts?: string | null) {
+  if (!ts) return '—';
+  const date = new Date(ts);
+  return date.toLocaleTimeString();
 }

@@ -24,6 +24,7 @@ from common.config import get_settings
 from common.logging import setup_logging
 from common.db import get_db_session
 from common.models import AccountSummary, Position, Account, Symbol
+from common.sync_status import update_sync_status
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,18 @@ class AccountService:
             'summary_updates': 0,
             'last_update': None
         }
+
+    async def _record_sync(self, category: str, ts: Optional[datetime] = None):
+        """Persist latest sync info for account-derived data."""
+        timestamp = ts or datetime.now(timezone.utc)
+        await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: update_sync_status(
+                category,
+                source_ts=timestamp,
+                db_ts=timestamp
+            )
+        )
     
     async def start_tws_connection(self):
         """Start TWS connection in background"""
@@ -236,6 +249,8 @@ class AccountService:
                 currency=account_value.currency
             )
             
+            await self._record_sync('account_values', self.stats['last_update'])
+            
             # Broadcast to WebSocket clients
             await self.websocket_manager.broadcast({
                 'type': 'account_value',
@@ -302,6 +317,8 @@ class AccountService:
                 unrealized_pnl=unrealized_pnl
             )
             
+            await self._record_sync('positions', self.stats['last_update'])
+            
             # Broadcast to WebSocket clients
             await self.websocket_manager.broadcast({
                 'type': 'position',
@@ -336,6 +353,8 @@ class AccountService:
                 'realized_pnl': pnl.realizedPnL,
                 'timestamp': self.stats['last_update']
             }
+            
+            await self._record_sync('pnl', self.stats['last_update'])
             
             # Broadcast to WebSocket clients
             await self.websocket_manager.broadcast({
