@@ -821,24 +821,47 @@ class StrategyService:
             # Send to Trader service (same endpoint as test)
             trader_url = f"http://backend-trader:8004/orders"
             
+            max_attempts = 5
+            base_delay = 1.0
+            
             async with aiohttp.ClientSession() as session:
-                async with session.post(trader_url, json=order_request) as response:
-                    if response.status == 200:
-                        order_data = await response.json()
-                        # Response uses 'id' field, not 'order_id'
-                        order_id = order_data.get('id') or order_data.get('order_id')
-                        logger.info(
-                            f"Order placed successfully: ID={order_id}, "
-                            f"symbol={signal.symbol}, side={order_side}, "
-                            f"qty={order_request['quantity']}, type={order_type}"
+                for attempt in range(1, max_attempts + 1):
+                    try:
+                        async with session.post(trader_url, json=order_request) as response:
+                            if response.status == 200:
+                                order_data = await response.json()
+                                order_id = order_data.get('id') or order_data.get('order_id')
+                                logger.info(
+                                    f"Order placed successfully: ID={order_id}, "
+                                    f"symbol={signal.symbol}, side={order_side}, "
+                                    f"qty={order_request['quantity']}, type={order_type}"
+                                )
+                                return
+                            
+                            error_text = await response.text()
+                            is_retryable = response.status >= 500 and attempt < max_attempts
+                            log_fn = logger.warning if is_retryable else logger.error
+                            log_fn(
+                                f"Failed to place order: HTTP {response.status} - {error_text}. "
+                                f"Request: symbol={signal.symbol}, side={order_side}, "
+                                f"quantity={order_request['quantity']}, order_type={order_type} "
+                                f"(attempt {attempt}/{max_attempts})"
+                            )
+                            
+                            if is_retryable:
+                                delay = base_delay * (2 ** (attempt - 1))
+                                await asyncio.sleep(delay)
+                            else:
+                                return
+                    except aiohttp.ClientError as exc:
+                        if attempt == max_attempts:
+                            raise
+                        delay = base_delay * (2 ** (attempt - 1))
+                        logger.warning(
+                            f"Trader service unreachable (attempt {attempt}/{max_attempts}) "
+                            f"for symbol {signal.symbol}: {exc}. Retrying in {delay:.1f}s"
                         )
-                    else:
-                        error_text = await response.text()
-                        logger.error(
-                            f"Failed to place order: HTTP {response.status} - {error_text}. "
-                            f"Request: symbol={signal.symbol}, side={order_side}, "
-                            f"quantity={order_request['quantity']}, order_type={order_type}"
-                        )
+                        await asyncio.sleep(delay)
                         
         except Exception as e:
             logger.error(

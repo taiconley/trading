@@ -28,6 +28,7 @@ from common.config import get_settings
 from common.logging import setup_logging
 from common.db import get_db_session
 from common.models import Order, Execution, Account, Symbol, RiskLimit, HealthStatus
+from common.sync_status import update_sync_status
 from common.schemas import (
     OrderRequest, OrderResponse, ExecutionSchema, 
     HealthCheckResponse, OrderStatus, OrderSide, OrderType, TimeInForce
@@ -313,6 +314,7 @@ class TraderService:
         self.websocket_manager = WebSocketManager()
         self.active_orders: Dict[int, Trade] = {}  # order_id -> Trade
         self.shutdown_event = asyncio.Event()
+        self.loop: Optional[asyncio.AbstractEventLoop] = None
     
     @staticmethod
     def _is_valid_price(price: Optional[float]) -> bool:
@@ -350,6 +352,7 @@ class TraderService:
         """Initialize the trader service"""
         print("DEBUG: INSIDE initialize() - first line")
         try:
+            self.loop = asyncio.get_running_loop()
             # Get client ID
             print("DEBUG: About to get client ID")
             self.client_id = self.client_id_manager.get_service_client_id("trader")
@@ -739,12 +742,13 @@ class TraderService:
         """Send order updates to websocket clients from sync context."""
         if not message:
             return
-        if not self.loop or not self.loop.is_running():
+        loop = getattr(self, "loop", None)
+        if not loop or not loop.is_running():
             return
         try:
             asyncio.run_coroutine_threadsafe(
                 self.websocket_manager.broadcast(message),
-                self.loop
+                loop
             )
         except RuntimeError as exc:
             logger.error(f"Failed to schedule order broadcast: {exc}")
@@ -806,6 +810,8 @@ class TraderService:
         order_type = order_request.order_type.value if hasattr(order_request.order_type, 'value') else str(order_request.order_type)
         
         # Handle different order types
+        algo_params = order_request.algo_params or {}
+        
         if order_type == "ADAPTIVE":
             # Adaptive order: limit order with adaptive algorithm
             ib_order.orderType = "LMT"
@@ -817,9 +823,7 @@ class TraderService:
             ib_order.algoParams = []
             
             # Add adaptive priority parameter
-            priority = "Normal"  # Default
-            if order_request.algo_params:
-                priority = order_request.algo_params.get("adaptivePriority", "Normal")
+            priority = algo_params.get("adaptivePriority", "Normal")
             
             # ib_insync requires TagValue objects, not tuples
             ib_order.algoParams.append(TagValue("adaptivePriority", priority))
@@ -827,17 +831,22 @@ class TraderService:
         elif order_type == "PEG BEST":
             # IBKR ATS Pegged to Best
             ib_order.orderType = "PEG BEST"
-            # Optional offset from best price (in auxPrice)
-            if order_request.algo_params and "offset" in order_request.algo_params:
-                ib_order.auxPrice = float(order_request.algo_params["offset"])
+            ib_order.postToAts = bool(algo_params.get("post_to_ats", True))
+            ib_order.outsideRth = bool(algo_params.get("outside_rth", False))
+            ib_order.designatedLocation = str(algo_params.get("destination", "IBKRATS"))
+            
+            # IB requires a cap price (limit) for peg orders
+            if order_request.limit_price:
+                ib_order.lmtPrice = float(order_request.limit_price)
+            
+            if "offset" in algo_params:
+                ib_order.auxPrice = float(algo_params["offset"])
             
         elif order_type == "PEG MID":
             # Pegged to Midpoint
             ib_order.orderType = "PEG MID"
             # Offset from midpoint (default 0.01 if not specified)
-            offset = 0.01
-            if order_request.algo_params and "offset" in order_request.algo_params:
-                offset = float(order_request.algo_params["offset"])
+            offset = float(algo_params.get("offset", 0.01))
             ib_order.auxPrice = offset
             
         else:
