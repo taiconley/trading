@@ -224,6 +224,7 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
                 'realized_pnl': 0.0,
                 'half_life': None,
                 'last_volatility_ratio': 1.0,
+                'last_processed_timestamp': None,  # Track which bars we've already processed
             }
         
         self.log_info(f"Initialized pairs trading with {len(self.pairs)} pairs: {self.pairs}")
@@ -465,8 +466,11 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
             # Get pair state
             pair_state = self._pair_states[pair_key]
             
-            # Process all bars in the DataFrame to build up history quickly
-            # This is important on startup when we have historical data
+            # Optimization: Only process bars we haven't seen before
+            # In backtesting, the DataFrame grows over time, so we skip already-processed bars
+            # In live trading, the DataFrame only contains recent bars, so all bars get processed
+            last_processed = pair_state['last_processed_timestamp']
+            
             for idx in range(len(bars_a)):
                 if idx >= len(bars_b):
                     break
@@ -482,6 +486,10 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
                     timestamp = timestamp.to_pydatetime().replace(tzinfo=self.market_timezone)
                 else:
                     timestamp = timestamp.to_pydatetime().astimezone(self.market_timezone)
+                
+                # Skip bars we've already processed (optimization for backtesting)
+                if last_processed is not None and timestamp <= last_processed:
+                    continue
                 
                 # Get prices
                 price_a = float(bar_a['close'])
@@ -519,6 +527,9 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
                         continue
                     pair_state['spread_history'].append(spread)
                     pair_state['last_aggregation_timestamp'] = agg_timestamp
+                
+                # Update last processed timestamp for this bar
+                pair_state['last_processed_timestamp'] = timestamp
             
             # After processing all bars, check if we have enough data for trading decisions
             # Only process trading logic on the LAST bar to avoid duplicate signals
