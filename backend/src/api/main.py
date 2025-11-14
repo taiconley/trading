@@ -335,6 +335,15 @@ async def cancel_order(order_id: int):
     return await proxy_post("trader", f"/cancel/{order_id}")
 
 
+@app.post("/api/orders/reconcile")
+async def reconcile_orders():
+    """Reconcile order statuses with TWS.
+    
+    Checks all stuck orders and updates their status based on TWS reality.
+    """
+    return await proxy_post("trader", "/orders/reconcile")
+
+
 # ============================================================================
 # Market Data Endpoints
 # ============================================================================

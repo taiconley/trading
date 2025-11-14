@@ -96,6 +96,11 @@ class ApiClient {
     return response.data;
   }
 
+  async reconcileOrders() {
+    const response = await this.client.post('/api/orders/reconcile');
+    return response.data;
+  }
+
   // ============================================================================
   // Market Data
   // ============================================================================

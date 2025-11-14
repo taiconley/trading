@@ -5,6 +5,7 @@ import { RefreshCw, TrendingUp, AlertCircle, Activity, CheckCircle, XCircle, Clo
 
 export function Overview() {
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [account, setAccount] = useState<any>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [health, setHealth] = useState<any>(null);
@@ -13,6 +14,15 @@ export function Overview() {
 
   const fetchData = async () => {
     try {
+      setRefreshing(true);
+      
+      // First, trigger order reconciliation to ensure orders are in sync with TWS
+      // Wait for it to complete before fetching orders
+      await api.reconcileOrders().catch((err) => {
+        console.warn('Order reconciliation failed (non-critical):', err);
+      });
+      
+      // Fetch all data in parallel (orders will now be up-to-date after reconciliation)
       const [accountData, ordersData, healthData, syncData] = await Promise.all([
         api.getAccountStats().catch(() => null),
         api.getOrders({ limit: 50 }).catch(() => ({ orders: [] })),
@@ -29,6 +39,7 @@ export function Overview() {
       setError(err.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -187,10 +198,13 @@ export function Overview() {
         <h1 className="text-3xl font-bold text-slate-900">Dashboard Overview</h1>
         <button
           onClick={fetchData}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors"
+          disabled={refreshing}
+          className={`flex items-center gap-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors ${
+            refreshing ? 'opacity-50 cursor-not-allowed' : ''
+          }`}
         >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          {refreshing ? 'Refreshing...' : 'Refresh'}
         </button>
       </div>
 

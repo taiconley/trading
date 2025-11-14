@@ -347,6 +347,90 @@ class TraderService:
         except (ValueError, TypeError, OverflowError):
             return False
         
+    async def reconcile_order_statuses(self) -> dict:
+        """Reconcile database orders with TWS reality.
+        
+        This method:
+        1. Finds orders stuck in 'Submitted', 'PendingSubmit', or 'PreSubmitted' status
+        2. Checks if they actually exist in TWS
+        3. Updates their status to 'Cancelled' if they're not in TWS
+        
+        Returns:
+            Dict with reconciliation results
+        """
+        if not self.ib_client or not self.ib_client.ib.isConnected():
+            logger.warning("Cannot reconcile orders: TWS not connected")
+            return {"error": "TWS not connected", "reconciled": 0}
+        
+        try:
+            # Get all active trades from TWS
+            tws_trades = self.ib_client.ib.trades()
+            tws_order_ids = {str(trade.order.orderId) for trade in tws_trades if trade.order.orderId}
+            
+            logger.info(f"Found {len(tws_order_ids)} active orders in TWS: {tws_order_ids}")
+            
+            # Find stuck orders in database
+            with self.db_session_factory() as session:
+                stuck_statuses = ['Submitted', 'PendingSubmit', 'PreSubmitted']
+                stuck_orders = session.query(Order).filter(
+                    Order.status.in_(stuck_statuses),
+                    Order.external_order_id.isnot(None)
+                ).all()
+                
+                reconciled_count = 0
+                cancelled_orders = []
+                
+                for order in stuck_orders:
+                    # Check if order exists in TWS
+                    if order.external_order_id not in tws_order_ids:
+                        # Order not in TWS - mark as cancelled
+                        logger.info(f"Order {order.id} (IB:{order.external_order_id}) not found in TWS - marking as Cancelled")
+                        order.status = "Cancelled"
+                        order.updated_at = datetime.now(timezone.utc)
+                        cancelled_orders.append({
+                            "id": order.id,
+                            "symbol": order.symbol,
+                            "side": order.side,
+                            "external_order_id": order.external_order_id
+                        })
+                        reconciled_count += 1
+                
+                if reconciled_count > 0:
+                    session.commit()
+                    logger.info(f"Reconciled {reconciled_count} stuck orders")
+                
+                return {
+                    "reconciled": reconciled_count,
+                    "tws_orders": len(tws_order_ids),
+                    "database_stuck": len(stuck_orders),
+                    "cancelled_orders": cancelled_orders
+                }
+                
+        except Exception as e:
+            logger.error(f"Error reconciling order statuses: {e}")
+            return {"error": str(e), "reconciled": 0}
+    
+    async def _periodic_order_reconciliation(self):
+        """Background task to periodically reconcile order statuses"""
+        logger.info("Starting periodic order reconciliation task")
+        
+        while True:
+            try:
+                # Wait 60 seconds between reconciliation checks
+                await asyncio.sleep(60)
+                
+                # Run reconciliation
+                result = await self.reconcile_order_statuses()
+                if result.get("reconciled", 0) > 0:
+                    logger.info(f"Reconciliation updated {result['reconciled']} orders")
+                    
+            except asyncio.CancelledError:
+                logger.info("Order reconciliation task cancelled")
+                break
+            except Exception as e:
+                logger.error(f"Error in periodic order reconciliation: {e}")
+                # Continue running even if one iteration fails
+    
     async def initialize(self):
         print("DEBUG: initialize() ENTRY POINT")
         """Initialize the trader service"""
@@ -454,6 +538,10 @@ class TraderService:
             # Update health status
             await self._update_health_status("healthy")
             print("DEBUG: Health status updated")
+            
+            # Start periodic order reconciliation task
+            asyncio.create_task(self._periodic_order_reconciliation())
+            logger.info("Started periodic order reconciliation task")
             
         except Exception as e:
             print(f"DEBUG: EXCEPTION in initialize(): {e}")
@@ -1404,6 +1492,21 @@ async def get_orders(limit: int = 100, status: Optional[str] = None, active_only
         active_only: If True, only return orders with active statuses (PendingSubmit, PendingCancel, Submitted)
     """
     return await trader_service.get_orders(limit, status, active_only)
+
+@app.post("/orders/reconcile")
+async def reconcile_orders():
+    """Manually reconcile order statuses with TWS
+    
+    This endpoint:
+    - Checks all orders in 'Submitted', 'PendingSubmit', or 'PreSubmitted' status
+    - Verifies they actually exist in TWS
+    - Cancels orders that don't exist in TWS (phantom orders)
+    
+    Returns:
+        Dict with reconciliation results including count of updated orders
+    """
+    result = await trader_service.reconcile_order_statuses()
+    return JSONResponse(content=result)
 
 # Risk Management Endpoints
 @app.post("/risk/emergency-stop")
