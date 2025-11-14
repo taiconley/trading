@@ -424,6 +424,85 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
             f"stats_aggregation_seconds={self.stats_aggregation_seconds}"
         )
     
+    def _fast_warmup_pair(
+        self,
+        pair_key: str,
+        pair_state: Dict[str, Any],
+        bars_a: pd.DataFrame,
+        bars_b: pd.DataFrame
+    ) -> None:
+        """
+        Fast warmup by processing all historical bars in aggregated chunks.
+        This quickly populates spread_history from historical data on startup.
+        """
+        self.log_info(f"[FAST WARMUP] {pair_key}: Processing {len(bars_a)} historical bars in aggregated chunks")
+        
+        # Process bars in aggregated chunks
+        chunk_size = self.stats_aggregation_bars
+        num_chunks = len(bars_a) // chunk_size
+        
+        for chunk_idx in range(num_chunks):
+            start_idx = chunk_idx * chunk_size
+            end_idx = start_idx + chunk_size
+            
+            if end_idx > len(bars_a) or end_idx > len(bars_b):
+                break
+            
+            # Get the last bar in this chunk for prices
+            bar_a = bars_a.iloc[end_idx - 1]
+            bar_b = bars_b.iloc[end_idx - 1]
+            
+            # Extract timestamp
+            if 'timestamp' not in bar_a.index:
+                continue
+            timestamp = pd.to_datetime(bar_a['timestamp'])
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.to_pydatetime().replace(tzinfo=self.market_timezone)
+            else:
+                timestamp = timestamp.to_pydatetime().astimezone(self.market_timezone)
+            
+            # Get prices
+            price_a = float(bar_a['close'])
+            price_b = float(bar_b['close'])
+            
+            if price_b == 0 or price_a <= 0 or price_b <= 0:
+                continue
+            
+            # Append all prices in this chunk to price history
+            for idx in range(start_idx, end_idx):
+                if idx >= len(bars_a) or idx >= len(bars_b):
+                    break
+                p_a = float(bars_a.iloc[idx]['close'])
+                p_b = float(bars_b.iloc[idx]['close'])
+                if p_a > 0 and p_b > 0:
+                    pair_state['price_history_a'].append(p_a)
+                    pair_state['price_history_b'].append(p_b)
+            
+            # Need enough data to build hedge ratio
+            if len(pair_state['price_history_a']) < self.config.min_hedge_lookback:
+                continue
+            
+            # Refresh hedge ratio periodically
+            pair_state['bars_since_hedge'] += chunk_size
+            if pair_state['bars_since_hedge'] >= self.config.hedge_refresh_bars or pair_state['hedge_ratio'] is None:
+                self._refresh_hedge_ratio(pair_key, pair_state)
+            
+            # Compute spread using aggregated prices
+            spread = self._compute_spread(pair_state, price_a, price_b)
+            if spread is None:
+                continue
+            
+            # Add spread to history
+            pair_state['spread_history'].append(spread)
+            pair_state['last_aggregation_timestamp'] = timestamp
+            pair_state['last_processed_timestamp'] = timestamp
+        
+        spread_count = len(pair_state['spread_history'])
+        self.log_info(
+            f"[FAST WARMUP] {pair_key}: Populated {spread_count} spread bars "
+            f"from {len(bars_a)} historical bars ({spread_count}/{self.config.lookback_window} needed)"
+        )
+    
     async def on_bar_multi(self, symbols: List[str], timeframe: str, 
                           bars_data: Dict[str, pd.DataFrame]) -> List[StrategySignal]:
         """Process bar data for all pairs simultaneously."""
@@ -465,6 +544,23 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
             
             # Get pair state
             pair_state = self._pair_states[pair_key]
+            
+            # Fast warmup mode: If we're still warming up and have historical bars available,
+            # process them in aggregated chunks to quickly populate spread_history
+            spread_hist_len = len(pair_state['spread_history'])
+            is_warming_up = spread_hist_len < self.config.lookback_window
+            has_historical_data = len(bars_a) >= self.config.lookback_window
+            
+            # Calculate how many spread bars we could potentially get from historical data
+            potential_spread_bars = len(bars_a) // self.stats_aggregation_bars
+            
+            # Trigger fast warmup if:
+            # 1. We're still warming up (don't have enough spread bars)
+            # 2. We have historical data that could provide more spread bars
+            # 3. We're significantly behind (historical data can provide at least 50 more bars)
+            if is_warming_up and has_historical_data and potential_spread_bars > (spread_hist_len + 50):
+                # Fast warmup: process all historical bars in aggregated chunks
+                self._fast_warmup_pair(pair_key, pair_state, bars_a, bars_b)
             
             # Optimization: Only process bars we haven't seen before
             # In backtesting, the DataFrame grows over time, so we skip already-processed bars

@@ -492,12 +492,13 @@ class StrategyService:
             if symbol in self.bar_cache and len(self.bar_cache[symbol]) > 0:
                 cached_bars = list(self.bar_cache[symbol])
                 
-                # Get last N bars from cache
-                recent_bars = cached_bars[-lookback:] if len(cached_bars) >= lookback else cached_bars
-                
-                if recent_bars:
+                # Only use cache if we have enough bars, otherwise fall through to database
+                if len(cached_bars) >= lookback:
+                    recent_bars = cached_bars[-lookback:]
                     logger.debug(f"Using {len(recent_bars)} cached bars for {symbol}")
                     return pd.DataFrame(recent_bars)
+                else:
+                    logger.debug(f"Cache insufficient for {symbol}: have {len(cached_bars)}, need {lookback}, fetching from database")
             
             # Fallback to database if cache is empty or insufficient
             logger.debug(f"Fetching bars from database for {symbol} (cache miss)")
