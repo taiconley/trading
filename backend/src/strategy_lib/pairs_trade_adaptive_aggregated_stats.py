@@ -20,6 +20,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
+import re
 
 from .base import BaseStrategy, StrategyConfig, StrategySignal, SignalType, StrategyState
 from .registry import strategy
@@ -35,8 +36,8 @@ except Exception:  # pragma: no cover - best effort import
 EPSILON = 1e-6
 
 
-class PairsTradingConfig(StrategyConfig):
-    """Configuration for Pairs Trading Strategy."""
+class PairsTradingAggregatedConfig(StrategyConfig):
+    """Configuration for Pairs Trading Strategy with aggregated statistics."""
     
     # Pairs definition - list of [stock_a, stock_b] pairs
     # Example: pairs = [["AAPL", "MSFT"], ["JPM", "BAC"], ["XOM", "CVX"]]
@@ -97,16 +98,19 @@ class PairsTradingConfig(StrategyConfig):
     min_exit_volatility_ratio: float = 0.8  # Lower clamp for exit adjustment
     max_exit_volatility_ratio: float = 1.3  # Upper clamp for exit adjustment
     
+    # Aggregated statistics parameters
+    stats_aggregation_seconds: int = 60  # Resample granularity for spread statistics
+
     class Config:
         extra = "allow"
 
 
 @strategy(
-    name="Pairs_Trading_Adaptive",
-    description="Risk-aware intraday statistical arbitrage strategy for 5-second bars, trading price ratio deviations between multiple pairs",
+    name="Pairs_Trading_Adaptive_Aggregated",
+    description="Pairs trading strategy that trades on 5-second bars but computes spread statistics on aggregated bars",
     default_config=PAIRS_TRADING_CONFIG
 )
-class PairsTradingStrategy(BaseStrategy):
+class PairsTradingAggregatedStrategy(BaseStrategy):
     """
     Pairs Trading Strategy.
     
@@ -116,12 +120,12 @@ class PairsTradingStrategy(BaseStrategy):
     
     def __init__(self, config: StrategyConfig):
         # Convert base config to Pairs-specific config
-        if not isinstance(config, PairsTradingConfig):
+        if not isinstance(config, PairsTradingAggregatedConfig):
             pairs_config_data = config.dict() if hasattr(config, 'dict') else config.__dict__
             # Merge parameters into the main config
             if 'parameters' in pairs_config_data:
                 pairs_config_data.update(pairs_config_data['parameters'])
-            config = PairsTradingConfig(**pairs_config_data)
+            config = PairsTradingAggregatedConfig(**pairs_config_data)
         
         # Parse pairs from config
         if hasattr(config, 'pairs') and config.pairs:
@@ -144,6 +148,24 @@ class PairsTradingStrategy(BaseStrategy):
             config.spread_history_bars = max(config.lookback_window, config.spread_history_bars)
         
         super().__init__(config)
+
+        # Determine base bar resolution (defaults to 5 seconds if parsing fails)
+        self.base_bar_seconds = self._parse_timeframe_to_seconds(getattr(self.config, "bar_timeframe", "5 secs"))
+        if self.base_bar_seconds <= 0:
+            raise ValueError(f"Invalid base bar timeframe '{self.config.bar_timeframe}'")
+
+        desired_stats_seconds = max(
+            int(getattr(self.config, "stats_aggregation_seconds", self.base_bar_seconds)),
+            self.base_bar_seconds
+        )
+        if desired_stats_seconds % self.base_bar_seconds != 0:
+            raise ValueError(
+                f"stats_aggregation_seconds ({desired_stats_seconds}) must be a multiple of the base bar seconds "
+                f"({self.base_bar_seconds})"
+            )
+        self.stats_aggregation_seconds = desired_stats_seconds
+        self.stats_aggregation_bars = max(1, self.stats_aggregation_seconds // self.base_bar_seconds)
+        self.config.stats_aggregation_seconds = self.stats_aggregation_seconds
 
         # Trading session timezone
         try:
@@ -179,6 +201,8 @@ class PairsTradingStrategy(BaseStrategy):
                 'price_history_a': deque(maxlen=maxlen),
                 'price_history_b': deque(maxlen=maxlen),
                 'spread_history': deque(maxlen=self.config.spread_history_bars),
+                'aggregation_buffer': self._create_empty_aggregation_buffer(),
+                'last_aggregation_timestamp': None,
                 'hedge_ratio': 1.0,
                 'hedge_intercept': 0.0,
                 'bars_since_hedge': 0,
@@ -226,6 +250,12 @@ class PairsTradingStrategy(BaseStrategy):
                 "min": 0.5,
                 "max": 5.0,
                 "description": "Z-score threshold to enter trade"
+            },
+            "stats_aggregation_seconds": {
+                "type": int,
+                "required": False,
+                "min": 5,
+                "description": "Seconds used to resample raw bars for spread statistics (must be multiple of bar timeframe)"
             },
             "exit_threshold": {
                 "type": float,
@@ -361,6 +391,8 @@ class PairsTradingStrategy(BaseStrategy):
             state['price_history_a'].clear()
             state['price_history_b'].clear()
             state['spread_history'].clear()
+            state['aggregation_buffer'] = self._create_empty_aggregation_buffer()
+            state['last_aggregation_timestamp'] = None
             state['hedge_ratio'] = 1.0
             state['hedge_intercept'] = 0.0
             state['bars_since_hedge'] = 0
@@ -387,7 +419,8 @@ class PairsTradingStrategy(BaseStrategy):
             f"Started intraday pairs trading strategy with {len(self.pairs)} pairs, "
             f"entry_threshold={self.config.entry_threshold}, "
             f"exit_threshold={self.config.exit_threshold}, "
-            f"max_hold_bars={self.config.max_hold_bars}"
+            f"max_hold_bars={self.config.max_hold_bars}, "
+            f"stats_aggregation_seconds={self.stats_aggregation_seconds}"
         )
     
     async def on_bar_multi(self, symbols: List[str], timeframe: str, 
@@ -434,8 +467,6 @@ class PairsTradingStrategy(BaseStrategy):
             
             # Process all bars in the DataFrame to build up history quickly
             # This is important on startup when we have historical data
-            initial_spread_len = len(pair_state['spread_history'])
-            
             for idx in range(len(bars_a)):
                 if idx >= len(bars_b):
                     break
@@ -480,11 +511,14 @@ class PairsTradingStrategy(BaseStrategy):
                 if pair_state['bars_since_hedge'] >= self.config.hedge_refresh_bars or pair_state['hedge_ratio'] is None:
                     self._refresh_hedge_ratio(pair_key, pair_state)
                 
-                # Compute current spread using hedge ratio
-                spread = self._compute_spread(pair_state, price_a, price_b)
-                if spread is None:
-                    continue
-                pair_state['spread_history'].append(spread)
+                aggregated_prices = self._update_aggregation_buffer(pair_state, price_a, price_b, timestamp)
+                if aggregated_prices is not None:
+                    agg_price_a, agg_price_b, agg_timestamp = aggregated_prices
+                    spread = self._compute_spread(pair_state, agg_price_a, agg_price_b)
+                    if spread is None:
+                        continue
+                    pair_state['spread_history'].append(spread)
+                    pair_state['last_aggregation_timestamp'] = agg_timestamp
             
             # After processing all bars, check if we have enough data for trading decisions
             # Only process trading logic on the LAST bar to avoid duplicate signals
@@ -774,6 +808,56 @@ class PairsTradingStrategy(BaseStrategy):
         log_a = np.log(price_a)
         log_b = np.log(price_b)
         return log_a - (pair_state['hedge_intercept'] + pair_state['hedge_ratio'] * log_b)
+
+    @staticmethod
+    def _parse_timeframe_to_seconds(timeframe: Optional[str]) -> int:
+        """Convert textual timeframe (e.g., '5 secs', '1 min') to seconds."""
+        if not timeframe:
+            return 5
+        tf = timeframe.strip().lower()
+        match = re.match(r"(\d+)\s*(sec|secs|second|seconds|min|mins|minute|minutes)$", tf)
+        if not match:
+            # Default to 5 seconds if parsing fails
+            return 5
+        value = int(match.group(1))
+        unit = match.group(2)
+        if unit.startswith("min"):
+            return value * 60
+        return value
+
+    def _create_empty_aggregation_buffer(self) -> Dict[str, Any]:
+        """Return a fresh aggregation buffer for resampling."""
+        return {
+            'count': 0,
+            'close_a': None,
+            'close_b': None,
+            'last_ts': None
+        }
+
+    def _update_aggregation_buffer(
+        self,
+        pair_state: Dict[str, Any],
+        price_a: float,
+        price_b: float,
+        timestamp: datetime
+    ) -> Optional[Tuple[float, float, datetime]]:
+        """
+        Update aggregation buffer with the latest tick prices.
+
+        Returns aggregated (price_a, price_b, timestamp) when enough raw bars have been seen.
+        """
+        buffer = pair_state['aggregation_buffer']
+        buffer['count'] += 1
+        buffer['close_a'] = price_a
+        buffer['close_b'] = price_b
+        buffer['last_ts'] = timestamp
+
+        if buffer['count'] < self.stats_aggregation_bars:
+            return None
+
+        aggregated = (buffer['close_a'], buffer['close_b'], buffer['last_ts'])
+        pair_state['aggregation_buffer'] = self._create_empty_aggregation_buffer()
+        return aggregated
 
     def _get_adaptive_thresholds(self, pair_state: Dict[str, Any]) -> tuple[float, float, float]:
         """Return volatility ratio and adapted entry/exit thresholds."""
@@ -1389,7 +1473,8 @@ class PairsTradingStrategy(BaseStrategy):
                 "entry_threshold": self.config.entry_threshold,
                 "exit_threshold": self.config.exit_threshold,
                 "position_size": self.config.position_size,
-                "max_hold_bars": self.config.max_hold_bars
+                "max_hold_bars": self.config.max_hold_bars,
+                "stats_aggregation_seconds": self.stats_aggregation_seconds
             },
             "num_pairs": len(self.pairs),
             "pairs_state": pairs_state,
