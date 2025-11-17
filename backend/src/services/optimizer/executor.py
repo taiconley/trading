@@ -26,8 +26,9 @@ def run_backtest_task(args: tuple) -> TaskResult:
     This function runs in a separate process.
     
     Args:
-        args: Tuple of (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data)
+        args: Tuple of (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data, start_date, end_date)
               bars_data is optional - if None, data will be loaded from database
+              start_date and end_date are optional - if provided, filter data by these dates
     
     Returns:
         TaskResult with backtest results or error
@@ -51,7 +52,7 @@ def run_backtest_task(args: tuple) -> TaskResult:
     worker_logger.info("=" * 60)
     worker_logger.info("WORKER: Starting backtest task")
     
-    params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data_arg = args
+    params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data_arg, start_date, end_date = args
     
     try:
         symbol_count = len(symbols) if isinstance(symbols, list) else 1
@@ -111,7 +112,9 @@ def run_backtest_task(args: tuple) -> TaskResult:
                     msg = f"WORKER: Loading data for symbol {i+1}/{len(symbols)}: {symbol}"
                     print(msg, flush=True)
                     worker_logger.info(msg)
-                    candles_list = session.query(
+                    
+                    # Build query with optional date filtering
+                    query = session.query(
                         Candle.ts,
                         Candle.open,
                         Candle.high,
@@ -121,7 +124,15 @@ def run_backtest_task(args: tuple) -> TaskResult:
                     ).filter(
                         Candle.symbol == symbol,
                         Candle.tf == timeframe
-                    ).order_by(Candle.ts).all()
+                    )
+                    
+                    # Apply date filters if provided
+                    if start_date is not None:
+                        query = query.filter(Candle.ts >= start_date)
+                    if end_date is not None:
+                        query = query.filter(Candle.ts <= end_date)
+                    
+                    candles_list = query.order_by(Candle.ts).all()
                     
                     if not candles_list:
                         return TaskResult(
@@ -380,7 +391,9 @@ class ParallelExecutor:
         objective: str,
         config: Dict[str, Any] = None,
         callback: Callable[[TaskResult], None] = None,
-        bars_data: Dict[str, Any] = None
+        bars_data: Dict[str, Any] = None,
+        start_date: Any = None,
+        end_date: Any = None
     ) -> List[TaskResult]:
         """
         Execute a batch of backtests in parallel.
@@ -395,6 +408,8 @@ class ParallelExecutor:
             config: Additional configuration (commission, slippage, etc.)
             callback: Optional callback function called for each completed task
             bars_data: Optional pre-loaded bars data (for validation methods)
+            start_date: Optional start date for filtering data
+            end_date: Optional end date for filtering data
         
         Returns:
             List of TaskResult objects
@@ -413,7 +428,7 @@ class ParallelExecutor:
         
         # Prepare tasks
         tasks = [
-            (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data)
+            (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data, start_date, end_date)
             for params in param_combinations
         ]
         
@@ -456,7 +471,9 @@ class ParallelExecutor:
         objective: str,
         config: Dict[str, Any] = None,
         callback: Callable[[TaskResult], None] = None,
-        bars_data: Dict[str, Any] = None
+        bars_data: Dict[str, Any] = None,
+        start_date: Any = None,
+        end_date: Any = None
     ) -> List[TaskResult]:
         """
         Execute backtests sequentially (for debugging or single-core machines).
@@ -476,7 +493,7 @@ class ParallelExecutor:
         
         results = []
         for i, params in enumerate(param_combinations):
-            task = (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data)
+            task = (params, strategy_name, symbols, timeframe, lookback, objective, config, bars_data, start_date, end_date)
             result = run_backtest_task(task)
             results.append(result)
             

@@ -462,6 +462,22 @@ def cli_optimize(args):
     # Parse symbols
     symbols = args.symbols.split(',') if ',' in args.symbols else [args.symbols]
     
+    # Parse dates
+    start_date = None
+    end_date = None
+    if args.start_date:
+        try:
+            start_date = datetime.fromisoformat(args.start_date)
+        except ValueError:
+            logger.error(f"Invalid start date format: {args.start_date}. Use YYYY-MM-DD")
+            return 1
+    if args.end_date:
+        try:
+            end_date = datetime.fromisoformat(args.end_date)
+        except ValueError:
+            logger.error(f"Invalid end date format: {args.end_date}. Use YYYY-MM-DD")
+            return 1
+    
     # Parse config
     config = {}
     if args.config:
@@ -478,6 +494,10 @@ def cli_optimize(args):
     logger.info(f"Symbols: {symbols}")
     logger.info(f"Algorithm: {args.algorithm}")
     logger.info(f"Objective: {args.objective}")
+    if start_date:
+        logger.info(f"Start Date: {start_date.strftime('%Y-%m-%d')}")
+    if end_date:
+        logger.info(f"End Date: {end_date.strftime('%Y-%m-%d')}")
     logger.info(f"Parameter ranges: {param_ranges}")
     if constraints:
         logger.info(f"Constraints: {constraints}")
@@ -497,7 +517,9 @@ def cli_optimize(args):
             num_workers=args.workers,
             max_iterations=args.max_iterations,
             random_seed=args.seed,
-            config=config
+            config=config,
+            start_date=start_date,
+            end_date=end_date
         )
         
         # Run optimization
@@ -836,6 +858,8 @@ def main():
     optimize_parser.add_argument('--symbols', required=True, help='Comma-separated symbols')
     optimize_parser.add_argument('--timeframe', default='1 day', help='Timeframe')
     optimize_parser.add_argument('--lookback', type=int, default=100, help='Lookback days')
+    optimize_parser.add_argument('--start-date', help='Start date (YYYY-MM-DD)')
+    optimize_parser.add_argument('--end-date', help='End date (YYYY-MM-DD)')
     optimize_parser.add_argument('--params', required=True, help='Parameter ranges (JSON)')
     optimize_parser.add_argument('--algorithm', default='grid_search', 
                                 help='Algorithm (grid_search, random_search, bayesian, genetic)')

@@ -350,6 +350,12 @@ class BacktestEngine:
         end_date: Optional[datetime]
     ) -> Dict[str, pd.DataFrame]:
         """Filter bars data by date range."""
+        # Ensure dates are timezone-aware (UTC) to match DataFrame timestamps
+        if start_date and start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=timezone.utc)
+        if end_date and end_date.tzinfo is None:
+            end_date = end_date.replace(tzinfo=timezone.utc)
+        
         filtered = {}
         for symbol, df in bars_data.items():
             filtered_df = df.copy()

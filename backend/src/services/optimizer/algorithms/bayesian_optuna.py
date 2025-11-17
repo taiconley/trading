@@ -32,7 +32,8 @@ class BayesianOptimizer(BaseOptimizer):
         max_iterations: int = 50,
         random_seed: int = None,
         n_startup_trials: int = 10,
-        multivariate: bool = True
+        multivariate: bool = True,
+        patience: int = None
     ):
         """
         Initialize Bayesian optimizer with Optuna.
@@ -44,17 +45,32 @@ class BayesianOptimizer(BaseOptimizer):
             random_seed: Random seed for reproducibility
             n_startup_trials: Number of random trials before TPE starts (default: 10)
             multivariate: Whether to use multivariate TPE (considers parameter interactions)
+            patience: Early stopping patience (stop if no improvement for N iterations)
         """
         super().__init__(param_space, constraints, max_iterations, random_seed)
         
         self.n_startup_trials = n_startup_trials
         self.multivariate = multivariate
         
-        # Create Optuna study
+        # Early stopping: Default to 1/3 of max_iterations
+        self.patience = patience or max(5, max_iterations // 3) if max_iterations else None
+        
+        # Create Optuna study with pruner for intermediate value pruning
         sampler = optuna.samplers.TPESampler(
             n_startup_trials=n_startup_trials,
             multivariate=multivariate,
-            seed=random_seed
+            seed=random_seed,
+            # Consider more EI candidates for better exploration/exploitation balance
+            n_ei_candidates=24,
+            # Use more samples for building the model
+            constant_liar=True  # Better for parallel evaluation
+        )
+        
+        # Add median pruner to kill obviously bad trials early
+        pruner = optuna.pruners.MedianPruner(
+            n_startup_trials=n_startup_trials,
+            n_warmup_steps=0,
+            interval_steps=1
         )
         
         # Suppress Optuna's logging
@@ -62,7 +78,13 @@ class BayesianOptimizer(BaseOptimizer):
         
         self.study = optuna.create_study(
             direction='maximize',  # We always maximize the objective
-            sampler=sampler
+            sampler=sampler,
+            pruner=pruner
+        )
+        
+        logger.info(
+            f"Bayesian optimizer initialized: {max_iterations} max iterations, "
+            f"{n_startup_trials} startup trials, patience={self.patience}"
         )
         
         # Expand parameter ranges for Optuna

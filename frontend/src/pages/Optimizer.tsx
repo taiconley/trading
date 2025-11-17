@@ -25,6 +25,13 @@ export function Optimizer() {
 
   useEffect(() => {
     fetchOptimizations();
+    
+    // Auto-refresh every 5 seconds to show live progress
+    const refreshInterval = setInterval(() => {
+      fetchOptimizations();
+    }, 5000);
+    
+    return () => clearInterval(refreshInterval);
   }, []);
 
   const handleViewDetails = async (opt: Optimization) => {

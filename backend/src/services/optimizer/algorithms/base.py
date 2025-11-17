@@ -4,6 +4,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Dict, List, Iterator, Union
 import itertools
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -208,6 +211,24 @@ class BaseOptimizer(ABC):
         """
         if self.max_iterations is not None and self.iteration >= self.max_iterations:
             return True
+        
+        # Early stopping: If no improvement for patience iterations
+        if hasattr(self, 'patience') and self.patience and len(self.all_results) > self.patience:
+            recent_scores = [r.score for r in self.all_results[-self.patience:]]
+            best_recent = max(recent_scores) if recent_scores else float('-inf')
+            
+            # Check if best score in recent window is not better than previous best
+            earlier_best = float('-inf')
+            if len(self.all_results) > self.patience:
+                earlier_scores = [r.score for r in self.all_results[:-self.patience]]
+                earlier_best = max(earlier_scores) if earlier_scores else float('-inf')
+            
+            # Stop if no improvement
+            improvement = best_recent - earlier_best
+            if improvement <= 0.001:  # Less than 0.1% improvement
+                logger.info(f"Early stopping: No improvement in last {self.patience} iterations")
+                return True
+        
         return False
     
     def update(self, result: OptimizationResult) -> None:

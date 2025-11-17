@@ -47,7 +47,9 @@ class OptimizationEngine:
         num_workers: int = None,
         max_iterations: int = None,
         random_seed: int = None,
-        config: Dict[str, Any] = None
+        config: Dict[str, Any] = None,
+        start_date: Optional[Any] = None,
+        end_date: Optional[Any] = None
     ):
         """
         Initialize optimization engine.
@@ -66,6 +68,8 @@ class OptimizationEngine:
             max_iterations: Maximum iterations for random search
             random_seed: Random seed for reproducibility
             config: Additional config (commission, slippage, etc.)
+            start_date: Optional start date for backtest data filtering
+            end_date: Optional end date for backtest data filtering
         """
         self.strategy_name = strategy_name
         self.symbols = symbols
@@ -79,6 +83,8 @@ class OptimizationEngine:
         self.max_iterations = max_iterations
         self.random_seed = random_seed
         self.config = config or {}
+        self.start_date = start_date
+        self.end_date = end_date
         
         # Create parameter space
         self.param_space = ParameterSpace(ranges=param_ranges)
@@ -120,7 +126,8 @@ class OptimizationEngine:
                 max_iterations=self.max_iterations,
                 random_seed=self.random_seed,
                 n_startup_trials=min(10, self.max_iterations // 5),  # 20% random trials
-                multivariate=True  # Consider parameter interactions
+                multivariate=True,  # Consider parameter interactions
+                patience=max(8, self.max_iterations // 3)  # Early stop if no improvement
             )
         elif self.algorithm == 'genetic':
             if self.max_iterations is None:
@@ -359,7 +366,9 @@ class OptimizationEngine:
             timeframe=self.timeframe,
             lookback=self.lookback,
             objective=self.objective,
-            config=self.config
+            config=self.config,
+            start_date=self.start_date,
+            end_date=self.end_date
         )
         logger.info(f"Batch execution returned {len(results)} results")
         
@@ -471,7 +480,9 @@ class OptimizationEngine:
             lookback=self.lookback,
             objective=self.objective,
             config=self.config,
-            bars_data=bars_data
+            bars_data=bars_data,
+            start_date=self.start_date,
+            end_date=self.end_date
         )
         
         # Update optimizer with results
