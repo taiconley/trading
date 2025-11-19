@@ -12,7 +12,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 STRATEGY_NAME="Pairs_Trading_Adaptive_Aggregated"
-LOOKBACK=600
+LOOKBACK=200
 TIMEFRAME="5 secs"
 INITIAL_CAPITAL=250000
 
@@ -25,17 +25,12 @@ START_DATE=${START_DATE:-""}  # e.g. 2024-08-01
 END_DATE=${END_DATE:-""}      # e.g. 2024-12-31
 # WORKERS can be set to control CPU cores used (default: auto-detect)
 
-SYMBOLS=(AIN ESE AHCO SIBN ALLO ANGO CTRA ORA HUM CINF ENPH DOW DE CME D JXN)
-SYMBOLS_JSON='["AIN","ESE","AHCO","SIBN","ALLO","ANGO","CTRA","ORA","HUM","CINF","ENPH","DOW","DE","CME","D","JXN"]'
+SYMBOLS=(AMN CORT FITB TMHC ACT DUK)
+SYMBOLS_JSON='["AMN","CORT","FITB","TMHC","ACT","DUK"]'
 PAIRS_JSON='[
-  ["AIN","ESE"],
-  ["AHCO","SIBN"],
-  ["ALLO","ANGO"],
-  ["CTRA","ORA"],
-  ["HUM","CINF"],
-  ["ENPH","DOW"],
-  ["DE","CME"],
-  ["D","JXN"]
+  ["AMN","CORT"],
+  ["FITB","TMHC"],
+  ["ACT","DUK"]
 ]'
 
 PARAMS_JSON=$(cat <<JSON
@@ -44,20 +39,20 @@ PARAMS_JSON=$(cat <<JSON
   "pairs": $PAIRS_JSON,
   "bar_timeframe": "$TIMEFRAME",
   "lookback_periods": $LOOKBACK,
-  "lookback_window": 480,
-  "entry_threshold": 3.0,
-  "exit_threshold": 0.3,
-  "position_size": 500,
-  "base_pair_notional": 100000,
-  "max_hold_bars": 1800,
-  "stop_loss_zscore": 3.5,
-  "cooldown_bars": 180,
-  "hedge_refresh_bars": 90,
+  "lookback_window": 20,
+  "entry_threshold": 1.5,
+  "exit_threshold": 0.5,
+  "position_size": 100,
+  "base_pair_notional": 50000,
+  "max_hold_bars": 7200,
+  "stop_loss_zscore": 3.0,
+  "cooldown_bars": 300,
+  "hedge_refresh_bars": 120,
   "min_hedge_lookback": 120,
-  "spread_history_bars": 1500,
+  "spread_history_bars": 100,
   "volatility_adaptation_enabled": true,
-  "volatility_window": 480,
-  "stats_aggregation_seconds": 300,
+  "volatility_window": 10,
+  "stats_aggregation_seconds": 60,
   "market_close_hour": 16,
   "market_close_minute": 0,
   "close_before_eod_minutes": 5,
@@ -87,9 +82,6 @@ CMD=(docker compose exec
   --timeframe "$TIMEFRAME"
   --lookback "$LOOKBACK"
   --initial-capital "$INITIAL_CAPITAL"
-  --commission-per-share 0.0035
-  --min-commission 0.35
-  --slippage-ticks 2
   --params "$PARAMS_JSON"
 )
 

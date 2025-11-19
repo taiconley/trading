@@ -109,7 +109,8 @@ class PairsTradingStrategy(BaseStrategy):
             config = PairsTradingConfig(**pairs_config_data)
         
         # Parse pairs from config
-        if hasattr(config, 'pairs') and config.pairs:
+        if hasattr(config, 'pairs') and config.pairs is not None:
+            # pairs is explicitly set (could be [] for no pairs, which is valid)
             self.pairs = config.pairs
         elif hasattr(config, 'symbols') and len(config.symbols) >= 2:
             # Fallback: treat consecutive symbols as pairs
@@ -157,7 +158,15 @@ class PairsTradingStrategy(BaseStrategy):
         
         for pair in self.pairs:
             pair_key = f"{pair[0]}/{pair[1]}"
-            maxlen = max(self.config.spread_history_bars, self.config.lookback_window)
+            # Ensure price_history is long enough for all use cases:
+            # - spread_history_bars: for spread calculations
+            # - lookback_window: for z-score lookback
+            # - min_hedge_lookback: for hedge ratio calculation
+            maxlen = max(
+                self.config.spread_history_bars,
+                self.config.lookback_window,
+                self.config.min_hedge_lookback
+            )
             self._pair_states[pair_key] = {
                 'stock_a': pair[0],
                 'stock_b': pair[1],

@@ -112,25 +112,11 @@ class BayesianOptimizer(BaseOptimizer):
                 # We need to suggest one of them
                 selected_dict = trial.suggest_categorical(param_name, param_values)
                 params[param_name] = selected_dict
-            # Check if parameter is numeric
-            elif all(isinstance(v, (int, float)) for v in param_values):
-                # Determine if integer or float
-                if all(isinstance(v, int) for v in param_values):
-                    # Integer parameter
-                    params[param_name] = trial.suggest_int(
-                        param_name,
-                        min(param_values),
-                        max(param_values)
-                    )
-                else:
-                    # Float parameter
-                    params[param_name] = trial.suggest_float(
-                        param_name,
-                        min(param_values),
-                        max(param_values)
-                    )
+            # For all other parameters, use categorical to restrict to exact values
+            # This prevents the optimizer from sampling intermediate values
+            # (e.g., if we specify [60, 180, 300], we don't want 137)
             else:
-                # Categorical parameter
+                # Categorical parameter - use exact values from the list
                 params[param_name] = trial.suggest_categorical(
                     param_name,
                     param_values

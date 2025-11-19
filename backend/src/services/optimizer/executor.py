@@ -190,10 +190,15 @@ def run_backtest_task(args: tuple) -> TaskResult:
         # Handle pair_selection parameter if present (before creating config_data)
         filtered_params = params.copy()  # Work with a copy
         if 'pair_selection' in filtered_params and isinstance(filtered_params['pair_selection'], dict):
-            # Get all pairs from config
+            # Get all pairs from config (check both top-level and fixed_params)
             all_pairs = []
-            if config and 'pairs' in config:
-                all_pairs = config['pairs']
+            if config:
+                if 'pairs' in config:
+                    all_pairs = config['pairs']
+                elif 'fixed_params' in config and 'pairs' in config['fixed_params']:
+                    all_pairs = config['fixed_params']['pairs']
+            
+            worker_logger.info(f"WORKER: pair_selection filtering - found {len(all_pairs)} pairs in config")
             
             # Filter pairs based on selection
             pair_selection = filtered_params['pair_selection']
@@ -209,6 +214,17 @@ def run_backtest_task(args: tuple) -> TaskResult:
             
             # Remove pair_selection from params so it doesn't get passed to strategy
             filtered_params = {k: v for k, v in filtered_params.items() if k != 'pair_selection'}
+            
+            worker_logger.info(f"WORKER: After filtering, {len(filtered_pairs)} pairs enabled: {filtered_pairs}")
+            
+            # Skip this combination if no pairs are selected
+            if not filtered_pairs:
+                worker_logger.info("WORKER: Skipping - no pairs enabled in pair_selection")
+                return TaskResult(
+                    params=params,
+                    success=False,
+                    error="No pairs enabled - all pairs disabled in pair_selection"
+                )
         else:
             # Get pairs from config if not using pair_selection
             filtered_pairs = None
@@ -328,7 +344,19 @@ def run_backtest_task(args: tuple) -> TaskResult:
             'total_slippage': float(metrics.total_slippage) if metrics.total_slippage else None
         }
         
-        msg = f"WORKER: Backtest completed successfully. Score: {score}"
+        # Format metrics, handling None values
+        trades = metrics_dict['total_trades'] or 0
+        ret = metrics_dict['total_return_pct'] or 0.0
+        sharpe = metrics_dict['sharpe_ratio'] or 0.0
+        win_rate = metrics_dict['win_rate'] or 0.0
+        
+        msg = (
+            f"WORKER: Backtest completed successfully. Score: {score}\n"
+            f"WORKER: Metrics: Trades={trades}, "
+            f"Return={ret:.2f}%, "
+            f"Sharpe={sharpe:.3f}, "
+            f"Win Rate={win_rate:.1f}%"
+        )
         print(msg, flush=True)
         print("=" * 60, flush=True)
         worker_logger.info(msg)

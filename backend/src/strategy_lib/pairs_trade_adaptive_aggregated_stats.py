@@ -128,7 +128,8 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
             config = PairsTradingAggregatedConfig(**pairs_config_data)
         
         # Parse pairs from config
-        if hasattr(config, 'pairs') and config.pairs:
+        if hasattr(config, 'pairs') and config.pairs is not None:
+            # pairs is explicitly set (could be [] for no pairs, which is valid)
             self.pairs = config.pairs
         elif hasattr(config, 'symbols') and len(config.symbols) >= 2:
             # Fallback: treat consecutive symbols as pairs
@@ -194,7 +195,15 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
         
         for pair in self.pairs:
             pair_key = f"{pair[0]}/{pair[1]}"
-            maxlen = max(self.config.spread_history_bars, self.config.lookback_window)
+            # Ensure price_history is long enough for all use cases:
+            # - spread_history_bars: for spread calculations
+            # - lookback_window: for z-score lookback
+            # - min_hedge_lookback: for hedge ratio calculation
+            maxlen = max(
+                self.config.spread_history_bars,
+                self.config.lookback_window,
+                self.config.min_hedge_lookback
+            )
             self._pair_states[pair_key] = {
                 'stock_a': pair[0],
                 'stock_b': pair[1],
@@ -562,10 +571,9 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
                 # Fast warmup: process all historical bars in aggregated chunks
                 self._fast_warmup_pair(pair_key, pair_state, bars_a, bars_b)
             
-            # Optimization: Only process bars we haven't seen before
-            # In backtesting, the DataFrame grows over time, so we skip already-processed bars
-            # In live trading, the DataFrame only contains recent bars, so all bars get processed
-            last_processed = pair_state['last_processed_timestamp']
+            # Process all bars in the DataFrame
+            # Note: The backtest engine now only passes new bars after initial warmup,
+            # so we don't need to skip already-processed bars
             
             for idx in range(len(bars_a)):
                 if idx >= len(bars_b):
@@ -582,10 +590,6 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
                     timestamp = timestamp.to_pydatetime().replace(tzinfo=self.market_timezone)
                 else:
                     timestamp = timestamp.to_pydatetime().astimezone(self.market_timezone)
-                
-                # Skip bars we've already processed (optimization for backtesting)
-                if last_processed is not None and timestamp <= last_processed:
-                    continue
                 
                 # Get prices
                 price_a = float(bar_a['close'])
@@ -659,10 +663,10 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
             # Require sufficient spread history for statistics
             spread_hist_len = len(pair_state['spread_history'])
             if spread_hist_len < self.config.lookback_window:
-                # DEBUG: Log first few times to show progress (suppress during optimization)
+                # Still warming up - need more spread bars for statistical analysis
                 if not is_optimization and (spread_hist_len % 20 == 0 or spread_hist_len < 10):
                     self.log_info(
-                        f"[WARMING UP] {stock_a}/{stock_b}: {spread_hist_len}/{self.config.lookback_window} bars collected"
+                        f"[WARMING UP] {stock_a}/{stock_b}: {spread_hist_len}/{self.config.lookback_window} spread bars collected"
                     )
                 continue
             
@@ -745,6 +749,7 @@ class PairsTradingAggregatedStrategy(BaseStrategy):
                 continue
             
             signals = []
+            
             if pair_state['current_position'] == "flat":
                 cooldown = pair_state.get('cooldown_remaining', 0)
                 if cooldown > 0:

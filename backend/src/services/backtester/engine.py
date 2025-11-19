@@ -241,6 +241,9 @@ class BacktestEngine:
         instruments = {symbol: {"symbol": symbol} for symbol in filtered_data.keys()}
         await self.strategy.on_start(instruments)
         
+        # Reset warmup flag for this backtest run
+        self._strategy_warmed_up = False
+        
         # Main backtest loop - iterate through each timestamp
         for i, timestamp in enumerate(all_timestamps):
             # Get current bar data for all symbols at this timestamp
@@ -263,11 +266,22 @@ class BacktestEngine:
                 ]
                 
                 if symbols_ready:
-                    # Prepare bars data with only lookback period
-                    bars_data_limited = {
-                        symbol: current_bars[symbol].tail(self.strategy.config.lookback_periods)
-                        for symbol in symbols_ready
-                    }
+                    # For stateful strategies (like pairs trading with aggregation),
+                    # we should only pass NEW bars, not reprocess entire history.
+                    # On first call (warmup), pass lookback bars. After that, pass only new bar.
+                    if not hasattr(self, '_strategy_warmed_up'):
+                        # Initial warmup: pass all lookback bars for fast initialization
+                        bars_data_limited = {
+                            symbol: current_bars[symbol].tail(self.strategy.config.lookback_periods)
+                            for symbol in symbols_ready
+                        }
+                        self._strategy_warmed_up = True
+                    else:
+                        # After warmup: pass only the newest bar (current tick)
+                        bars_data_limited = {
+                            symbol: current_bars[symbol].tail(1)
+                            for symbol in symbols_ready
+                        }
                     
                     # Call multi-symbol strategy method
                     signals = await self.strategy.on_bar_multi(
