@@ -163,11 +163,10 @@ maxlen = max(
 
 ### Critical Constraint #2: Warmup Requirements
 ```
-Total warmup time (raw bars) = max(
-    min_hedge_lookback,
-    lookback_window × stats_aggregation_bars
-)
+Total warmup time (raw bars) = min_hedge_lookback
+                              + (lookback_window × stats_aggregation_bars)
 ```
+You must first accumulate `min_hedge_lookback` raw bars before the strategy even attempts a hedge refresh, and **only after that point** can it start filling the aggregated spread buffer. This is why the requirements add together rather than taking the max.
 
 **Example failure case**:
 ```
@@ -378,4 +377,3 @@ In live trading, the hedge ratio updates every `hedge_refresh_bars`:
 
 *Last Updated: 2025-11-18*
 *After fixing critical bugs in price_history sizing and bar processing*
-

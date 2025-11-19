@@ -17,9 +17,9 @@ cd "$(dirname "$0")/.." || exit 1
 STRATEGY_NAME="Pairs_Trading_Adaptive_Aggregated"
 # LOOKBACK = raw 5-sec bars to pass on initial warmup
 # Need: max(lookback_window) * max(stats_aggregation_seconds) / 5 + min_hedge_lookback
-# = 40 * 600 / 5 + 120 = 4,800 + 120 = 4,920
-# Set to 5,000 for safety
-LOOKBACK=5000
+# = 50 * 1800 / 5 + 120 = 18,000 + 120 = 18,120
+# Set to 20,000 for safety
+LOOKBACK=20000
 TIMEFRAME="5 secs"
 INITIAL_CAPITAL=250000
 
@@ -28,9 +28,9 @@ INITIAL_CAPITAL=250000
 WORKERS=${WORKERS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}
 
 # Optimization settings
-ALGORITHM="bayesian"  # bayesian for intelligent parameter search
+ALGORITHM="random_search"  
 OBJECTIVE="sharpe_ratio"  # sharpe_ratio, sortino_ratio, total_return, profit_factor
-MAX_ITERATIONS=50  # With early stopping, will exit when converged
+MAX_ITERATIONS=500  # With early stopping, will converge when no improvement
 BATCH_SIZE=${BATCH_SIZE:-$WORKERS}  # Match worker count for full CPU utilization (default: auto-detect)
 
 # Optional overrides (export before running)
@@ -38,10 +38,8 @@ START_DATE=${START_DATE:-""}  # e.g. 2024-08-01
 END_DATE=${END_DATE:-""}      # e.g. 2024-12-31
 # WORKERS can be set to control CPU cores used (default: auto-detect)
 
-# New pairs from daily bar analysis (Top 3 from cointegration study)
-# AMN/CORT: Healthcare sector (Sharpe 4.03, 7.5d half-life, p=0.000045)
-# FITB/TMHC: Housing market (Sharpe 3.67, 6.3d half-life, p=0.001225)
-# ACT/DUK: Defensive stocks (Sharpe 4.08, 9.4d half-life, p=0.000994)
+# Multi-pair optimization: AMN/CORT, FITB/TMHC, ACT/DUK
+# Optimizer will test each pair on/off via boolean flags
 SYMBOLS=(AMN CORT FITB TMHC ACT DUK)
 SYMBOLS_CSV="AMN,CORT,FITB,TMHC,ACT,DUK"
 SYMBOLS_JSON='["AMN","CORT","FITB","TMHC","ACT","DUK"]'
@@ -53,23 +51,19 @@ PAIRS_JSON='[
 
 # Parameter ranges for optimization
 # Format: Lists of values to test for each parameter
-# LONG-CYCLE SETTINGS: These pairs revert over 6-9 DAYS on daily bars
-# Testing if they also show intraday mean-reversion patterns on 5-sec bars
-# KEY PARAMETER: stats_aggregation_seconds - determines z-score calculation timeframe
-# With 7 days × 6.5 hrs/day × 720 bars/hr = ~31,000 bars available:
-# Max spreads at 3600s agg: 31,000 / 720 = 43 spreads
-# Safe lookback_window max: 40 spreads (works for all aggregations)
+# MEDIUM/LONG-CYCLE SETTINGS: Purposefully slower signals to reduce turnover.
+# Allow optimizer to hunt for hour-long aggregation windows and longer holds.
 PARAM_RANGES=$(cat <<JSON
 {
-  "lookback_window": [10, 15, 20, 25, 30, 40],
-  "entry_threshold": [1.5, 1.8, 2.0, 2.2, 2.5, 3.0],
-  "exit_threshold": [0.2, 0.3, 0.5, 0.7, 1.0],
-  "max_hold_bars": [3600, 5400, 7200, 10800, 14400],
-  "stop_loss_zscore": [2.5, 3.0, 3.5, 4.0],
-  "cooldown_bars": [120, 180, 240, 300, 420, 600],
-  "hedge_refresh_bars": [60, 90, 120, 180, 240],
-  "volatility_window": [5, 8, 10, 12, 15, 20],
-  "stats_aggregation_seconds": [60, 120, 300, 600, 1200, 1800, 3600],
+  "lookback_window": [10, 20, 30, 40, 50],
+  "entry_threshold": [1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5],
+  "exit_threshold": [0.3, 0.5, 0.7, 1.0, 1.2],
+  "max_hold_bars": [5400, 7200, 10800, 14400, 21600, 28800],
+  "stop_loss_zscore": [2.5, 3.0, 3.5],
+  "cooldown_bars": [180, 240, 300, 600, 900],
+  "hedge_refresh_bars": [90, 120, 180, 240, 360, 480],
+  "volatility_window": [8, 10, 15, 20, 25, 30],
+  "stats_aggregation_seconds": [60, 120, 180, 300, 600, 900, 1800],
   "pair_selection": {
     "AMN/CORT": [true, false],
     "FITB/TMHC": [true, false],
@@ -99,7 +93,7 @@ CONFIG_JSON=$(cat <<JSON
     "max_pair_notional": 100000,
     "max_portfolio_notional": 300000,
     "min_hedge_lookback": 120,
-    "spread_history_bars": 100,
+    "spread_history_bars": 150,
     "volatility_adaptation_enabled": true,
     "market_close_hour": 16,
     "market_close_minute": 0,
@@ -117,50 +111,50 @@ echo "Strategy:       $STRATEGY_NAME"
 echo "Algorithm:      $ALGORITHM"
 echo "Objective:      $OBJECTIVE"
 echo "Timeframe:      $TIMEFRAME"
-echo "Max Iterations: $MAX_ITERATIONS (with early stopping)"
+echo "Max Iterations: $MAX_ITERATIONS (bayesian with early stopping)"
 echo "Batch Size:     $BATCH_SIZE (progress updates every $BATCH_SIZE tests)"
 echo "Initial Capital: \$$INITIAL_CAPITAL"
 echo "CPU Workers:    $WORKERS cores (100% utilization per batch)"
 echo ""
-echo "Optimizing Parameters (LONG-CYCLE - Multi-day mean reversion):"
-echo "  • stats_aggregation:  60 - 3600 sec (1m - 1hr for z-score calc) 🔑 KEY!"
-echo "  • lookback_window:    20 - 40 SPREAD entries (safe for all aggs)"
-echo "  •   @ 60s agg:        20min - 40min of history"
-echo "  •   @ 300s agg:       1.7hrs - 3.3hrs of history"
-echo "  •   @ 3600s agg:      0.8days - 1.7days of history"
-echo "  • volatility_window:  10 - 20 SPREAD entries"
-echo "  • entry_threshold:    1.5 - 3.0 (lower for intraday noise)"
-echo "  • exit_threshold:     0.3 - 1.0 (wider exit range)"
-echo "  • max_hold_bars:      3600 - 21600 (5 hours - 3 days RAW bars)"
-echo "  • stop_loss_zscore:   3.0 - 5.0 (very wide stops)"
-echo "  • cooldown_bars:      300 - 1200 (25-100 min RAW bars)"
-echo "  • hedge_refresh_bars: 120 - 360 (10-30 min RAW bars)"
-echo "  • pair_selection:     Enable/disable each of 3 pairs"
+echo "Optimizing Parameters (INCLUDES WORKING BASELINE + EXPLORATION):"
+echo "  • stats_aggregation:  60 - 1800 sec (1m - 30m z-score sampling) 🔑 KEY!"
+echo "  • lookback_window:    10 - 50 SPREAD entries"
+echo "  • volatility_window:  8 - 30 SPREAD entries"
+echo "  • entry_threshold:    1.2 - 3.5 z-score (includes working 1.5)"
+echo "  • exit_threshold:     0.3 - 1.2"
+echo "  • max_hold_bars:      5,400 - 28,800 (7.5 hrs - 40 hrs RAW bars)"
+echo "  • stop_loss_zscore:   2.5 - 5.0"
+echo "  • cooldown_bars:      180 - 900 (15 min - 75 min RAW bars)"
+echo "  • hedge_refresh_bars: 90 - 480 (7.5 min - 40 min RAW bars)"
+echo "  • pair_selection:     AMN/CORT, FITB/TMHC, ACT/DUK (8 combos)"
 echo ""
 echo "Position Sizing (Notional-Based):"
 echo "  • base_pair_notional: \$50,000 (target capital per pair)"
 echo "  • min_pair_notional:  \$5,000 (minimum to enter)"
 echo "  • max_pair_notional:  \$100,000 (max per pair)"
 echo "  • max_portfolio:      \$300,000 (total exposure cap)"
-echo "  • spread_history:     100 entries (buffer for calculations)"
-echo "  • lookback_periods:   5,000 raw bars (sufficient for all aggregations)"
+echo "  • spread_history:     150 entries (buffer for calculations)"
+echo "  • lookback_periods:   20,000 raw bars (covers up to 30m aggregations)"
 echo ""
 echo "Parameter Ranges Being Tested:"
-echo "  • lookback_window:    10-40 spread entries"
-echo "  • entry_threshold:    1.2-2.5 z-score"
-echo "  • exit_threshold:     0.2-1.0 z-score"
-echo "  • max_hold_bars:      3600-14400 raw bars (5 hrs - 20 hrs)"
-echo "  • stop_loss_zscore:   2.5-4.0"
-echo "  • cooldown_bars:      120-600 raw bars (10 min - 50 min)"
-echo "  • hedge_refresh_bars: 60-240 raw bars (5 min - 20 min)"
-echo "  • volatility_window:  5-20 spread entries"
+echo "  • lookback_window:    10-50 spread entries"
+echo "  • entry_threshold:    1.2-3.5 z-score"
+echo "  • exit_threshold:     0.3-1.2 z-score"
+echo "  • max_hold_bars:      5,400-28,800 raw bars (7.5 hrs - 40 hrs)"
+echo "  • stop_loss_zscore:   2.5-5.0"
+echo "  • cooldown_bars:      180-900 raw bars (15 min - 75 min)"
+echo "  • hedge_refresh_bars: 90-480 raw bars (7.5 min - 40 min)"
+echo "  • volatility_window:  8-30 spread entries"
+echo "  • pair_selection:     8 combinations (2^3) of AMN/CORT, FITB/TMHC, ACT/DUK"
 echo ""
 echo "Z-Score Aggregation Periods Being Tested:"
-echo "  • 60 sec  (1 min)   - Fast reaction"
-echo "  • 120 sec (2 min)   - Moderate"
-echo "  • 180 sec (3 min)   - Balanced"
-echo "  • 300 sec (5 min)   - Smoother"
-echo "  • 600 sec (10 min)  - Slow mean reversion"
+echo "  • 60 sec   (1 min)   - Fast intraday (WORKING BASELINE)"
+echo "  • 120 sec  (2 min)   - Slightly smoother"
+echo "  • 180 sec  (3 min)   - Balanced"
+echo "  • 300 sec  (5 min)   - Medium-term"
+echo "  • 600 sec  (10 min)  - Slower swing"
+echo "  • 900 sec  (15 min)  - Conservative"
+echo "  • 1800 sec (30 min)  - Long-cycle intraday"
 echo ""
 echo "Commission Model (IBKR Tiered):"
 echo "  • per share:          \$0.0035 (vs \$0.005 Fixed)"
@@ -210,4 +204,3 @@ echo ""
 echo ""
 
 "${CMD[@]}"
-

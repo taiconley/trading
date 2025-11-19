@@ -183,4 +183,4 @@ START_DATE=2025-10-22 END_DATE=2025-10-29 WORKERS=16 \
   ./scripts/run_backtest_pairs_trading_aggregated.sh
 
 to optimize trading_aggregated (Bayesian optimization for Sharpe ratio)
-START_DATE=2025-10-22 END_DATE=2025-10-29 WORKERS=16 ./scripts/run_optimizer_pairs_aggregated.sh
+START_DATE=2025-10-22 END_DATE=2025-11-13 WORKERS=16 ./scripts/run_optimizer_pairs_aggregated.sh
