@@ -1547,7 +1547,7 @@ class PairsTradingKalmanStrategy(BaseStrategy):
         pair_state['entry_quantities'] = {}
         pair_state['entry_notional'] = 0.0
         pair_state['unrealized_pnl'] = 0.0
-        if exit_reason in {"stop_loss", "pnl_stop", "volatility_stop"}:
+        if exit_reason in {"stop_loss", "pnl_stop", "volatility_stop", "zscore_stop"}:
             pair_state['cooldown_remaining'] = max(
                 pair_state['cooldown_remaining'],
                 self.config.cooldown_bars

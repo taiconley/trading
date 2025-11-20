@@ -204,3 +204,195 @@ docker compose exec backend-api python -m src.research.cluster_pairs_analyzer \
 
 
   START_DATE=2025-10-31 END_DATE=2025-11-14 WORKERS=16 ./scripts/run_optimizer_pairs_kalman.sh
+
+Data & Timeframe Parameters
+
+bar_timeframe: "5 secs"
+Bar resolution: 5-second bars
+Used for price history and signal generation
+
+lookback_periods: 350
+Number of raw 5-second bars to load for warmup
+Ensures enough history for spread calculations and hedge ratio estimation
+
+stats_aggregation_seconds: 1800
+Resampling period: 30 minutes
+Raw 5-second bars are aggregated to 30-minute bars for spread statistics
+Reduces noise and focuses on longer-term mean reversion
+
+Entry/Exit Thresholds
+lookback_window: 20
+Number of aggregated spread bars used for z-score calculation
+With 30-minute aggregation: 20 bars = 10 hours of history
+Smaller window = more responsive to recent changes
+
+entry_threshold: 1.8
+Z-score threshold to enter a trade
+Enter when |z-score| ≥ 1.8 (spread deviates 1.8 standard deviations from mean)
+Higher = more selective, fewer but stronger signals
+
+exit_threshold: 0.3
+Z-score threshold to exit a trade
+Exit when |z-score| ≤ 0.3 (spread returns close to mean)
+Lower = wait for more mean reversion before exiting
+
+stop_loss_zscore: 2.5
+Stop-loss threshold
+Exit if z-score moves against position beyond 2.5
+Example: Enter at z=1.8, exit if z reaches 2.5 (worse)
+
+Position Management
+max_hold_bars: 21600
+Maximum bars to hold a position (raw 5-second bars)
+21,600 bars = ~30 hours
+Forces exit if position hasn't mean-reverted by then
+
+cooldown_bars: 300
+Bars to wait after a stop-loss exit before re-entering
+300 bars = ~25 minutes
+Prevents immediate re-entry after a bad trade
+Hedge Ratio & Kalman Filter
+
+hedge_refresh_bars: 480
+Frequency to recalculate hedge ratio (in raw 5-second bars)
+480 bars = ~40 minutes
+How often the Kalman filter updates beta (hedge ratio)
+
+min_hedge_lookback: 120
+Minimum bars required before calculating hedge ratio
+120 bars = ~10 minutes
+Ensures enough data for reliable regression
+
+use_kalman: true
+Use Kalman filter instead of OLS for hedge ratio
+Adapts dynamically to changing relationships
+
+kalman_delta: 0.00001
+System noise covariance (Q matrix scaling)
+Lower = slower adaptation, more stable
+Very low (0.00001) = very stable, slow to change
+
+kalman_R: 0.001
+Measurement noise variance
+Higher = more smoothing, less sensitive to price noise
+0.001 = moderate smoothing
+Stationarity Checks
+
+stationarity_checks_enabled: true
+Enable ADF and cointegration tests
+Blocks trading if spread is not stationary
+
+adf_pvalue_threshold: 0.05
+Maximum p-value for Augmented Dickey-Fuller test
+p < 0.05 = spread is stationary (mean-reverting)
+Blocks entry if spread is trending
+
+cointegration_pvalue_threshold: 0.05
+Maximum p-value for cointegration test
+p < 0.05 = stocks are cointegrated (long-term relationship)
+Ensures pair has fundamental relationship
+
+stationarity_check_interval: 60
+Bars between stationarity checks
+60 bars = ~5 minutes
+Re-checks periodically to ensure spread remains stationary
+
+Volatility Adaptation
+volatility_adaptation_enabled: true
+Adjust entry/exit thresholds based on current volatility
+Higher volatility = wider thresholds
+
+volatility_window: 30
+Bars used to calculate current volatility (aggregated bars)
+30 bars = 15 hours of aggregated data
+Compares recent volatility to baseline
+
+volatility_ema_alpha: 0.2
+EMA smoothing factor for baseline volatility
+0.2 = 20% new data, 80% old baseline
+Smooths baseline to avoid overreacting
+
+min_volatility_ratio: 0.75
+Lower bound for volatility adjustment
+Never reduces thresholds below 75% of baseline
+Prevents too-tight thresholds in low volatility
+
+max_volatility_ratio: 1.5
+Upper bound for volatility adjustment
+Never increases thresholds above 150% of baseline
+Prevents too-wide thresholds in high volatility
+
+min_exit_volatility_ratio: 0.8
+Lower bound for exit threshold adjustment
+Separate from entry to allow different exit behavior
+max_exit_volatility_ratio: 1.3
+
+Position Sizing
+position_size: 48
+Legacy fallback shares per leg (if notional-based sizing fails)
+Usually overridden by notional-based sizing
+
+base_pair_notional: 25000
+Target gross notional per pair ($25k)
+Example: $12.5k long + $12.5k short = $25k gross
+min_pair_notional: 5000
+Minimum notional to enter a trade
+Skips trades that would be too small
+
+max_pair_notional: 100000
+Maximum notional per pair
+Caps position size
+
+max_portfolio_notional: 300000
+Total exposure cap across all pairs
+Risk management limit
+
+volatility_positioning_enabled: true
+Scale position size by volatility
+Lower volatility = larger positions (more confident)
+
+volatility_position_power: 1.0
+Exponent for volatility scaling
+1.0 = linear scaling
+Higher = more aggressive scaling
+
+risk_budget_per_pair: 1000
+Dollar risk budget divided by spread volatility
+Alternative sizing method based on risk
+Half-Life & Mean Reversion Quality
+
+halflife_weight_bars: 240
+Reference window for half-life weighting
+Used to scale position size by mean-reversion speed
+
+max_halflife_bars: 720
+Maximum acceptable half-life (in aggregated bars)
+720 bars = 360 hours = 15 days
+Skips pairs that mean-revert too slowly
+
+require_half_life: true
+Block entries until half-life can be estimated
+Ensures mean-reversion quality before trading
+
+Risk Management
+max_pair_loss_pct: 0.02
+Maximum loss as % of allocated notional before exit
+2% = exit if loss exceeds 2% of position value
+
+volatility_stop_multiplier: 2.5
+Exit if spread deviates this many std devs from entry
+Example: Enter at z=1.8, exit if spread moves 2.5 std devs further
+
+Execution
+execution_type: "MKT"
+Order type: Market orders
+Fills immediately at current price
+
+Summary
+This configuration targets:
+Longer-term mean reversion (30-minute aggregation)
+Selective entries (1.8 threshold)
+Patient exits (0.3 threshold, wait for full reversion)
+Stable hedge ratios (very low Kalman delta)
+Quality control (stationarity checks, half-life requirements)
+The strategy is conservative and patient, waiting for strong signals and full mean reversion.
