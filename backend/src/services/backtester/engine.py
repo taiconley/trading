@@ -681,32 +681,57 @@ class BacktestEngine:
             metrics.total_commission = sum(t.commission for t in self.trades)
             metrics.total_slippage = sum(t.slippage for t in self.trades)
         
-        # Sharpe ratio (simplified - using daily returns)
+        # Sharpe ratio - adaptive annualization based on actual bar frequency
         if len(self.equity_curve) > 1:
             returns: List[float] = []
             for i in range(1, len(self.equity_curve)):
                 prev_equity = self.equity_curve[i - 1][1]
                 curr_equity = self.equity_curve[i][1]
                 if prev_equity > 0:
-                    daily_return = (curr_equity - prev_equity) / prev_equity
-                    returns.append(float(daily_return))
+                    bar_return = (curr_equity - prev_equity) / prev_equity
+                    returns.append(float(bar_return))
             
-            if returns:
+            if returns and metrics.start_date and metrics.end_date:
                 returns_array = np.array(returns, dtype=float)
                 mean_return = float(np.mean(returns_array))
                 std_return = float(np.std(returns_array))
                 
-                if std_return > 0:
-                    metrics.sharpe_ratio = Decimal(str((mean_return / std_return) * np.sqrt(252)))
+                # Calculate actual periods per year based on data
+                total_seconds = (metrics.end_date - metrics.start_date).total_seconds()
+                num_bars = len(returns_array)
                 
-                annualized_vol = std_return * np.sqrt(252)
+                if num_bars > 0 and total_seconds > 0:
+                    avg_seconds_per_bar = total_seconds / num_bars
+                    
+                    # Estimate bars per year (accounting for trading calendar)
+                    # Assume 252 trading days, 6.5 hours per day
+                    trading_seconds_per_year = 252 * 6.5 * 3600
+                    bars_per_year = trading_seconds_per_year / avg_seconds_per_bar
+                    
+                    annualization_factor = np.sqrt(bars_per_year)
+                    
+                    # Log the calculated annualization factor for transparency
+                    self.logger.debug(
+                        f"Annualization: {num_bars} bars over {total_seconds/86400:.1f} days, "
+                        f"avg {avg_seconds_per_bar:.1f}s/bar, "
+                        f"{bars_per_year:.0f} bars/year, factor={annualization_factor:.2f}"
+                    )
+                else:
+                    # Fallback to daily assumption
+                    annualization_factor = np.sqrt(252)
+                    self.logger.warning("Could not calculate bar frequency, using daily assumption (sqrt(252))")
+                
+                if std_return > 0:
+                    metrics.sharpe_ratio = Decimal(str((mean_return / std_return) * annualization_factor))
+                
+                annualized_vol = std_return * annualization_factor
                 metrics.annualized_volatility_pct = Decimal(str(annualized_vol * 100))
                 
                 downside_returns = returns_array[returns_array < 0]
                 if downside_returns.size > 0:
                     downside_std = float(np.std(downside_returns))
                     if downside_std > 0:
-                        metrics.sortino_ratio = Decimal(str((mean_return / downside_std) * np.sqrt(252)))
+                        metrics.sortino_ratio = Decimal(str((mean_return / downside_std) * annualization_factor))
                 
                 var_95 = float(np.percentile(returns_array, 5))
                 metrics.value_at_risk_pct = Decimal(str(max(0.0, -var_95) * 100))

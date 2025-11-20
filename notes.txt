@@ -184,3 +184,23 @@ START_DATE=2025-10-22 END_DATE=2025-10-29 WORKERS=16 \
 
 to optimize trading_aggregated (Bayesian optimization for Sharpe ratio)
 START_DATE=2025-10-22 END_DATE=2025-11-13 WORKERS=16 ./scripts/run_optimizer_pairs_aggregated.sh
+
+
+to get new pairs with clusters:
+docker compose exec backend-api python -m src.research.cluster_pairs_analyzer \
+    --timeframe "1 day" \
+    --start-date "2023-09-25T00:00:00Z" \
+    --end-date "2025-10-29T23:59:59Z" \
+    --min-bars 60 \
+    --min-trades 1 \
+    --max-symbols 2303 \
+    --max-pairs 250000 \
+    --parallelism 26 \
+    --min-dollar-volume 500000 \
+    --pca-components 10 \
+    --min-cluster-size 2 \
+    --eps 0.8 \               #higher this value is, the more clusters will be created
+    --verbose
+
+
+  START_DATE=2025-10-31 END_DATE=2025-11-14 WORKERS=16 ./scripts/run_optimizer_pairs_kalman.sh

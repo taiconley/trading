@@ -37,6 +37,7 @@ from . import mean_revert
 from . import pairs_trade
 from . import pairs_trade_adaptive
 from . import pairs_trade_adaptive_aggregated_stats
+from . import pairs_trade_adaptive_kalman
 
 __all__ = [
     # Base classes and types
