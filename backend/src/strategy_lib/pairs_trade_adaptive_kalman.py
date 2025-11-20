@@ -521,9 +521,9 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             
             # Compute spread
             if self.config.use_kalman:
-                # Update Kalman Filter
+                # Update Kalman Filter with log prices (stationary spread)
                 kf = pair_state['kalman_filter']
-                spread, beta, alpha = kf.update(price_a, price_b)
+                spread, beta, alpha = kf.update(np.log(price_a), np.log(price_b))
                 pair_state['hedge_ratio'] = beta
                 pair_state['hedge_intercept'] = alpha
             else:
@@ -657,7 +657,8 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                     
                     if self.config.use_kalman:
                         kf = pair_state['kalman_filter']
-                        spread, beta, alpha = kf.update(agg_price_a, agg_price_b)
+                        # Use log prices for Kalman filter (stationary spread)
+                        spread, beta, alpha = kf.update(np.log(agg_price_a), np.log(agg_price_b))
                         pair_state['hedge_ratio'] = beta
                         pair_state['hedge_intercept'] = alpha
                     else:
@@ -714,9 +715,10 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             if self.config.use_kalman:
                 # For Kalman, the spread is the prediction error from the last update
                 # We can re-calculate it using current prices and current state
+                # CRITICAL: Use log prices to match the Kalman filter training
                 kf = pair_state['kalman_filter']
                 beta, alpha = kf.get_state()
-                current_spread = price_a - (beta * price_b + alpha)
+                current_spread = np.log(price_a) - (beta * np.log(price_b) + alpha)
             else:
                 current_spread = self._compute_spread(pair_state, price_a, price_b)
                 

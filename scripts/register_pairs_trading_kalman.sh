@@ -10,20 +10,12 @@ STRATEGY_ID="pairs_trading_kalman_v1"
 STRATEGY_NAME="Pairs_Trading_Adaptive_Kalman"
 ENABLE_STRATEGY=false  # flip to true when you're ready to let the live service load it
 
-# Unique symbols extracted from pairs_trading_kalman_config.py
-SYMBOLS_JSON='["AMN","CORT","ACA","KTB","ANET","AORT","ANDE","LYEL","ABR","GRPN","AHCO","MGY","AIN","ESE","ADPT","IBEX","ACT","DUK"]'
+# Optimized pair from optimization run
+SYMBOLS_JSON='["AVB","EQR"]'
 
-# Candidate pairs sourced from pairs_trading_kalman_config.py
+# Optimized pair selection
 PAIRS_JSON='[
-  ["AMN","CORT"],
-  ["ACA","KTB"],
-  ["ANET","AORT"],
-  ["ANDE","LYEL"],
-  ["ABR","GRPN"],
-  ["AHCO","MGY"],
-  ["AIN","ESE"],
-  ["ADPT","IBEX"],
-  ["ACT","DUK"]
+  ["AVB","EQR"]
 ]'
 
 # Strategy parameters persisted to strategies.params_json
@@ -35,29 +27,29 @@ PARAMS_JSON=$(cat <<JSON
   "pairs": $PAIRS_JSON,
   "bar_timeframe": "5 secs",
   "lookback_periods": 350,
-  "lookback_window": 222,
-  "entry_threshold": 1.5,
-  "exit_threshold": 0.4,
+  "lookback_window": 20,
+  "entry_threshold": 1.8,
+  "exit_threshold": 0.3,
   "position_size": 48,
-  "max_hold_bars": 747,
-  "stop_loss_zscore": 2.8,
+  "max_hold_bars": 21600,
+  "stop_loss_zscore": 2.5,
   "market_close_hour": 16,
   "market_close_minute": 0,
   "close_before_eod_minutes": 5,
-  "cooldown_bars": 34,
+  "cooldown_bars": 300,
   "timezone": "US/Eastern",
   "spread_history_bars": 1000,
-  "hedge_refresh_bars": 30,
+  "hedge_refresh_bars": 480,
   "min_hedge_lookback": 120,
   "use_kalman": true,
-  "kalman_delta": 0.0001,
+  "kalman_delta": 0.00001,
   "kalman_R": 0.001,
   "stationarity_checks_enabled": true,
   "adf_pvalue_threshold": 0.05,
   "cointegration_pvalue_threshold": 0.05,
   "stationarity_check_interval": 60,
   "volatility_adaptation_enabled": true,
-  "volatility_window": 240,
+  "volatility_window": 30,
   "volatility_ema_alpha": 0.2,
   "min_volatility_ratio": 0.75,
   "max_volatility_ratio": 1.5,
@@ -76,7 +68,7 @@ PARAMS_JSON=$(cat <<JSON
   "require_half_life": true,
   "max_pair_loss_pct": 0.02,
   "volatility_stop_multiplier": 2.5,
-  "stats_aggregation_seconds": 60
+  "stats_aggregation_seconds": 1800
 }
 JSON
 )

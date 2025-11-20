@@ -27,7 +27,7 @@ WORKERS=${WORKERS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 
 # Optimization settings
 ALGORITHM="random_search"  
 OBJECTIVE="total_return"  # sharpe_ratio, sortino_ratio, total_return, profit_factor
-MAX_ITERATIONS=5  # With early stopping, will converge when no improvement
+MAX_ITERATIONS=5000  # With early stopping, will converge when no improvement
 BATCH_SIZE=${BATCH_SIZE:-$WORKERS}  # Match worker count for full CPU utilization (default: auto-detect)
 
 # Optional overrides (export before running)
