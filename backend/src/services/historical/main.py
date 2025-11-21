@@ -1464,4 +1464,6 @@ async def main():
 
 
 if __name__ == "__main__":
+    from src.common.debug import enable_remote_debugging
+    enable_remote_debugging(5681)
     asyncio.run(main())

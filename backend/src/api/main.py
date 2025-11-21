@@ -1626,5 +1626,7 @@ async def shutdown_event():
 # ============================================================================
 
 if __name__ == "__main__":
+    from src.common.debug import enable_remote_debugging
+    enable_remote_debugging(5678)
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")

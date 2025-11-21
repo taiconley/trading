@@ -38,8 +38,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
       PYTHONPATH: /app/src
+      ENABLE_DEBUGGING: 1
     ports:
       - "8000:8000"
+      - "5678:5678"
     depends_on:
       - postgres
       - backend-account
@@ -66,6 +68,7 @@ services:
     container_name: trading-account
     ports:
       - "8001:8001"
+      - "5679:5679"
     command: python -m src.services.account.main
     environment:
       SERVICE_NAME: account
@@ -74,6 +77,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
+      ENABLE_DEBUGGING: 1
       TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 11
@@ -96,6 +100,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-marketdata
+    ports:
+      - "5680:5680"
     environment:
       SERVICE_NAME: marketdata
       POSTGRES_HOST: postgres
@@ -103,6 +109,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
+      ENABLE_DEBUGGING: 1
       TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 12
@@ -127,6 +134,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: trading-historical
+    ports:
+      - "5681:5681"
     environment:
       SERVICE_NAME: historical
       POSTGRES_HOST: postgres
@@ -134,6 +143,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
+      ENABLE_DEBUGGING: 1
       TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 13
@@ -161,6 +171,7 @@ services:
     container_name: trading-trader
     ports:
       - "8004:8004"
+      - "5682:5682"
     environment:
       SERVICE_NAME: trader
       POSTGRES_HOST: postgres
@@ -168,6 +179,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
+      ENABLE_DEBUGGING: 1
       TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID: 14
@@ -196,6 +208,7 @@ services:
     command: python -m src.services.strategy.main
     ports:
       - "8005:8005"
+      - "5683:5683"
     environment:
       SERVICE_NAME: strategy
       POSTGRES_HOST: postgres
@@ -203,6 +216,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-botpw}
       POSTGRES_DB: ${POSTGRES_DB:-trading}
+      ENABLE_DEBUGGING: 1
       TWS_HOST: 172.17.0.1
       TWS_PORT: ${TWS_PORT:-7497}
       TWS_CLIENT_ID_BASE: ${TWS_CLIENT_ID_BASE:-15}

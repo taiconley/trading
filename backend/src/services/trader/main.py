@@ -1704,6 +1704,8 @@ def signal_handler(signum, frame):
     asyncio.create_task(trader_service.shutdown())
 
 if __name__ == "__main__":
+    from src.common.debug import enable_remote_debugging
+    enable_remote_debugging(5682)
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
     
