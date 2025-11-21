@@ -400,7 +400,7 @@ The strategy is conservative and patient, waiting for strong signals and full me
 
 
 BDX, HOLX
-ITWS, PKG
+ITW, PKG
 V,  MA
 SSB, UBSI
 WM, RSG

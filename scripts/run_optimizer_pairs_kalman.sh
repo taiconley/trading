@@ -27,7 +27,7 @@ WORKERS=${WORKERS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 
 # Optimization settings
 ALGORITHM="random_search"  
 OBJECTIVE="total_return"  # sharpe_ratio, sortino_ratio, total_return, profit_factor
-MAX_ITERATIONS=5000  # With early stopping, will converge when no improvement
+MAX_ITERATIONS=2500  # With early stopping, will converge when no improvement
 BATCH_SIZE=${BATCH_SIZE:-$WORKERS}  # Match worker count for full CPU utilization (default: auto-detect)
 
 # Optional overrides (export before running)
@@ -44,11 +44,11 @@ END_DATE=${END_DATE:-""}      # e.g. 2024-12-31
 #   ["AMN","CORT"],
 #   ["FITB","TMHC"],
 #   ["ACT","DUK"]
-SYMBOLS=(AVB EQR)
-SYMBOLS_CSV="AVB,EQR"
-SYMBOLS_JSON='["AVB","EQR"]'
+SYMBOLS=(ITW PKG)
+SYMBOLS_CSV="ITW,PKG"
+SYMBOLS_JSON='["ITW","PKG"]'
 PAIRS_JSON='[
-  ["AVB","EQR"]
+  ["ITW","PKG"]
 ]'
 
 # Parameter ranges for optimization
@@ -68,7 +68,7 @@ PARAM_RANGES=$(cat <<JSON
   "kalman_delta": [1e-5, 1e-4, 1e-3, 1e-2],
   "kalman_R": [1e-4, 1e-3, 1e-2, 1e-1],
   "pair_selection": {
-    "AVB/EQR": [true, false]
+    "ITW/PKG": [true, false]
   }
 }
 JSON

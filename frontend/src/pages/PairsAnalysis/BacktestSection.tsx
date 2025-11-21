@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Card } from './Card';
-import { api, Strategy } from '../services/api';
+import { Card } from '../../components/Card';
+import { api, Strategy } from '../../services/api';
 import { Play, RefreshCw, AlertTriangle, CheckCircle, Terminal } from 'lucide-react';
 import clsx from 'clsx';
 

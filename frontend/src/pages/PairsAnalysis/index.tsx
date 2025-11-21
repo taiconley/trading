@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Card } from '../components/Card';
+import { Card } from '../../components/Card';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush, ScatterChart, Scatter, ReferenceLine } from 'recharts';
 import { Activity, RefreshCw, AlertCircle, TrendingUp, BarChart2, Clock, Calendar, ZoomIn } from 'lucide-react';
-import { api } from '../services/api';
-import { BacktestSection } from '../components/BacktestSection';
+import { api } from '../../services/api';
+import { BacktestSection } from './BacktestSection';
 
 interface AnalysisResult {
     symbol_a: string;

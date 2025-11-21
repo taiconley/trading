@@ -11,11 +11,11 @@ STRATEGY_NAME="Pairs_Trading_Adaptive_Kalman"
 ENABLE_STRATEGY=false  # flip to true when you're ready to let the live service load it
 
 # Optimized pair from optimization run
-SYMBOLS_JSON='["AVB","EQR"]'
+SYMBOLS_JSON='["ITW","PKG"]'
 
 # Optimized pair selection
 PAIRS_JSON='[
-  ["AVB","EQR"]
+  ["ITW","PKG"]
 ]'
 
 # Strategy parameters persisted to strategies.params_json
@@ -26,29 +26,29 @@ PARAMS_JSON=$(cat <<JSON
   "symbols": $SYMBOLS_JSON,
   "pairs": $PAIRS_JSON,
   "bar_timeframe": "5 secs",
-  "lookback_window": 350,
+  "lookback_window": 40,
   "entry_threshold": 1.8,
-  "exit_threshold": 0.3,
+  "exit_threshold": 0.7,
   "position_size": 48,
   "max_hold_bars": 21600,
-  "stop_loss_zscore": 2.5,
+  "stop_loss_zscore": 3,
   "market_close_hour": 16,
   "market_close_minute": 0,
   "close_before_eod_minutes": 5,
-  "cooldown_bars": 300,
+  "cooldown_bars": 240,
   "timezone": "US/Eastern",
   "spread_history_bars": 1000,
   "hedge_refresh_bars": 480,
   "min_hedge_lookback": 120,
   "use_kalman": true,
   "kalman_delta": 0.00001,
-  "kalman_R": 0.001,
+  "kalman_R": 0.1,
   "stationarity_checks_enabled": true,
   "adf_pvalue_threshold": 0.05,
   "cointegration_pvalue_threshold": 0.05,
   "stationarity_check_interval": 60,
   "volatility_adaptation_enabled": true,
-  "volatility_window": 30,
+  "volatility_window": 15,
   "volatility_ema_alpha": 0.2,
   "min_volatility_ratio": 0.75,
   "max_volatility_ratio": 1.5,
