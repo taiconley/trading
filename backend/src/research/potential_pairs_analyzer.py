@@ -501,6 +501,8 @@ def analyze_pair(
         "total_pnl": total_pnl,
         "pnls": pnls,
         "equity_curve": equity_curve,
+        "spread_series": spread,
+        "zscore_series": zscore,
     }
 
 
@@ -567,7 +569,8 @@ def insert_results(results: List[Dict[str, object]], status: str, replace_existi
     LOGGER.info("Inserted %d rows into potential_pairs", len(rows))
 
 
-def main(args: Optional[Sequence[str]] = None) -> None:
+
+def run_analysis(args: Optional[Sequence[str]] = None) -> None:
     namespace = parse_args(args)
     namespace.parallelism = max(1, min(namespace.parallelism, 26))
     logging.basicConfig(level=logging.DEBUG if namespace.verbose else logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -683,4 +686,5 @@ def main(args: Optional[Sequence[str]] = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run_analysis()
+

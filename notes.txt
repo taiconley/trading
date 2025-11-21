@@ -396,3 +396,14 @@ Patient exits (0.3 threshold, wait for full reversion)
 Stable hedge ratios (very low Kalman delta)
 Quality control (stationarity checks, half-life requirements)
 The strategy is conservative and patient, waiting for strong signals and full mean reversion.
+
+
+
+BDX, HOLX
+ITWS, PKG
+V,  MA
+SSB, UBSI
+WM, RSG
+PPL, EVRG
+WEC, CMS
+FFIN, CATY

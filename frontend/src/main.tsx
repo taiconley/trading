@@ -8,6 +8,7 @@ import HistoricalData from './pages/HistoricalData';
 import { Strategies } from './pages/Strategies';
 import { Backtests } from './pages/Backtests';
 import { Optimizer } from './pages/Optimizer';
+import { PairsAnalysis } from './pages/PairsAnalysis';
 import './index.css';
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
           <Route path="/strategies" element={<Strategies />} />
           <Route path="/backtests" element={<Backtests />} />
           <Route path="/optimizer" element={<Optimizer />} />
+          <Route path="/pairs-analysis" element={<PairsAnalysis />} />
         </Routes>
       </Layout>
     </BrowserRouter>

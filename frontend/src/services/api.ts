@@ -270,6 +270,25 @@ class ApiClient {
     return response.data;
   }
 
+  async runBacktest(config: {
+    strategy_name: string;
+    strategy_params?: Record<string, any>;
+    symbols: string[];
+    timeframe?: string;
+    start_date?: string;
+    end_date?: string;
+    initial_capital?: number;
+    lookback_periods?: number;
+  }) {
+    const response = await this.client.post('/api/backtests/run', config);
+    return response.data;
+  }
+
+  async getBacktestJob(jobId: string) {
+    const response = await this.client.get(`/api/backtests/jobs/${jobId}`);
+    return response.data;
+  }
+
   // ============================================================================
   // Optimizations
   // ============================================================================
@@ -317,6 +336,28 @@ class ApiClient {
     });
     return response.data;
   }
+
+  // ============================================================================
+  // Research
+  // ============================================================================
+
+  async getResearchAvailability(symbol: string, timeframe: string) {
+    const response = await this.client.get('/api/research/availability', {
+      params: { symbol, timeframe }
+    });
+    return response.data;
+  }
+
+  async analyzePair(params: {
+    symbol_a: string;
+    symbol_b: string;
+    timeframe: string;
+    start_date?: string;
+    end_date?: string;
+  }) {
+    const response = await this.client.post('/api/research/analyze-pair', params);
+    return response.data;
+  }
 }
 
 // Export singleton instance
@@ -350,7 +391,7 @@ export interface Backtest {
   params: Record<string, any>;
   start_ts?: string;
   end_ts?: string;
-  
+
   // Core performance metrics
   pnl?: number;
   total_return_pct?: number;
@@ -360,28 +401,28 @@ export interface Backtest {
   value_at_risk_pct?: number;
   maxdd?: number;
   max_drawdown_duration_days?: number;
-  
+
   // Trade statistics
   trades: number;
   winning_trades?: number;
   losing_trades?: number;
   win_rate?: number;
   profit_factor?: number;
-  
+
   // Trade performance
   avg_win?: number;
   avg_loss?: number;
   largest_win?: number;
   largest_loss?: number;
-  
+
   // Trade timing
   avg_trade_duration_days?: number;
   avg_holding_period_hours?: number;
-  
+
   // Costs
   total_commission?: number;
   total_slippage?: number;
-  
+
   // Additional metadata
   total_days?: number;
   created_at: string;
@@ -398,7 +439,7 @@ export interface Optimization {
   best_params?: Record<string, any>;
   best_score?: number;
   created_at: string;
-  
+
   // Best result metrics
   best_total_return_pct?: number;
   best_sharpe_ratio?: number;

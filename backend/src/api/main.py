@@ -40,6 +40,8 @@ from common.sync_status import list_sync_statuses, update_sync_status
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+from api.research import router as research_router
+
 try:
     import websockets  # type: ignore
 except ImportError:
@@ -71,6 +73,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(research_router)
 
 # HTTP client with timeout
 http_client = httpx.AsyncClient(timeout=30.0)
@@ -691,16 +695,105 @@ async def update_strategy_params(strategy_id: str, params: Dict = Body(...)):
 # Backtest Endpoints
 # ============================================================================
 
-@app.post("/api/backtests")
+# ============================================================================
+# Backtest Endpoints
+# ============================================================================
+
+# In-memory job storage
+BACKTEST_JOBS = {}
+
+class BacktestJobStatus:
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+async def run_backtest_background(job_id: str, config: Dict):
+    """Run backtest in background."""
+    import traceback
+    from services.backtester.main import BacktesterService
+    from decimal import Decimal
+    
+    try:
+        BACKTEST_JOBS[job_id]["status"] = BacktestJobStatus.RUNNING
+        BACKTEST_JOBS[job_id]["started_at"] = datetime.now(timezone.utc).isoformat()
+        
+        # Initialize service
+        service = BacktesterService()
+        
+        # Extract parameters
+        strategy_name = config.get("strategy_name")
+        strategy_params = config.get("strategy_params", {})
+        symbols = config.get("symbols", [])
+        timeframe = config.get("timeframe", "1 day")
+        start_date_str = config.get("start_date")
+        end_date_str = config.get("end_date")
+        initial_capital = config.get("initial_capital", 100000.0)
+        lookback_periods = config.get("lookback_periods", 100)
+        
+        # Parse dates
+        start_date = datetime.fromisoformat(start_date_str) if start_date_str else None
+        end_date = datetime.fromisoformat(end_date_str) if end_date_str else None
+        
+        # Run backtest (CPU intensive, so we should ideally run in a thread pool, 
+        # but BacktesterService._run_backtest is async and handles IO. 
+        # The engine.run() part might be CPU heavy.)
+        # For now, we call it directly as it is async.
+        
+        result = await service._run_backtest(
+            strategy_name=strategy_name,
+            strategy_params=strategy_params,
+            symbols=symbols,
+            timeframe=timeframe,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=Decimal(str(initial_capital)),
+            lookback_periods=lookback_periods
+        )
+        
+        BACKTEST_JOBS[job_id]["status"] = BacktestJobStatus.COMPLETED
+        BACKTEST_JOBS[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        BACKTEST_JOBS[job_id]["result"] = result
+        
+    except Exception as e:
+        logger.error(f"Backtest job {job_id} failed: {e}")
+        traceback.print_exc()
+        BACKTEST_JOBS[job_id]["status"] = BacktestJobStatus.FAILED
+        BACKTEST_JOBS[job_id]["error"] = str(e)
+        BACKTEST_JOBS[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+@app.post("/api/backtests/run")
 async def run_backtest(config: Dict = Body(...)):
     """
-    Trigger a new backtest.
-    Note: Backtester runs on-demand via CLI. This endpoint queues the request.
+    Trigger a new backtest in the background.
     """
-    raise HTTPException(
-        status_code=501,
-        detail="Backtests must be run via CLI. Use: docker compose exec backend-historical python /app/src/services/backtester/main.py cli ..."
-    )
+    import uuid
+    
+    job_id = str(uuid.uuid4())
+    
+    BACKTEST_JOBS[job_id] = {
+        "id": job_id,
+        "status": BacktestJobStatus.PENDING,
+        "config": config,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    # Start background task
+    asyncio.create_task(run_backtest_background(job_id, config))
+    
+    return {
+        "job_id": job_id,
+        "status": BacktestJobStatus.PENDING,
+        "message": "Backtest started in background"
+    }
+
+@app.get("/api/backtests/jobs/{job_id}")
+async def get_backtest_job(job_id: str):
+    """Get status of a background backtest job."""
+    if job_id not in BACKTEST_JOBS:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return BACKTEST_JOBS[job_id]
 
 
 @app.get("/api/backtests")

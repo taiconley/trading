@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import { ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -21,6 +21,7 @@ const navigation = [
   { name: 'Strategies', href: '/strategies', icon: Zap },
   { name: 'Backtests', href: '/backtests', icon: Activity },
   { name: 'Optimizer', href: '/optimizer', icon: BarChart3 },
+  { name: 'Pairs Analysis', href: '/pairs-analysis', icon: Sparkles },
 ];
 
 export function Layout({ children }: LayoutProps) {
@@ -52,11 +53,10 @@ export function Layout({ children }: LayoutProps) {
               <Link
                 key={item.name}
                 to={item.href}
-                className={`group flex items-center px-4 py-3 rounded-lg transition-all duration-200 ${
-                  isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-                }`}
+                className={`group flex items-center px-4 py-3 rounded-lg transition-all duration-200 ${isActive
+                  ? 'bg-blue-600 text-white'
+                  : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                  }`}
               >
                 <Icon className="w-5 h-5 mr-3" />
                 <span className="font-medium">{item.name}</span>
