@@ -563,7 +563,7 @@ class BacktestEngine:
                 if not current_bar.empty:
                     current_price = Decimal(str(current_bar.iloc[-1]['close']))
                     position.update_unrealized(current_price)
-                    total_equity += position.unrealized_pnl + (current_price * Decimal(abs(position.quantity)))
+                    total_equity += current_price * Decimal(position.quantity)
         
         # Record equity
         self.equity_curve.append((timestamp, total_equity))
@@ -625,7 +625,7 @@ class BacktestEngine:
             
             if symbol in bars_data:
                 last_price = Decimal(str(bars_data[symbol].iloc[-1]['close']))
-                total += last_price * Decimal(abs(position.quantity))
+                total += last_price * Decimal(position.quantity)
         
         return total
     
