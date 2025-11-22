@@ -44,11 +44,20 @@ END_DATE=${END_DATE:-""}      # e.g. 2024-12-31
 #   ["AMN","CORT"],
 #   ["FITB","TMHC"],
 #   ["ACT","DUK"]
-SYMBOLS=(ITW PKG)
-SYMBOLS_CSV="ITW,PKG"
-SYMBOLS_JSON='["ITW","PKG"]'
+
+
+
+SYMBOLS=(ITW PKG V MA SSB UBSI WM RSG PPL EVRG WEC CMS FFIN CATY)
+SYMBOLS_CSV="ITW,PKG,V,MA,SSB,UBSI,WM,RSG,PPL,EVRG,WEC,CMS,FFIN,CATY"
+SYMBOLS_JSON='["ITW","PKG","V","MA","SSB","UBSI","WM","RSG","PPL","EVRG","WEC","CMS","FFIN","CATY"]'
 PAIRS_JSON='[
-  ["ITW","PKG"]
+  ["ITW","PKG"],
+  ["V","MA"],
+  ["SSB","UBSI"],
+  ["WM","RSG"],
+  ["PPL","EVRG"],
+  ["WEC","CMS"],
+  ["FFIN","CATY"]
 ]'
 
 # Parameter ranges for optimization
@@ -68,7 +77,13 @@ PARAM_RANGES=$(cat <<JSON
   "kalman_delta": [1e-5, 1e-4, 1e-3, 1e-2],
   "kalman_R": [1e-4, 1e-3, 1e-2, 1e-1],
   "pair_selection": {
-    "ITW/PKG": [true, false]
+    "ITW/PKG": [true, false],
+    "V/MA": [true, false],
+    "SSB/UBSI": [true, false],
+    "WM/RSG": [true, false],
+    "PPL/EVRG": [true, false],
+    "WEC/CMS": [true, false],
+    "FFIN/CATY": [true, false]
   }
 }
 JSON

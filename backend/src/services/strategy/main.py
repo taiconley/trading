@@ -614,15 +614,176 @@ class StrategyService:
         except Exception as e:
             logger.error(f"Error handling bar update: {e}")
     
+    async def _request_historical_data(self, symbol: str, bar_size: str, duration: str, end_datetime: Optional[str] = None) -> bool:
+        """Request historical data from the historical service."""
+        try:
+            url = "http://backend-historical:8003/historical/request"
+            payload = {
+                "symbol": symbol,
+                "bar_size": bar_size,
+                "duration": duration,
+                "what_to_show": "TRADES",
+                "use_rth": True
+            }
+            if end_datetime:
+                payload["end_datetime"] = end_datetime
+
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        logger.info(f"Historical data request submitted for {symbol}: {data.get('request_id')}")
+                        return True
+                    else:
+                        logger.error(f"Failed to request historical data for {symbol}: {response.status} {await response.text()}")
+                        return False
+        except Exception as e:
+            logger.error(f"Error requesting historical data for {symbol}: {e}")
+            return False
+
+    async def _ensure_data_integrity(self, symbol: str, required_seconds: int) -> None:
+        """
+        Ensure data integrity by identifying and filling gaps in the required history window.
+        
+        Args:
+            symbol: The symbol to check.
+            required_seconds: The duration of history required in seconds.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+            start_time = now - timedelta(seconds=required_seconds)
+            
+            # Tolerance for gaps (e.g., 2 minutes)
+            TOLERANCE = timedelta(minutes=2)
+            
+            with self.db_session_factory() as db:
+                # Fetch all timestamps in the window
+                timestamps = db.query(Candle.ts).filter(
+                    and_(
+                        Candle.symbol == symbol,
+                        Candle.tf == "5 secs",
+                        Candle.ts >= start_time
+                    )
+                ).order_by(Candle.ts.asc()).all()
+                
+                timestamps = [ts[0].replace(tzinfo=timezone.utc) for ts in timestamps]
+                
+                gaps = []
+                
+                # 1. Head Gap
+                if not timestamps or timestamps[0] > start_time + TOLERANCE:
+                    gap_end = timestamps[0] if timestamps else now
+                    duration_seconds = int((gap_end - start_time).total_seconds())
+                    if duration_seconds > 0:
+                        gaps.append({
+                            "type": "head",
+                            "start": start_time,
+                            "end": gap_end,
+                            "duration": f"{duration_seconds} S"
+                        })
+                
+                # 2. Internal Gaps
+                if timestamps:
+                    for i in range(len(timestamps) - 1):
+                        diff = timestamps[i+1] - timestamps[i]
+                        if diff > TOLERANCE:
+                            duration_seconds = int(diff.total_seconds())
+                            gaps.append({
+                                "type": "internal",
+                                "start": timestamps[i],
+                                "end": timestamps[i+1],
+                                "duration": f"{duration_seconds} S"
+                            })
+                
+                # 3. Tail Gap
+                if timestamps and timestamps[-1] < now - TOLERANCE:
+                    gap_start = timestamps[-1]
+                    duration_seconds = int((now - gap_start).total_seconds())
+                    if duration_seconds > 0:
+                        gaps.append({
+                            "type": "tail",
+                            "start": gap_start,
+                            "end": now,
+                            "duration": f"{duration_seconds} S"
+                        })
+                
+                if not gaps:
+                    logger.info(f"Data integrity verified for {symbol} (window: {required_seconds}s)")
+                    return
+
+                logger.warning(f"Found {len(gaps)} data gaps for {symbol} in the last {required_seconds}s")
+                
+                # Request data for each gap
+                for gap in gaps:
+                    logger.info(f"Requesting fill for {gap['type']} gap: {gap['duration']} ending {gap['end']}")
+                    end_str = gap['end'].strftime("%Y%m%d %H:%M:%S")
+                    await self._request_historical_data(symbol, "5 secs", gap['duration'], end_datetime=end_str)
+                
+                # Wait for backfill (simple polling for now)
+                # In a production system, we might want a more robust callback mechanism
+                # For now, we'll wait up to 60 seconds for data to arrive
+                if gaps:
+                    logger.info(f"Waiting for backfill to complete for {symbol}...")
+                    for _ in range(12): # 12 * 5s = 60s
+                        await asyncio.sleep(5)
+                        # Quick check if latest data has updated (for tail gap) or count increased
+                        latest_ts = db.query(func.max(Candle.ts)).filter(
+                            Candle.symbol == symbol,
+                            Candle.tf == "5 secs"
+                        ).scalar()
+                        
+                        if latest_ts:
+                            latest_ts = latest_ts.replace(tzinfo=timezone.utc)
+                            if now - latest_ts < TOLERANCE:
+                                logger.info(f"Backfill seems to have caught up for {symbol}")
+                                break
+                    else:
+                        logger.warning(f"Backfill timeout for {symbol}, proceeding with available data")
+
+        except Exception as e:
+            logger.error(f"Error ensuring data integrity for {symbol}: {e}")
+
     async def _backfill_bar_cache(self):
         """Backfill in-memory cache with recent historical bars on startup."""
         try:
             print(f"DEBUG _backfill: strategy_runners count = {len(self.strategy_runners)}", flush=True)
-            # Get all symbols from active strategies
-            all_symbols = set()
+            
+            # Calculate required history per symbol
+            symbol_requirements = {} # symbol -> required_seconds
+            
             for runner in self.strategy_runners.values():
-                if runner.strategy.config.enabled:
-                    all_symbols.update(runner.strategy.config.symbols)
+                if not runner.strategy.config.enabled:
+                    continue
+                    
+                config = runner.strategy.config
+                # Handle PairsTradingAggregatedConfig specifically
+                # We access attributes directly as they are Pydantic models or similar
+                
+                required_seconds = 0
+                
+                # Check for Pairs Trading specific attributes
+                if hasattr(config, 'lookback_window') and hasattr(config, 'spread_history_bars') and hasattr(config, 'stats_aggregation_seconds'):
+                    # Pairs Trading Strategy
+                    lookback_window = getattr(config, 'lookback_window')
+                    spread_history_bars = getattr(config, 'spread_history_bars')
+                    min_hedge_lookback = getattr(config, 'min_hedge_lookback', 120)
+                    stats_aggregation_seconds = getattr(config, 'stats_aggregation_seconds')
+                    
+                    max_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
+                    required_seconds = max_bars * stats_aggregation_seconds
+                elif hasattr(config, 'lookback_periods'):
+                    # Generic Strategy
+                    # Assuming 5-second bars for generic strategies if not specified
+                    # Ideally we should parse timeframe string, but for now we default to 5s multiplier
+                    required_seconds = config.lookback_periods * 5
+                
+                # Add buffer (10%)
+                required_seconds = int(required_seconds * 1.1)
+                
+                for symbol in config.symbols:
+                    symbol_requirements[symbol] = max(symbol_requirements.get(symbol, 0), required_seconds)
+
+            all_symbols = set(symbol_requirements.keys())
             
             print(f"DEBUG _backfill: all_symbols = {all_symbols}", flush=True)
             if not all_symbols:
@@ -633,9 +794,15 @@ class StrategyService:
             logger.info(f"Backfilling bar cache for {len(all_symbols)} symbols...")
             print(f"DEBUG _backfill: About to query database for {len(all_symbols)} symbols", flush=True)
             
+            # Ensure data integrity for each symbol
+            for symbol, req_seconds in symbol_requirements.items():
+                if req_seconds > 0:
+                    await self._ensure_data_integrity(symbol, req_seconds)
+            
             with self.db_session_factory() as db:
                 for symbol in all_symbols:
                     # Fetch recent bars (enough for max lookback + buffer)
+                    # We use a safe upper bound for cache size
                     candles = db.query(Candle).filter(
                         and_(
                             Candle.symbol == symbol,

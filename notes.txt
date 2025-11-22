@@ -203,7 +203,7 @@ docker compose exec backend-api python -m src.research.cluster_pairs_analyzer \
     --verbose
 
 
-  START_DATE=2025-10-31 END_DATE=2025-11-14 WORKERS=16 ./scripts/run_optimizer_pairs_kalman.sh
+  START_DATE=2025-10-30 END_DATE=2025-11-20 WORKERS=16 ./scripts/run_optimizer_pairs_kalman.sh
 
 Data & Timeframe Parameters
 
