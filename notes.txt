@@ -221,9 +221,9 @@ Raw 5-second bars are aggregated to 30-minute bars for spread statistics
 Reduces noise and focuses on longer-term mean reversion
 
 Entry/Exit Thresholds
-lookback_window: 20
+lookback_window: 30
 Number of aggregated spread bars used for z-score calculation
-With 30-minute aggregation: 20 bars = 10 hours of history
+With 30-minute aggregation: 30 bars = 15 hours of history
 Smaller window = more responsive to recent changes
 
 entry_threshold: 1.8
@@ -231,31 +231,31 @@ Z-score threshold to enter a trade
 Enter when |z-score| ≥ 1.8 (spread deviates 1.8 standard deviations from mean)
 Higher = more selective, fewer but stronger signals
 
-exit_threshold: 0.3
+exit_threshold: 1
 Z-score threshold to exit a trade
-Exit when |z-score| ≤ 0.3 (spread returns close to mean)
-Lower = wait for more mean reversion before exiting
+Exit when |z-score| ≤ 1 (spread returns closer to mean)
+Higher = exit earlier, less patient for full reversion
 
-stop_loss_zscore: 2.5
+stop_loss_zscore: 3.5
 Stop-loss threshold
-Exit if z-score moves against position beyond 2.5
-Example: Enter at z=1.8, exit if z reaches 2.5 (worse)
+Exit if z-score moves against position beyond 3.5
+Example: Enter at z=1.8, exit if z reaches 3.5 (worse)
 
 Position Management
-max_hold_bars: 21600
+max_hold_bars: 28800
 Maximum bars to hold a position (raw 5-second bars)
-21,600 bars = ~30 hours
+28,800 bars = ~40 hours
 Forces exit if position hasn't mean-reverted by then
 
-cooldown_bars: 300
+cooldown_bars: 180
 Bars to wait after a stop-loss exit before re-entering
-300 bars = ~25 minutes
+180 bars = ~15 minutes
 Prevents immediate re-entry after a bad trade
 Hedge Ratio & Kalman Filter
 
-hedge_refresh_bars: 480
+hedge_refresh_bars: 180
 Frequency to recalculate hedge ratio (in raw 5-second bars)
-480 bars = ~40 minutes
+180 bars = ~15 minutes
 How often the Kalman filter updates beta (hedge ratio)
 
 min_hedge_lookback: 120
@@ -267,15 +267,15 @@ use_kalman: true
 Use Kalman filter instead of OLS for hedge ratio
 Adapts dynamically to changing relationships
 
-kalman_delta: 0.00001
+kalman_delta: 0.01
 System noise covariance (Q matrix scaling)
 Lower = slower adaptation, more stable
-Very low (0.00001) = very stable, slow to change
+0.01 = more adaptive, faster to respond to relationship changes
 
-kalman_R: 0.001
+kalman_R: 0.1
 Measurement noise variance
 Higher = more smoothing, less sensitive to price noise
-0.001 = moderate smoothing
+0.1 = higher smoothing, filters out more price noise
 Stationarity Checks
 
 stationarity_checks_enabled: true
@@ -302,9 +302,9 @@ volatility_adaptation_enabled: true
 Adjust entry/exit thresholds based on current volatility
 Higher volatility = wider thresholds
 
-volatility_window: 30
+volatility_window: 15
 Bars used to calculate current volatility (aggregated bars)
-30 bars = 15 hours of aggregated data
+15 bars = 7.5 hours of aggregated data
 Compares recent volatility to baseline
 
 volatility_ema_alpha: 0.2
@@ -392,10 +392,13 @@ Summary
 This configuration targets:
 Longer-term mean reversion (30-minute aggregation)
 Selective entries (1.8 threshold)
-Patient exits (0.3 threshold, wait for full reversion)
-Stable hedge ratios (very low Kalman delta)
+Moderate exits (1.0 threshold, exit earlier than before)
+Adaptive hedge ratios (higher Kalman delta for faster adaptation)
+More frequent hedge ratio updates (15 minutes vs 40 minutes)
+Longer position holds (40 hours vs 30 hours)
+Tighter stop-loss (3.5 vs 2.5) with shorter cooldown (15 minutes)
 Quality control (stationarity checks, half-life requirements)
-The strategy is conservative and patient, waiting for strong signals and full mean reversion.
+The strategy balances patience with adaptability, using more responsive hedge ratios while maintaining quality controls.
 
 
 

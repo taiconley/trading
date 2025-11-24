@@ -35,17 +35,6 @@ START_DATE=${START_DATE:-""}  # e.g. 2024-08-01
 END_DATE=${END_DATE:-""}      # e.g. 2024-12-31
 # WORKERS can be set to control CPU cores used (default: auto-detect)
 
-# Multi-pair optimization: AMN/CORT, FITB/TMHC, ACT/DUK
-# Optimizer will test each pair on/off via boolean flags
-# SYMBOLS=(AMN CORT FITB TMHC ACT DUK)
-# SYMBOLS_CSV="AMN,CORT,FITB,TMHC,ACT,DUK"
-# SYMBOLS_JSON='["AMN","CORT","FITB","TMHC","ACT","DUK"]'
-# PAIRS_JSON='[
-#   ["AMN","CORT"],
-#   ["FITB","TMHC"],
-#   ["ACT","DUK"]
-
-
 
 SYMBOLS=(ITW PKG V MA SSB UBSI WM RSG PPL EVRG WEC CMS FFIN CATY)
 SYMBOLS_CSV="ITW,PKG,V,MA,SSB,UBSI,WM,RSG,PPL,EVRG,WEC,CMS,FFIN,CATY"
@@ -115,7 +104,8 @@ CONFIG_JSON=$(cat <<JSON
     "market_close_minute": 0,
     "close_before_eod_minutes": 5,
     "timezone": "US/Eastern",
-    "use_kalman": true
+    "use_kalman": true,
+    "stationarity_checks_enabled": true
   }
 }
 JSON

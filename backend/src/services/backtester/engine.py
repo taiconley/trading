@@ -727,11 +727,11 @@ class BacktestEngine:
                 annualized_vol = std_return * annualization_factor
                 metrics.annualized_volatility_pct = Decimal(str(annualized_vol * 100))
                 
-                downside_returns = returns_array[returns_array < 0]
-                if downside_returns.size > 0:
-                    downside_std = float(np.std(downside_returns))
-                    if downside_std > 0:
-                        metrics.sortino_ratio = Decimal(str((mean_return / downside_std) * annualization_factor))
+                downside_returns = np.minimum(0, returns_array)
+                downside_deviation = np.sqrt(np.mean(downside_returns**2))
+                
+                if downside_deviation > 0:
+                    metrics.sortino_ratio = Decimal(str((mean_return / downside_deviation) * annualization_factor))
                 
                 var_95 = float(np.percentile(returns_array, 5))
                 metrics.value_at_risk_pct = Decimal(str(max(0.0, -var_95) * 100))

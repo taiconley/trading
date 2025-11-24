@@ -11,11 +11,12 @@ STRATEGY_NAME="Pairs_Trading_Adaptive_Kalman"
 ENABLE_STRATEGY=false  # flip to true when you're ready to let the live service load it
 
 # Optimized pair from optimization run
-SYMBOLS_JSON='["ITW","PKG"]'
+SYMBOLS_JSON='["ITW","PKG","WEC","CMS"]'
 
 # Optimized pair selection
 PAIRS_JSON='[
-  ["ITW","PKG"]
+  ["ITW","PKG"],
+  ["WEC","CMS"]
 ]'
 
 # Strategy parameters persisted to strategies.params_json
@@ -26,22 +27,22 @@ PARAMS_JSON=$(cat <<JSON
   "symbols": $SYMBOLS_JSON,
   "pairs": $PAIRS_JSON,
   "bar_timeframe": "5 secs",
-  "lookback_window": 40,
+  "lookback_window": 30,
   "entry_threshold": 1.8,
-  "exit_threshold": 0.7,
+  "exit_threshold": 1,
   "position_size": 48,
-  "max_hold_bars": 21600,
-  "stop_loss_zscore": 3,
+  "max_hold_bars": 28800,
+  "stop_loss_zscore": 3.5,
   "market_close_hour": 16,
   "market_close_minute": 0,
   "close_before_eod_minutes": 5,
-  "cooldown_bars": 240,
+  "cooldown_bars": 180,
   "timezone": "US/Eastern",
   "spread_history_bars": 1000,
-  "hedge_refresh_bars": 480,
+  "hedge_refresh_bars": 180,
   "min_hedge_lookback": 120,
   "use_kalman": true,
-  "kalman_delta": 0.00001,
+  "kalman_delta": 0.01,
   "kalman_R": 0.1,
   "stationarity_checks_enabled": true,
   "adf_pvalue_threshold": 0.05,
