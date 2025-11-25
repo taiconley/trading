@@ -110,6 +110,10 @@ class PairsTradingAggregatedConfig(StrategyConfig):
     kalman_delta: float = 1e-4  # System noise covariance
     kalman_R: float = 1e-3      # Measurement noise variance
 
+    # Cooldown behavior
+    cooldown_on_loss_only: bool = True  # If True, apply cooldown only if trade lost money
+    cooldown_after_all_exits: bool = False  # If True, apply cooldown after ANY exit (overrides on_loss_only)
+
     class Config:
         extra = "allow"
 
@@ -1552,6 +1556,27 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                 pair_state['cooldown_remaining'],
                 self.config.cooldown_bars
             )
+        else:
+            # Check for conditional cooldowns
+            should_cooldown = False
+            
+            # 1. Cooldown after all exits?
+            if getattr(self.config, "cooldown_after_all_exits", False):
+                should_cooldown = True
+            
+            # 2. Cooldown on loss?
+            elif getattr(self.config, "cooldown_on_loss_only", True):
+                # Check realized PnL of this trade
+                # Note: realized_pnl is cumulative, so we check the pnl of the just-closed trade
+                trade_pnl = pair_state.get('unrealized_pnl', 0.0)
+                if trade_pnl < 0:
+                    should_cooldown = True
+            
+            if should_cooldown:
+                pair_state['cooldown_remaining'] = max(
+                    pair_state['cooldown_remaining'],
+                    self.config.cooldown_bars
+                )
         
         return signals
     
