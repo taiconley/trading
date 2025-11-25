@@ -627,6 +627,11 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                 else:
                     timestamp = timestamp.to_pydatetime().astimezone(self.market_timezone)
                 
+                # Skip bars we've already processed
+                last_processed = pair_state.get('last_processed_timestamp')
+                if last_processed is not None and timestamp <= last_processed:
+                    continue
+                
                 # Get prices
                 price_a = float(bar_a['close'])
                 price_b = float(bar_b['close'])
@@ -1631,37 +1636,143 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             has_sufficient_data = spread_history_len >= self.config.lookback_window
             data_readiness_pct = min(100, (spread_history_len / self.config.lookback_window * 100)) if self.config.lookback_window > 0 else 0
             
+            # Get volatility-adjusted thresholds
+            vol_ratio, adjusted_entry, adjusted_exit = self._get_adaptive_thresholds(state)
+            
+            # Aggregation buffer status
+            buffer = state.get('aggregation_buffer', {})
+            buffer_count = buffer.get('count', 0)
+            buffer_progress_pct = (buffer_count / self.stats_aggregation_bars * 100) if self.stats_aggregation_bars > 0 else 0
+            
+            # Kalman filter state (if using Kalman)
+            kalman_state = None
+            if self.config.use_kalman and state.get('kalman_filter'):
+                kf = state['kalman_filter']
+                beta, alpha = kf.get_state()
+                kalman_state = {
+                    "beta": float(beta),
+                    "alpha": float(alpha),
+                    "enabled": True
+                }
+            
+            # Calculate spread statistics if we have data
+            spread_stats = None
+            if spread_history_len >= self.config.lookback_window:
+                recent_spreads = list(state['spread_history'])[-self.config.lookback_window:]
+                spread_stats = {
+                    "mean": float(np.mean(recent_spreads)),
+                    "std": float(np.std(recent_spreads)),
+                    "min": float(np.min(recent_spreads)),
+                    "max": float(np.max(recent_spreads))
+                }
+            
+            # Determine blocking reasons (why we can't trade)
+            blocking_reasons = []
+            if spread_history_len < self.config.lookback_window:
+                blocking_reasons.append(f"Warming up: {spread_history_len}/{self.config.lookback_window} spread bars")
+            if state.get('cooldown_remaining', 0) > 0:
+                blocking_reasons.append(f"Cooldown: {state['cooldown_remaining']} bars remaining")
+            if self.config.stationarity_checks_enabled:
+                adf_pval = state.get('adf_pvalue')
+                if adf_pval is not None and adf_pval > self.config.adf_pvalue_threshold:
+                    blocking_reasons.append(f"ADF failed: p={adf_pval:.4f} > {self.config.adf_pvalue_threshold}")
+                coint_pval = state.get('cointegration_pvalue')
+                if coint_pval is not None and coint_pval > self.config.cointegration_pvalue_threshold:
+                    blocking_reasons.append(f"Coint failed: p={coint_pval:.4f} > {self.config.cointegration_pvalue_threshold}")
+            if self.config.require_half_life:
+                hl = state.get('half_life')
+                if hl is None:
+                    blocking_reasons.append("Half-life not estimable")
+                elif hl > self.config.max_halflife_bars:
+                    blocking_reasons.append(f"Half-life too slow: {hl:.1f} > {self.config.max_halflife_bars}")
+            
             pairs_state[pair_key] = {
+                # Position & PnL
                 "position": state['current_position'],
-                "current_spread": current_spread,
-                "current_zscore": last_zscore,
                 "position_notional": state.get('entry_notional'),
                 "unrealized_pnl": state.get('unrealized_pnl'),
-                "spread_history_length": spread_history_len,
-                "price_history_length": price_history_len,
                 "bars_in_trade": state['bars_in_trade'],
                 "entry_zscore": state['entry_zscore'],
-                "hedge_ratio": state['hedge_ratio'],
-                "half_life": state.get('half_life'),
-                "adf_pvalue": state.get('adf_pvalue'),
-                "cointegration_pvalue": state.get('cointegration_pvalue'),
-                "cooldown_remaining": state.get('cooldown_remaining'),
-                "entry_proximity": entry_proximity,  # 0-1, how close to entry threshold
-                "exit_proximity": exit_proximity,  # 0-1, how close to exit threshold
+                
+                # Spread & Z-score
+                "current_spread": current_spread,
+                "current_zscore": last_zscore,
+                "spread_stats": spread_stats,
+                
+                # Data status
+                "spread_history_length": spread_history_len,
+                "price_history_length": price_history_len,
                 "has_sufficient_data": has_sufficient_data,
                 "data_readiness_pct": data_readiness_pct,
-                "lookback_window": self.config.lookback_window
+                "lookback_window": self.config.lookback_window,
+                
+                # Aggregation buffer
+                "aggregation_buffer": {
+                    "count": buffer_count,
+                    "target": self.stats_aggregation_bars,
+                    "progress_pct": buffer_progress_pct,
+                    "last_timestamp": buffer.get('last_ts').isoformat() if buffer.get('last_ts') else None
+                },
+                
+                # Hedge & Kalman
+                "hedge_ratio": state['hedge_ratio'],
+                "hedge_intercept": state.get('hedge_intercept'),
+                "kalman_state": kalman_state,
+                
+                # Thresholds & Volatility
+                "base_entry_threshold": self.config.entry_threshold,
+                "base_exit_threshold": self.config.exit_threshold,
+                "adjusted_entry_threshold": adjusted_entry,
+                "adjusted_exit_threshold": adjusted_exit,
+                "volatility_ratio": vol_ratio,
+                "baseline_spread_std": state.get('baseline_spread_std'),
+                
+                # Stationarity
+                "adf_pvalue": state.get('adf_pvalue'),
+                "cointegration_pvalue": state.get('cointegration_pvalue'),
+                "bars_since_stationarity_check": state.get('bars_since_stationarity', 0),
+                
+                # Mean reversion quality
+                "half_life": state.get('half_life'),
+                "max_halflife_bars": self.config.max_halflife_bars,
+                
+                # Timing
+                "cooldown_remaining": state.get('cooldown_remaining'),
+                "last_processed_timestamp": state.get('last_processed_timestamp').isoformat() if state.get('last_processed_timestamp') else None,
+                "last_aggregation_timestamp": state.get('last_aggregation_timestamp').isoformat() if state.get('last_aggregation_timestamp') else None,
+                
+                # Trade readiness
+                "entry_proximity": entry_proximity,
+                "exit_proximity": exit_proximity,
+                "blocking_reasons": blocking_reasons,
+                "can_trade": len(blocking_reasons) == 0 and state['current_position'] == 'flat'
             }
         
         return {
             "config": {
                 "pairs": self.pairs,
+                "bar_timeframe": self.config.bar_timeframe,
+                "base_bar_seconds": self.base_bar_seconds,
+                "stats_aggregation_seconds": self.stats_aggregation_seconds,
+                "stats_aggregation_bars": self.stats_aggregation_bars,
                 "lookback_window": self.config.lookback_window,
+                "spread_history_bars": self.config.spread_history_bars,
+                "min_hedge_lookback": self.config.min_hedge_lookback,
                 "entry_threshold": self.config.entry_threshold,
                 "exit_threshold": self.config.exit_threshold,
                 "position_size": self.config.position_size,
                 "max_hold_bars": self.config.max_hold_bars,
-                "stats_aggregation_seconds": self.stats_aggregation_seconds
+                "stop_loss_zscore": self.config.stop_loss_zscore,
+                "cooldown_bars": self.config.cooldown_bars,
+                "use_kalman": self.config.use_kalman,
+                "kalman_delta": self.config.kalman_delta if self.config.use_kalman else None,
+                "kalman_R": self.config.kalman_R if self.config.use_kalman else None,
+                "volatility_adaptation_enabled": self.config.volatility_adaptation_enabled,
+                "stationarity_checks_enabled": self.config.stationarity_checks_enabled,
+                "adf_pvalue_threshold": self.config.adf_pvalue_threshold if self.config.stationarity_checks_enabled else None,
+                "cointegration_pvalue_threshold": self.config.cointegration_pvalue_threshold if self.config.stationarity_checks_enabled else None,
+                "require_half_life": self.config.require_half_life,
+                "max_halflife_bars": self.config.max_halflife_bars
             },
             "num_pairs": len(self.pairs),
             "pairs_state": pairs_state,

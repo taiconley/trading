@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card } from '../components/Card';
 import { api, Strategy } from '../services/api';
-import { Power, Edit, RefreshCw, Save, X, TrendingUp, TrendingDown, Activity, AlertCircle, CheckCircle, Clock } from 'lucide-react';
+import { Power, Edit, RefreshCw, Save, X, TrendingUp, TrendingDown, Activity, AlertCircle, CheckCircle, Clock, Download, ChevronDown, ChevronUp } from 'lucide-react';
 
 export function Strategies() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -10,6 +10,8 @@ export function Strategies() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editParams, setEditParams] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [backfilling, setBackfilling] = useState<Set<string>>(new Set());
+  const [expandedPairs, setExpandedPairs] = useState<Set<string>>(new Set());
 
   const fetchStrategies = async () => {
     try {
@@ -75,6 +77,41 @@ export function Strategies() {
   const handleCancel = () => {
     setEditingId(null);
     setEditParams('');
+  };
+
+  const handleBackfill = async (strategyId: string) => {
+    try {
+      setError(null);
+      setBackfilling(prev => new Set(prev).add(strategyId));
+      await api.backfillStrategy(strategyId);
+      // Show success briefly
+      setTimeout(() => {
+        setBackfilling(prev => {
+          const next = new Set(prev);
+          next.delete(strategyId);
+          return next;
+        });
+      }, 3000);
+    } catch (err: any) {
+      setError(`Backfill failed for ${strategyId}: ` + err.message);
+      setBackfilling(prev => {
+        const next = new Set(prev);
+        next.delete(strategyId);
+        return next;
+      });
+    }
+  };
+
+  const togglePairDetails = (pairKey: string) => {
+    setExpandedPairs(prev => {
+      const next = new Set(prev);
+      if (next.has(pairKey)) {
+        next.delete(pairKey);
+      } else {
+        next.add(pairKey);
+      }
+      return next;
+    });
   };
 
   const getStatusColor = (state?: string) => {
@@ -224,6 +261,20 @@ export function Strategies() {
                       </button>
 
                       <button
+                        onClick={() => handleBackfill(strategy.id)}
+                        disabled={backfilling.has(strategy.id)}
+                        className="flex items-center px-4 py-2 rounded-md font-medium text-sm bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Backfill Historical Data (works even when strategy is disabled)"
+                      >
+                        {backfilling.has(strategy.id) ? (
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4 mr-2" />
+                        )}
+                        Backfill
+                      </button>
+
+                      <button
                         onClick={() => handleToggle(strategy.id, strategy.enabled)}
                         className={`flex items-center px-4 py-2 rounded-md font-medium text-sm ${
                           strategy.enabled
@@ -278,6 +329,7 @@ export function Strategies() {
                         <table className="min-w-full divide-y divide-gray-200">
                           <thead className="bg-gray-50">
                             <tr>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Details</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pair</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Position</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Z-Score</th>
@@ -332,43 +384,243 @@ export function Strategies() {
                                   statusText = 'Warming';
                                 }
                                 
+                                const isExpanded = expandedPairs.has(pairKey);
+                                const blockingReasons = pairState.blocking_reasons || [];
+                                const aggBuffer = pairState.aggregation_buffer;
+                                
                                 return (
-                                  <tr key={pairKey} className="hover:bg-gray-50">
-                                    <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
-                                      {pairKey}
-                                    </td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-sm">
-                                      {getPositionBadge(position)}
-                                    </td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
-                                      {zscore !== undefined && zscore !== null ? zscore.toFixed(3) : 'N/A'}
-                                    </td>
-                                    <td className={`px-3 py-2 whitespace-nowrap text-sm font-medium ${getProximityColor(entryProx)}`}>
-                                      {entryProx !== undefined && entryProx !== null 
-                                        ? `${(entryProx * 100).toFixed(1)}%` 
-                                        : 'N/A'}
-                                    </td>
-                                    <td className={`px-3 py-2 whitespace-nowrap text-sm font-medium ${getProximityColor(exitProx)}`}>
-                                      {exitProx !== undefined && exitProx !== null 
-                                        ? `${(exitProx * 100).toFixed(1)}%` 
-                                        : 'N/A'}
-                                    </td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
-                                      {barsInTrade}
-                                    </td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">
-                                      {spreadHistoryLen}
-                                      {!hasSufficientData && (
-                                        <span className="text-xs text-gray-400 ml-1">/ {lookbackWindow}</span>
-                                      )}
-                                    </td>
-                                    <td className="px-3 py-2 whitespace-nowrap text-sm">
-                                      <div className="flex items-center space-x-1">
-                                        {statusIcon}
-                                        <span>{statusText}</span>
-                                      </div>
-                                    </td>
-                                  </tr>
+                                  <React.Fragment key={pairKey}>
+                                    <tr className="hover:bg-gray-50">
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm">
+                                        <button
+                                          onClick={() => togglePairDetails(pairKey)}
+                                          className="text-gray-600 hover:text-gray-900"
+                                        >
+                                          {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                        </button>
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900">
+                                        {pairKey}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm">
+                                        {getPositionBadge(position)}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                        {zscore !== undefined && zscore !== null ? zscore.toFixed(3) : 'N/A'}
+                                      </td>
+                                      <td className={`px-3 py-2 whitespace-nowrap text-sm font-medium ${getProximityColor(entryProx)}`}>
+                                        {entryProx !== undefined && entryProx !== null 
+                                          ? `${(entryProx * 100).toFixed(1)}%` 
+                                          : 'N/A'}
+                                      </td>
+                                      <td className={`px-3 py-2 whitespace-nowrap text-sm font-medium ${getProximityColor(exitProx)}`}>
+                                        {exitProx !== undefined && exitProx !== null 
+                                          ? `${(exitProx * 100).toFixed(1)}%` 
+                                          : 'N/A'}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-500">
+                                        {barsInTrade}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-600">
+                                        {spreadHistoryLen}
+                                        {!hasSufficientData && (
+                                          <span className="text-xs text-gray-400 ml-1">/ {lookbackWindow}</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm">
+                                        <div className="flex items-center space-x-1">
+                                          {statusIcon}
+                                          <span>{statusText}</span>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                    {isExpanded && (
+                                      <tr className="bg-gray-50">
+                                        <td colSpan={9} className="px-3 py-4">
+                                          <div className="grid grid-cols-3 gap-4 text-xs">
+                                            {/* Column 1: Data & Aggregation */}
+                                            <div className="space-y-3">
+                                              <h6 className="font-semibold text-gray-700 mb-2">Data Collection</h6>
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">lookback_window</div>
+                                                <div className="font-medium">{spreadHistoryLen} / {lookbackWindow} spread bars</div>
+                                                {config.stats_aggregation_seconds && (
+                                                  <>
+                                                    <div className="text-xs text-gray-400 font-mono">
+                                                      stats_aggregation_seconds: {config.stats_aggregation_seconds}s 
+                                                      {config.stats_aggregation_seconds >= 60 && ` (${(config.stats_aggregation_seconds / 60).toFixed(0)} min)`}
+                                                    </div>
+                                                    {!hasSufficientData && lookbackWindow && spreadHistoryLen != null && (
+                                                      <div className="text-xs text-blue-600 font-medium">
+                                                        ⏱️ Need {((lookbackWindow - spreadHistoryLen) * config.stats_aggregation_seconds / 60).toFixed(0)} more minutes
+                                                      </div>
+                                                    )}
+                                                  </>
+                                                )}
+                                              </div>
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">price_history_length</div>
+                                                <div className="font-medium">{pairState.price_history_length || 0} bars</div>
+                                                {config.base_bar_seconds && (
+                                                  <div className="text-xs text-gray-400 font-mono">bar_timeframe: {config.base_bar_seconds}s</div>
+                                                )}
+                                              </div>
+                                              
+                                              {aggBuffer && (
+                                                <div>
+                                                  <div className="text-gray-500 font-mono text-xs">stats_aggregation_bars</div>
+                                                  <div className="font-medium">
+                                                    {aggBuffer.count || 0} / {aggBuffer.target || 0} bars 
+                                                    {aggBuffer.progress_pct != null && ` (${aggBuffer.progress_pct.toFixed(1)}%)`}
+                                                  </div>
+                                                  {aggBuffer.last_timestamp && (
+                                                    <div className="text-xs text-gray-400">Last: {new Date(aggBuffer.last_timestamp).toLocaleTimeString()}</div>
+                                                  )}
+                                                  {config.base_bar_seconds && config.stats_aggregation_seconds && aggBuffer.target && (
+                                                    <div className="text-xs text-gray-400 font-mono">
+                                                      {aggBuffer.target} × {config.base_bar_seconds}s = {config.stats_aggregation_seconds}s/bar
+                                                    </div>
+                                                  )}
+                                                </div>
+                                              )}
+                                              
+                                              {pairState.last_processed_timestamp && (
+                                                <div>
+                                                  <div className="text-gray-500 font-mono text-xs">last_processed_timestamp</div>
+                                                  <div className="font-medium">{new Date(pairState.last_processed_timestamp).toLocaleTimeString()}</div>
+                                                </div>
+                                              )}
+                                            </div>
+                                            
+                                            {/* Column 2: Spread & Thresholds */}
+                                            <div className="space-y-3">
+                                              <h6 className="font-semibold text-gray-700 mb-2">Spread Analysis</h6>
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">current_spread</div>
+                                                <div className="font-medium">{pairState.current_spread?.toFixed(4) || 'N/A'}</div>
+                                                {pairState.current_zscore != null && (
+                                                  <div className="text-xs text-gray-400 font-mono">current_zscore: {pairState.current_zscore.toFixed(2)}</div>
+                                                )}
+                                              </div>
+                                              
+                                              {pairState.spread_stats && (
+                                                <>
+                                                  <div>
+                                                    <div className="text-gray-500 font-mono text-xs">mean_spread / std_spread</div>
+                                                    <div className="font-medium font-mono">
+                                                      {pairState.spread_stats.mean?.toFixed(4) || 'N/A'} / {pairState.spread_stats.std?.toFixed(4) || 'N/A'}
+                                                    </div>
+                                                  </div>
+                                                  <div>
+                                                    <div className="text-gray-500 font-mono text-xs">spread_min / spread_max</div>
+                                                    <div className="font-medium font-mono">
+                                                      {pairState.spread_stats.min?.toFixed(4) || 'N/A'} to {pairState.spread_stats.max?.toFixed(4) || 'N/A'}
+                                                    </div>
+                                                  </div>
+                                                </>
+                                              )}
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">entry_threshold</div>
+                                                <div className="font-medium font-mono">
+                                                  base: {pairState.base_entry_threshold?.toFixed(2) || 'N/A'}
+                                                  {pairState.adjusted_entry_threshold != null && ` → adj: ${pairState.adjusted_entry_threshold.toFixed(2)}`}
+                                                </div>
+                                              </div>
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">exit_threshold</div>
+                                                <div className="font-medium font-mono">
+                                                  base: {pairState.base_exit_threshold?.toFixed(2) || 'N/A'}
+                                                  {pairState.adjusted_exit_threshold != null && ` → adj: ${pairState.adjusted_exit_threshold.toFixed(2)}`}
+                                                </div>
+                                              </div>
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">volatility_ratio</div>
+                                                <div className="font-medium">{pairState.volatility_ratio?.toFixed(3) || 'N/A'}</div>
+                                              </div>
+                                            </div>
+                                            
+                                            {/* Column 3: Model & Trade Readiness */}
+                                            <div className="space-y-3">
+                                              <h6 className="font-semibold text-gray-700 mb-2">Model & Readiness</h6>
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">hedge_ratio</div>
+                                                <div className="font-medium">{pairState.hedge_ratio?.toFixed(4) || 'N/A'}</div>
+                                                {pairState.hedge_intercept != null && (
+                                                  <div className="text-xs text-gray-400 font-mono">intercept: {pairState.hedge_intercept.toFixed(4)}</div>
+                                                )}
+                                              </div>
+                                              
+                                              {pairState.kalman_state && (
+                                                <div>
+                                                  <div className="text-gray-500 font-mono text-xs">use_kalman (kalman_state)</div>
+                                                  <div className="font-medium font-mono">β: {pairState.kalman_state.beta?.toFixed(4) || 'N/A'}</div>
+                                                  <div className="text-xs text-gray-400 font-mono">α: {pairState.kalman_state.alpha?.toFixed(4) || 'N/A'}</div>
+                                                </div>
+                                              )}
+                                              
+                                              <div>
+                                                <div className="text-gray-500 font-mono text-xs">half_life / max_halflife_bars</div>
+                                                <div className="font-medium font-mono">
+                                                  {pairState.half_life?.toFixed(1) || 'N/A'}
+                                                  {pairState.max_halflife_bars ? ` / ${pairState.max_halflife_bars}` : ''}
+                                                </div>
+                                              </div>
+                                              
+                                              {config.stationarity_checks_enabled && (
+                                                <>
+                                                  <div>
+                                                    <div className="text-gray-500 font-mono text-xs">
+                                                      adf_pvalue {config.adf_pvalue_threshold != null && `(threshold: ${config.adf_pvalue_threshold})`}
+                                                    </div>
+                                                    <div className={`font-medium font-mono ${pairState.adf_pvalue != null && pairState.adf_pvalue <= (config.adf_pvalue_threshold || 0.05) ? 'text-green-600' : 'text-red-600'}`}>
+                                                      {pairState.adf_pvalue?.toFixed(4) || 'N/A'}
+                                                    </div>
+                                                  </div>
+                                                  
+                                                  <div>
+                                                    <div className="text-gray-500 font-mono text-xs">
+                                                      cointegration_pvalue {config.cointegration_pvalue_threshold != null && `(threshold: ${config.cointegration_pvalue_threshold})`}
+                                                    </div>
+                                                    <div className={`font-medium font-mono ${pairState.cointegration_pvalue != null && pairState.cointegration_pvalue <= (config.cointegration_pvalue_threshold || 0.05) ? 'text-green-600' : 'text-red-600'}`}>
+                                                      {pairState.cointegration_pvalue?.toFixed(4) || 'N/A'}
+                                                    </div>
+                                                  </div>
+                                                </>
+                                              )}
+                                              
+                                              {blockingReasons.length > 0 && (
+                                                <div>
+                                                  <div className="text-red-600 font-semibold font-mono text-xs">blocking_reasons</div>
+                                                  <ul className="list-disc list-inside text-red-600 mt-1 text-xs">
+                                                    {blockingReasons.map((reason: string, idx: number) => (
+                                                      <li key={idx}>{reason}</li>
+                                                    ))}
+                                                  </ul>
+                                                </div>
+                                              )}
+                                              
+                                              {blockingReasons.length === 0 && pairState.can_trade && (
+                                                <div>
+                                                  <div className="text-gray-500 font-mono text-xs">can_trade</div>
+                                                  <div className="text-green-600 font-semibold flex items-center">
+                                                    <CheckCircle className="w-4 h-4 mr-1" />
+                                                    Ready
+                                                  </div>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )}
+                                  </React.Fragment>
                                 );
                               })}
                           </tbody>

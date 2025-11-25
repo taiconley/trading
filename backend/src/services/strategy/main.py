@@ -12,10 +12,11 @@ import logging
 import signal
 import sys
 import json
+import time
 import aiohttp
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Any
+from typing import Dict, List, Optional, Set, Any, Tuple
 from decimal import Decimal
 from collections import deque
 
@@ -174,6 +175,12 @@ class StrategyService:
         self.marketdata_ws_client = None  # WebSocket connection to MarketData service
         self.marketdata_reconnect_delay = 5  # seconds
         
+        # Track recent historical data requests to avoid duplicates
+        # Key: (symbol, bar_size, duration, end_datetime)
+        # Value: timestamp when request was made
+        self.recent_historical_requests: Dict[Tuple[str, str, str, str], float] = {}
+        self.request_dedup_window = 300  # Consider request duplicate if made within 5 minutes
+        
     def _setup_routes(self):
         """Setup FastAPI routes."""
         
@@ -257,6 +264,51 @@ class StrategyService:
                 return {"message": "All strategies reloaded successfully"}
             except Exception as e:
                 logger.error(f"Failed to reload all strategies: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
+        @self.app.post("/strategies/{strategy_id}/backfill")
+        async def backfill_strategy(strategy_id: str):
+            """Trigger historical data backfill for a specific strategy (works even when disabled)."""
+            try:
+                # Check if strategy is running
+                runner = self.strategy_runners.get(strategy_id)
+                
+                if runner:
+                    # Strategy is enabled and running - use runner
+                    await self._backfill_strategy_symbols(strategy_id, runner)
+                else:
+                    # Strategy is disabled - load config from database
+                    with self.db_session_factory() as db:
+                        db_strategy = db.query(Strategy).filter(Strategy.strategy_id == strategy_id).first()
+                        if not db_strategy:
+                            raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} not found in database")
+                        
+                        # Backfill for disabled strategy (no warmup trigger)
+                        await self._backfill_disabled_strategy(strategy_id, db_strategy)
+                
+                return {"message": f"Backfill initiated for strategy {strategy_id}", "strategy_id": strategy_id}
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to backfill strategy {strategy_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @self.app.post("/strategies/backfill-all")
+        async def backfill_all_strategies():
+            """Trigger historical data backfill for all active strategies."""
+            try:
+                if not self.strategy_runners:
+                    return {"message": "No active strategies to backfill"}
+                
+                # Reuse the existing backfill logic
+                await self._backfill_bar_cache()
+                
+                return {
+                    "message": f"Backfill initiated for {len(self.strategy_runners)} strategies",
+                    "strategies_count": len(self.strategy_runners)
+                }
+            except Exception as e:
+                logger.error(f"Failed to backfill all strategies: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.websocket("/ws")
@@ -615,8 +667,30 @@ class StrategyService:
             logger.error(f"Error handling bar update: {e}")
     
     async def _request_historical_data(self, symbol: str, bar_size: str, duration: str, end_datetime: Optional[str] = None) -> bool:
-        """Request historical data from the historical service."""
+        """Request historical data from the historical service (with deduplication)."""
         try:
+            # Create a unique key for this request
+            request_key = (symbol, bar_size, duration, end_datetime or "")
+            current_time = time.time()
+            
+            # Clean up old requests from cache (older than dedup window)
+            expired_keys = [
+                key for key, timestamp in self.recent_historical_requests.items()
+                if current_time - timestamp > self.request_dedup_window
+            ]
+            for key in expired_keys:
+                del self.recent_historical_requests[key]
+            
+            # Check if we've recently made this exact request
+            if request_key in self.recent_historical_requests:
+                time_since_request = current_time - self.recent_historical_requests[request_key]
+                logger.info(
+                    f"Skipping duplicate historical data request for {symbol} "
+                    f"(same request made {time_since_request:.0f}s ago)"
+                )
+                return True  # Return True since request is already in progress
+            
+            # Make the request
             url = "http://backend-historical:8003/historical/request"
             payload = {
                 "symbol": symbol,
@@ -632,6 +706,8 @@ class StrategyService:
                 async with session.post(url, json=payload) as response:
                     if response.status == 200:
                         data = await response.json()
+                        # Record this request to prevent duplicates
+                        self.recent_historical_requests[request_key] = current_time
                         logger.info(f"Historical data request submitted for {symbol}: {data.get('request_id')}")
                         return True
                     else:
@@ -878,6 +954,155 @@ class StrategyService:
             
         except Exception as e:
             logger.error(f"Error backfilling symbols: {e}")
+    
+    async def _backfill_disabled_strategy(self, strategy_id: str, db_strategy):
+        """Backfill historical data for a disabled strategy (no warmup trigger)."""
+        try:
+            logger.info(f"Starting backfill for disabled strategy {strategy_id}")
+            
+            # Parse parameters from database
+            params = db_strategy.params_json or {}
+            symbols = params.get('symbols', [])
+            
+            if not symbols:
+                logger.warning(f"No symbols found for strategy {strategy_id}")
+                return
+            
+            # Calculate required history
+            required_seconds = 0
+            
+            # Check for Pairs Trading specific attributes
+            if 'lookback_window' in params and 'spread_history_bars' in params and 'stats_aggregation_seconds' in params:
+                # Pairs Trading Strategy
+                lookback_window = params.get('lookback_window')
+                spread_history_bars = params.get('spread_history_bars')
+                min_hedge_lookback = params.get('min_hedge_lookback', 120)
+                stats_aggregation_seconds = params.get('stats_aggregation_seconds')
+                
+                max_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
+                required_seconds = max_bars * stats_aggregation_seconds
+            elif 'lookback_periods' in params:
+                # Generic Strategy
+                required_seconds = params.get('lookback_periods') * 5
+            
+            # Add buffer (10%)
+            required_seconds = int(required_seconds * 1.1)
+            
+            logger.info(f"Disabled strategy {strategy_id} requires {required_seconds}s of history for {len(symbols)} symbols")
+            
+            # Ensure data integrity for each symbol
+            for symbol in symbols:
+                if required_seconds > 0:
+                    logger.info(f"Checking data integrity for {symbol} (disabled strategy: {strategy_id})")
+                    await self._ensure_data_integrity(symbol, required_seconds)
+            
+            # Backfill bar cache for these symbols
+            await self._backfill_symbols(symbols)
+            
+            logger.info(f"Backfill completed for disabled strategy {strategy_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to backfill disabled strategy {strategy_id}: {e}")
+            raise
+    
+    async def _backfill_strategy_symbols(self, strategy_id: str, runner: StrategyRunner):
+        """Backfill historical data for a specific strategy's symbols."""
+        try:
+            logger.info(f"Starting backfill for strategy {strategy_id}")
+            
+            config = runner.strategy.config
+            
+            # Calculate required history for this strategy
+            required_seconds = 0
+            
+            # Check for Pairs Trading specific attributes
+            if hasattr(config, 'lookback_window') and hasattr(config, 'spread_history_bars') and hasattr(config, 'stats_aggregation_seconds'):
+                # Pairs Trading Strategy
+                lookback_window = getattr(config, 'lookback_window')
+                spread_history_bars = getattr(config, 'spread_history_bars')
+                min_hedge_lookback = getattr(config, 'min_hedge_lookback', 120)
+                stats_aggregation_seconds = getattr(config, 'stats_aggregation_seconds')
+                
+                max_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
+                required_seconds = max_bars * stats_aggregation_seconds
+            elif hasattr(config, 'lookback_periods'):
+                # Generic Strategy
+                required_seconds = config.lookback_periods * 5
+            
+            # Add buffer (10%)
+            required_seconds = int(required_seconds * 1.1)
+            
+            logger.info(f"Strategy {strategy_id} requires {required_seconds}s of history for {len(config.symbols)} symbols")
+            
+            # Ensure data integrity for each symbol
+            for symbol in config.symbols:
+                if required_seconds > 0:
+                    logger.info(f"Checking data integrity for {symbol} (strategy: {strategy_id})")
+                    await self._ensure_data_integrity(symbol, required_seconds)
+            
+            # Backfill bar cache for these symbols
+            await self._backfill_symbols(config.symbols)
+            
+            # Now trigger the strategy to process the cached historical data for warmup
+            await self._warmup_strategy_from_cache(strategy_id, runner)
+            
+            logger.info(f"Backfill completed for strategy {strategy_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to backfill strategy {strategy_id}: {e}")
+            raise
+    
+    async def _warmup_strategy_from_cache(self, strategy_id: str, runner: StrategyRunner):
+        """Trigger strategy warmup using cached historical bars."""
+        try:
+            logger.info(f"Warming up strategy {strategy_id} from cached historical data")
+            
+            config = runner.strategy.config
+            
+            # Check if strategy supports multi-symbol processing (pairs trading does)
+            if not hasattr(runner.strategy, 'supports_multi_symbol') or not runner.strategy.supports_multi_symbol:
+                logger.info(f"Strategy {strategy_id} doesn't support multi-symbol warmup, skipping")
+                return
+            
+            # Collect cached bars for all symbols
+            bars_data = {}
+            for symbol in config.symbols:
+                if symbol not in self.bar_cache or len(self.bar_cache[symbol]) == 0:
+                    logger.warning(f"No cached bars for {symbol}, skipping warmup")
+                    continue
+                
+                # Convert cached bars to DataFrame
+                bars_list = list(self.bar_cache[symbol])
+                if len(bars_list) == 0:
+                    continue
+                
+                df = pd.DataFrame(bars_list)
+                bars_data[symbol] = df
+                logger.info(f"Prepared {len(df)} cached bars for {symbol} warmup")
+            
+            if len(bars_data) == 0:
+                logger.warning(f"No cached bars available for strategy {strategy_id} warmup")
+                return
+            
+            # Trigger strategy processing with cached bars
+            # This will trigger the fast_warmup logic in pairs trading strategies
+            timeframe = getattr(config, 'bar_timeframe', '5 secs')
+            
+            logger.info(f"Triggering strategy warmup with {len(bars_data)} symbols")
+            signals = await runner.strategy.on_bar_multi(
+                symbols=list(bars_data.keys()),
+                timeframe=timeframe,
+                bars_data=bars_data
+            )
+            
+            if signals:
+                logger.info(f"Strategy {strategy_id} generated {len(signals)} signals during warmup")
+            
+            logger.info(f"Strategy {strategy_id} warmup completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Failed to warmup strategy {strategy_id} from cache: {e}")
+            # Don't raise - warmup failure shouldn't break backfill
     
     async def _handle_strategy_signals(self, runner: StrategyRunner, signals: List[Any]):
         """Handle signals generated by a strategy."""

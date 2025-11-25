@@ -249,6 +249,16 @@ class ApiClient {
     return response.data;
   }
 
+  async backfillStrategy(strategyId: string) {
+    const response = await this.client.post(`/api/strategies/${strategyId}/backfill`);
+    return response.data;
+  }
+
+  async backfillAllStrategies() {
+    const response = await this.client.post('/api/strategies/backfill-all');
+    return response.data;
+  }
+
   // ============================================================================
   // Backtests
   // ============================================================================
@@ -466,9 +476,16 @@ export interface Strategy {
   state_details?: {
     config?: {
       pairs?: string[][];
+      bar_timeframe?: string;
+      base_bar_seconds?: number;
+      stats_aggregation_seconds?: number;
+      stats_aggregation_bars?: number;
       entry_threshold?: number;
       exit_threshold?: number;
       position_size?: number;
+      stationarity_checks_enabled?: boolean;
+      adf_pvalue_threshold?: number;
+      cointegration_pvalue_threshold?: number;
     };
     num_pairs?: number;
     pairs_state?: Record<string, {
@@ -480,12 +497,42 @@ export interface Strategy {
       bars_in_trade?: number;
       entry_zscore?: number;
       hedge_ratio?: number;
+      hedge_intercept?: number;
       entry_proximity?: number;
       exit_proximity?: number;
       cooldown_remaining?: number;
       has_sufficient_data?: boolean;
       data_readiness_pct?: number;
       lookback_window?: number;
+      aggregation_buffer?: {
+        count: number;
+        target: number;
+        progress_pct: number;
+        last_timestamp?: string;
+      };
+      spread_stats?: {
+        mean: number;
+        std: number;
+        min: number;
+        max: number;
+      };
+      base_entry_threshold?: number;
+      base_exit_threshold?: number;
+      adjusted_entry_threshold?: number;
+      adjusted_exit_threshold?: number;
+      volatility_ratio?: number;
+      kalman_state?: {
+        beta: number;
+        alpha: number;
+        enabled: boolean;
+      };
+      half_life?: number;
+      max_halflife_bars?: number;
+      adf_pvalue?: number;
+      cointegration_pvalue?: number;
+      last_processed_timestamp?: string;
+      blocking_reasons?: string[];
+      can_trade?: boolean;
     }>;
   };
   params: Record<string, any>;
