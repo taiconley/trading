@@ -487,6 +487,11 @@ async def get_historical_request(request_id: str):
     """Get request status by request id (including persisted state)."""
     return await proxy_get("historical", f"/historical/request/{request_id}")
 
+@app.post("/api/historical/cancel_all")
+async def cancel_all_historical_requests():
+    """Cancel all pending historical data requests."""
+    return await proxy_post("historical", "/historical/cancel_all")
+
 
 @app.get("/api/historical/datasets")
 async def get_available_datasets():

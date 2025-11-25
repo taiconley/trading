@@ -224,6 +224,11 @@ class ApiClient {
     return response.data;
   }
 
+  async cancelAllHistoricalRequests() {
+    const response = await this.client.post('/api/historical/cancel_all');
+    return response.data;
+  }
+
   // ============================================================================
   // Strategies
   // ============================================================================

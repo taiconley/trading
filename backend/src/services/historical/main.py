@@ -1080,6 +1080,74 @@ class HistoricalDataService:
             if not job:
                 raise HTTPException(status_code=404, detail="Job not found")
             return job
+        
+        @self.app.post("/historical/cancel_all")
+        async def cancel_all_requests():
+            """Cancel all pending historical data requests (queue and database)."""
+            try:
+                # Count items to be cancelled
+                queue_size = self.request_queue.qsize()
+                
+                # Clear the in-memory queue
+                while not self.request_queue.empty():
+                    try:
+                        self.request_queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                
+                # Mark all pending chunks as cancelled in the database
+                def _cancel_chunks(session):
+                    pending_chunks = session.query(HistoricalJobChunk).filter(
+                        HistoricalJobChunk.status == "pending"
+                    ).all()
+                    
+                    cancelled_count = len(pending_chunks)
+                    for chunk in pending_chunks:
+                        chunk.status = "cancelled"
+                        chunk.updated_at = datetime.now(timezone.utc)
+                        chunk.error_message = "Cancelled by user"
+                    
+                    # Update job statuses for jobs that are now fully cancelled
+                    jobs = session.query(HistoricalJob).filter(
+                        HistoricalJob.status.in_(["pending", "running"])
+                    ).all()
+                    
+                    cancelled_jobs = 0
+                    for job in jobs:
+                        # Count remaining active chunks
+                        active_chunks = session.query(func.count(HistoricalJobChunk.id)).filter(
+                            HistoricalJobChunk.job_id == job.id,
+                            HistoricalJobChunk.status.in_(["pending", "in_progress"])
+                        ).scalar()
+                        
+                        if active_chunks == 0:
+                            job.status = "cancelled"
+                            job.updated_at = datetime.now(timezone.utc)
+                            cancelled_jobs += 1
+                    
+                    return cancelled_count, cancelled_jobs
+                
+                loop = asyncio.get_event_loop()
+                cancelled_chunks, cancelled_jobs = await loop.run_in_executor(
+                    None,
+                    lambda: execute_with_retry(_cancel_chunks)
+                )
+                
+                self.logger.info(
+                    f"Cancelled all historical requests: {queue_size} from queue, "
+                    f"{cancelled_chunks} chunks from DB, {cancelled_jobs} jobs updated"
+                )
+                
+                return {
+                    "message": "All pending requests cancelled",
+                    "queue_cleared": queue_size,
+                    "chunks_cancelled": cancelled_chunks,
+                    "jobs_cancelled": cancelled_jobs
+                }
+                
+            except Exception as e:
+                self.logger.error(f"Failed to cancel all requests: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
     
     async def start(self):
         """Start the historical data service."""

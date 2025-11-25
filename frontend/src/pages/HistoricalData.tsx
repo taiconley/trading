@@ -1,6 +1,6 @@
 import { useState, useEffect, ChangeEvent } from 'react';
 import { LineChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from 'recharts';
-import { Download, BarChart3, Search, Trash2, Calendar, Copy } from 'lucide-react';
+import { Download, BarChart3, Search, Trash2, Calendar, Copy, XCircle } from 'lucide-react';
 import { Card } from '../components/Card';
 import { api } from '../services/api';
 
@@ -79,9 +79,11 @@ export default function HistoricalData() {
   const [queueStatus, setQueueStatus] = useState<QueueSummary | null>(null);
   const [jobs, setJobs] = useState<HistoricalJobSummary[]>([]);
   const [jobsLoading, setJobsLoading] = useState(true);
+  const [jobsInitialLoad, setJobsInitialLoad] = useState(true);
   const [uploadedSymbols, setUploadedSymbols] = useState<string[]>([]);
   const [uploadFileName, setUploadFileName] = useState('');
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [lastJobsUpdate, setLastJobsUpdate] = useState<Date | null>(null);
   
   // Request form state
   const [symbol, setSymbol] = useState('');
@@ -286,6 +288,29 @@ useEffect(() => {
     setUploadedSymbols([]);
     setUploadFileName('');
     setUploadError(null);
+  };
+
+  const cancelAllRequests = async () => {
+    if (!confirm('Are you sure you want to cancel all pending historical data requests?')) {
+      return;
+    }
+
+    try {
+      const response = await api.cancelAllHistoricalRequests();
+      alert(
+        `Successfully cancelled:\n` +
+        `• ${response.queue_cleared} requests from queue\n` +
+        `• ${response.chunks_cancelled} pending chunks\n` +
+        `• ${response.jobs_cancelled} jobs updated`
+      );
+      
+      // Refresh the queue status and jobs
+      loadQueueStatus();
+      loadJobs();
+    } catch (error: any) {
+      console.error('Failed to cancel all requests:', error);
+      alert(`Failed to cancel requests: ${error.response?.data?.detail || error.message}`);
+    }
   };
 
   const matchDateRange = (dataset: Dataset) => {
@@ -596,7 +621,20 @@ useEffect(() => {
       </Card>
 
       {/* Queue Overview */}
-      <Card title="Historical Queue Overview">
+      <Card 
+        title="Historical Queue Overview"
+        action={
+          <button
+            onClick={cancelAllRequests}
+            disabled={!queueStatus || (queueStatus.queue_size === 0 && (!queueStatus.db_summary || queueStatus.db_summary.pending_chunks === 0))}
+            className="flex items-center px-4 py-2 rounded-md font-medium text-sm bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Cancel all pending requests in the queue"
+          >
+            <XCircle className="w-4 h-4 mr-2" />
+            Cancel All Requests
+          </button>
+        }
+      >
         {!queueStatus ? (
           <div className="text-center py-6 text-slate-600">Loading queue status...</div>
         ) : (
