@@ -695,6 +695,21 @@ async def update_strategy_params(strategy_id: str, params: Dict = Body(...)):
             "params": params
         }
 
+@app.post("/api/strategies/{strategy_id}/backfill")
+async def backfill_strategy(strategy_id: str):
+    """Trigger historical data backfill for a strategy."""
+    return await proxy_post("strategy", f"/strategies/{strategy_id}/backfill")
+
+@app.post("/api/strategies/backfill-all")
+async def backfill_all_strategies():
+    """Trigger historical data backfill for all active strategies."""
+    return await proxy_post("strategy", "/strategies/backfill-all")
+
+@app.post("/api/strategies/{strategy_id}/warmup")
+async def warmup_strategy(strategy_id: str):
+    """Trigger strategy warmup from cached historical data."""
+    return await proxy_post("strategy", f"/strategies/{strategy_id}/warmup")
+
 
 # ============================================================================
 # Backtest Endpoints

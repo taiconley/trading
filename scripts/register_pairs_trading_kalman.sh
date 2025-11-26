@@ -1,5 +1,13 @@
 #!/bin/bash
 # Register the Pairs_Trading_Adaptive_Kalman strategy in the strategies table
+#
+# Data Requirements Calculation:
+# - stats_aggregation_seconds: 1800s (30 minutes per spread bar)
+# - Required lookback = max(lookback_window, spread_history_bars, min_hedge_lookback)
+# - Current: max(30, 40, 40) = 40 bars
+# - Total seconds: 40 bars × 1800s = 72,000 seconds
+# - Market time: 72,000s ÷ 3600 = 20 hours = ~3 days (at 6.5 hrs/day)
+# - TWS requests: ~10 chunks per symbol × 4 symbols = ~40 total requests
 
 set -euo pipefail
 
@@ -39,9 +47,9 @@ PARAMS_JSON=$(cat <<JSON
   "cooldown_bars": 180,
   "cooldown_after_all_exits": true,
   "timezone": "US/Eastern",
-  "spread_history_bars": 1000,
+  "spread_history_bars": 40,
   "hedge_refresh_bars": 180,
-  "min_hedge_lookback": 120,
+  "min_hedge_lookback": 40,
   "use_kalman": true,
   "kalman_delta": 0.01,
   "kalman_R": 0.1,

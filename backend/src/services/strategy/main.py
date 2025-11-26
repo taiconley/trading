@@ -311,6 +311,27 @@ class StrategyService:
                 logger.error(f"Failed to backfill all strategies: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
         
+        @self.app.post("/strategies/{strategy_id}/warmup")
+        async def warmup_strategy(strategy_id: str):
+            """Trigger strategy warmup from cached historical data."""
+            try:
+                runner = self.strategy_runners.get(strategy_id)
+                if not runner:
+                    raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} is not running")
+                
+                # Trigger warmup from cache
+                await self._warmup_strategy_from_cache(strategy_id, runner)
+                
+                return {
+                    "message": f"Warmup completed for strategy {strategy_id}",
+                    "strategy_id": strategy_id
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to warmup strategy {strategy_id}: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+        
         @self.app.websocket("/ws")
         async def websocket_endpoint(websocket: WebSocket):
             """WebSocket endpoint for real-time strategy updates."""
@@ -1055,14 +1076,24 @@ class StrategyService:
     async def _warmup_strategy_from_cache(self, strategy_id: str, runner: StrategyRunner):
         """Trigger strategy warmup using cached historical bars."""
         try:
+            print(f"DEBUG warmup: Starting warmup for {strategy_id}", flush=True)
             logger.info(f"Warming up strategy {strategy_id} from cached historical data")
             
             config = runner.strategy.config
             
             # Check if strategy supports multi-symbol processing (pairs trading does)
+            has_attr = hasattr(runner.strategy, 'supports_multi_symbol')
+            print(f"DEBUG warmup: has supports_multi_symbol attr = {has_attr}", flush=True)
+            if has_attr:
+                supports = runner.strategy.supports_multi_symbol
+                print(f"DEBUG warmup: supports_multi_symbol value = {supports}", flush=True)
+            
             if not hasattr(runner.strategy, 'supports_multi_symbol') or not runner.strategy.supports_multi_symbol:
                 logger.info(f"Strategy {strategy_id} doesn't support multi-symbol warmup, skipping")
+                print(f"DEBUG warmup: Skipping - doesn't support multi-symbol", flush=True)
                 return
+            
+            print(f"DEBUG warmup: Passed multi-symbol check", flush=True)
             
             # Collect cached bars for all symbols
             bars_data = {}

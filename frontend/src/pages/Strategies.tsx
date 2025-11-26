@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Card } from '../components/Card';
 import { api, Strategy } from '../services/api';
-import { Power, Edit, RefreshCw, Save, X, TrendingUp, TrendingDown, Activity, AlertCircle, CheckCircle, Clock, Download, ChevronDown, ChevronUp } from 'lucide-react';
+import { Power, Edit, RefreshCw, Save, X, TrendingUp, TrendingDown, Activity, AlertCircle, CheckCircle, Clock, Download, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 
 export function Strategies() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
@@ -11,6 +11,7 @@ export function Strategies() {
   const [editParams, setEditParams] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [backfilling, setBackfilling] = useState<Set<string>>(new Set());
+  const [warmingUp, setWarmingUp] = useState<Set<string>>(new Set());
   const [expandedPairs, setExpandedPairs] = useState<Set<string>>(new Set());
 
   const fetchStrategies = async () => {
@@ -95,6 +96,30 @@ export function Strategies() {
     } catch (err: any) {
       setError(`Backfill failed for ${strategyId}: ` + err.message);
       setBackfilling(prev => {
+        const next = new Set(prev);
+        next.delete(strategyId);
+        return next;
+      });
+    }
+  };
+
+  const handleWarmup = async (strategyId: string) => {
+    try {
+      setError(null);
+      setWarmingUp(prev => new Set(prev).add(strategyId));
+      await api.warmupStrategy(strategyId);
+      // Show success briefly and refresh strategy data
+      setTimeout(async () => {
+        setWarmingUp(prev => {
+          const next = new Set(prev);
+          next.delete(strategyId);
+          return next;
+        });
+        await fetchStrategies();
+      }, 1000);
+    } catch (err: any) {
+      setError(`Warmup failed for ${strategyId}: ` + err.message);
+      setWarmingUp(prev => {
         const next = new Set(prev);
         next.delete(strategyId);
         return next;
@@ -272,6 +297,20 @@ export function Strategies() {
                           <Download className="w-4 h-4 mr-2" />
                         )}
                         Backfill
+                      </button>
+
+                      <button
+                        onClick={() => handleWarmup(strategy.id)}
+                        disabled={!strategy.enabled || warmingUp.has(strategy.id)}
+                        className="flex items-center px-4 py-2 rounded-md font-medium text-sm bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Warmup strategy from cached historical data (requires strategy to be enabled)"
+                      >
+                        {warmingUp.has(strategy.id) ? (
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <Zap className="w-4 h-4 mr-2" />
+                        )}
+                        Warmup
                       </button>
 
                       <button

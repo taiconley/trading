@@ -264,6 +264,11 @@ class ApiClient {
     return response.data;
   }
 
+  async warmupStrategy(strategyId: string) {
+    const response = await this.client.post(`/api/strategies/${strategyId}/warmup`);
+    return response.data;
+  }
+
   // ============================================================================
   // Backtests
   // ============================================================================
