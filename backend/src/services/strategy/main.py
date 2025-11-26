@@ -171,7 +171,7 @@ class StrategyService:
         
         # Real-time bar cache (in-memory)
         self.bar_cache: Dict[str, deque] = {}  # symbol -> deque of bar dicts
-        self.bar_cache_size = 2000  # Keep last 2000 bars per symbol in memory
+        self.bar_cache_size = self._calculate_required_cache_size()  # Dynamically sized based on strategy requirements
         self.marketdata_ws_client = None  # WebSocket connection to MarketData service
         self.marketdata_reconnect_delay = 5  # seconds
         
@@ -180,6 +180,56 @@ class StrategyService:
         # Value: timestamp when request was made
         self.recent_historical_requests: Dict[Tuple[str, str, str, str], float] = {}
         self.request_dedup_window = 300  # Consider request duplicate if made within 5 minutes
+    
+    def _calculate_required_cache_size(self) -> int:
+        """Calculate required bar cache size based on all strategy configurations."""
+        try:
+            max_bars_needed = 2000  # Default minimum
+            
+            with self.db_session_factory() as db:
+                strategies = db.query(Strategy).all()
+                
+                for strategy in strategies:
+                    try:
+                        config = strategy.params_json or {}
+                        
+                        # Check for Pairs Trading specific attributes
+                        if 'lookback_window' in config and 'spread_history_bars' in config and 'stats_aggregation_seconds' in config:
+                            # Pairs Trading Strategy
+                            lookback_window = config.get('lookback_window', 30)
+                            spread_history_bars = config.get('spread_history_bars', 40)
+                            min_hedge_lookback = config.get('min_hedge_lookback', 40)
+                            stats_aggregation_seconds = config.get('stats_aggregation_seconds', 1800)
+                            
+                            # Calculate maximum bars needed
+                            max_spread_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
+                            
+                            # Convert spread bars to raw 5-second bars
+                            # Each spread bar requires stats_aggregation_seconds worth of 5-second bars
+                            bars_per_spread = stats_aggregation_seconds // 5  # 1800 / 5 = 360 bars
+                            required_bars = max_spread_bars * bars_per_spread
+                            
+                            max_bars_needed = max(max_bars_needed, required_bars)
+                            
+                        elif 'lookback_periods' in config:
+                            # Generic Strategy
+                            # Assuming 5-second bars
+                            required_bars = config.get('lookback_periods', 100)
+                            max_bars_needed = max(max_bars_needed, required_bars)
+                    
+                    except Exception as e:
+                        logger.warning(f"Could not calculate cache size for strategy {strategy.strategy_id}: {e}")
+                        continue
+            
+            # Add 20% buffer
+            cache_size = int(max_bars_needed * 1.2)
+            
+            logger.info(f"Calculated bar cache size: {cache_size} bars (max needed: {max_bars_needed})")
+            return cache_size
+            
+        except Exception as e:
+            logger.error(f"Failed to calculate cache size, using default 2000: {e}")
+            return 2000
         
     def _setup_routes(self):
         """Setup FastAPI routes."""
@@ -1076,24 +1126,14 @@ class StrategyService:
     async def _warmup_strategy_from_cache(self, strategy_id: str, runner: StrategyRunner):
         """Trigger strategy warmup using cached historical bars."""
         try:
-            print(f"DEBUG warmup: Starting warmup for {strategy_id}", flush=True)
             logger.info(f"Warming up strategy {strategy_id} from cached historical data")
             
             config = runner.strategy.config
             
             # Check if strategy supports multi-symbol processing (pairs trading does)
-            has_attr = hasattr(runner.strategy, 'supports_multi_symbol')
-            print(f"DEBUG warmup: has supports_multi_symbol attr = {has_attr}", flush=True)
-            if has_attr:
-                supports = runner.strategy.supports_multi_symbol
-                print(f"DEBUG warmup: supports_multi_symbol value = {supports}", flush=True)
-            
             if not hasattr(runner.strategy, 'supports_multi_symbol') or not runner.strategy.supports_multi_symbol:
                 logger.info(f"Strategy {strategy_id} doesn't support multi-symbol warmup, skipping")
-                print(f"DEBUG warmup: Skipping - doesn't support multi-symbol", flush=True)
                 return
-            
-            print(f"DEBUG warmup: Passed multi-symbol check", flush=True)
             
             # Collect cached bars for all symbols
             bars_data = {}

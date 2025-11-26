@@ -602,8 +602,9 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             # Trigger fast warmup if:
             # 1. We're still warming up (don't have enough spread bars)
             # 2. We have historical data that could provide more spread bars
-            # 3. We're significantly behind (historical data can provide at least 50 more bars)
-            if is_warming_up and has_historical_data and potential_spread_bars > (spread_hist_len + 50):
+            # 3. We have enough data to make a meaningful warmup (at least 10% more than needed, or 5 bars minimum)
+            min_extra_bars = max(5, int(spread_hist_len * 0.1))
+            if is_warming_up and has_historical_data and potential_spread_bars > (spread_hist_len + min_extra_bars):
                 # Fast warmup: process all historical bars in aggregated chunks
                 self._fast_warmup_pair(pair_key, pair_state, bars_a, bars_b)
             

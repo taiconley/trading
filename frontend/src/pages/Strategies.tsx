@@ -288,7 +288,7 @@ export function Strategies() {
                       <button
                         onClick={() => handleBackfill(strategy.id)}
                         disabled={backfilling.has(strategy.id)}
-                        className="flex items-center px-4 py-2 rounded-md font-medium text-sm bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center px-4 py-2 rounded-md font-medium text-sm bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                         title="Backfill Historical Data (works even when strategy is disabled)"
                       >
                         {backfilling.has(strategy.id) ? (
@@ -302,7 +302,7 @@ export function Strategies() {
                       <button
                         onClick={() => handleWarmup(strategy.id)}
                         disabled={!strategy.enabled || warmingUp.has(strategy.id)}
-                        className="flex items-center px-4 py-2 rounded-md font-medium text-sm bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="flex items-center px-4 py-2 rounded-md font-medium text-sm bg-cyan-600 text-white hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
                         title="Warmup strategy from cached historical data (requires strategy to be enabled)"
                       >
                         {warmingUp.has(strategy.id) ? (
@@ -315,10 +315,10 @@ export function Strategies() {
 
                       <button
                         onClick={() => handleToggle(strategy.id, strategy.enabled)}
-                        className={`flex items-center px-4 py-2 rounded-md font-medium text-sm ${
+                        className={`flex items-center px-4 py-2 rounded-md font-medium text-sm shadow-sm ${
                           strategy.enabled
-                            ? 'bg-green-600 text-white hover:bg-green-700'
-                            : 'bg-gray-300 text-gray-700 hover:bg-gray-400'
+                            ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                            : 'bg-slate-300 text-slate-700 hover:bg-slate-400'
                         }`}
                       >
                         <Power className="w-4 h-4 mr-2" />
