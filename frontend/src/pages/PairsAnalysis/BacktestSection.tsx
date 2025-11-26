@@ -3,6 +3,7 @@ import { Card } from '../../components/Card';
 import { api, Strategy } from '../../services/api';
 import { Play, RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
 import clsx from 'clsx';
+import { BacktestVisualization } from './BacktestVisualization';
 
 interface BacktestSectionProps {
     symbolA: string;
@@ -12,6 +13,7 @@ interface BacktestSectionProps {
     endDate?: string;
     preSelectedStrategy?: Strategy | null;
     preSetParams?: string;
+    analysisData?: any; // Pass through the analysis results for visualization
 }
 
 export const BacktestSection: React.FC<BacktestSectionProps> = ({ 
@@ -21,7 +23,8 @@ export const BacktestSection: React.FC<BacktestSectionProps> = ({
     startDate, 
     endDate,
     preSelectedStrategy = null,
-    preSetParams = '{}'
+    preSetParams = '{}',
+    analysisData = null
 }) => {
     const [isRunning, setIsRunning] = useState(false);
     const [result, setResult] = useState<any | null>(null);
@@ -222,6 +225,16 @@ export const BacktestSection: React.FC<BacktestSectionProps> = ({
                     )}
                 </div>
             </Card>
+
+            {/* Detailed Visualization */}
+            {result && result.run_id && (
+                <BacktestVisualization
+                    runId={result.run_id}
+                    symbolA={symbolA}
+                    symbolB={symbolB}
+                    analysisData={analysisData}
+                />
+            )}
         </div>
     );
 };

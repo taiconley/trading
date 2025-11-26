@@ -728,6 +728,7 @@ export function PairsAnalysis() {
                         endDate={endDate || undefined}
                         preSelectedStrategy={selectedStrategy}
                         preSetParams={strategyParams}
+                        analysisData={result}
                     />
                 </div>
             )}
