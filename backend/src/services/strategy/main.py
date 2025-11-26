@@ -452,11 +452,6 @@ class StrategyService:
             await self.initialize()
             print("DEBUG start(): initialize() completed", flush=True)
             
-            # Backfill bar cache with historical data
-            print("DEBUG start(): Calling _backfill_bar_cache()...", flush=True)
-            await self._backfill_bar_cache()
-            print("DEBUG start(): _backfill_bar_cache() completed", flush=True)
-            
             # Start main execution loop
             self.running = True
             
