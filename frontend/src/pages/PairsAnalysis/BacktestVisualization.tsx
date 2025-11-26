@@ -98,41 +98,82 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
 
     // Create trade markers for spread/z-score chart
     const tradeMarkers = React.useMemo(() => {
-        if (!trades.length || !analysisData?.zscore_series) return { entries: [], exits: [] };
+        if (!trades.length || !analysisData?.zscore_series) {
+            console.log('No trade markers:', { 
+                tradesLength: trades.length, 
+                hasZscoreData: !!analysisData?.zscore_series 
+            });
+            return { entries: [], exits: [] };
+        }
         
-        const entries: Array<{ x: number; y: number; type: string }> = [];
-        const exits: Array<{ x: number; y: number; type: string }> = [];
+        const entries: Array<{ timestamp: string; zscore: number; type: string; trade: any }> = [];
+        const exits: Array<{ timestamp: string; zscore: number; type: string; pnl: number }> = [];
         
         const timestamps = analysisData.price_data.timestamps;
+        const zscores = analysisData.zscore_series;
         
-        trades.forEach(trade => {
-            // Find index of entry time
-            const entryIdx = timestamps.findIndex((ts: string) => 
-                new Date(ts).getTime() >= new Date(trade.entry_time).getTime()
-            );
+        console.log('Building trade markers from:', {
+            totalTrades: trades.length,
+            totalTimestamps: timestamps?.length,
+            firstAnalysisTime: timestamps?.[0],
+            lastAnalysisTime: timestamps?.[timestamps?.length - 1],
+            firstTradeEntry: trades[0]?.entry_time,
+            lastTradeEntry: trades[trades.length - 1]?.entry_time
+        });
+        
+        trades.forEach((trade) => {
+            // Find closest timestamp for entry
+            const entryTime = new Date(trade.entry_time).getTime();
+            let closestEntryIdx = -1;
+            let minEntryDiff = Infinity;
             
-            if (entryIdx >= 0 && analysisData.zscore_series[entryIdx] !== undefined) {
+            timestamps.forEach((ts: string, i: number) => {
+                const diff = Math.abs(new Date(ts).getTime() - entryTime);
+                if (diff < minEntryDiff) {
+                    minEntryDiff = diff;
+                    closestEntryIdx = i;
+                }
+            });
+            
+            if (closestEntryIdx >= 0 && zscores[closestEntryIdx] !== undefined) {
                 entries.push({
-                    x: entryIdx,
-                    y: analysisData.zscore_series[entryIdx],
-                    type: trade.side
+                    timestamp: timestamps[closestEntryIdx],
+                    zscore: zscores[closestEntryIdx],
+                    type: trade.side,
+                    trade: trade
                 });
             }
             
-            // Find index of exit time
+            // Find closest timestamp for exit
             if (trade.exit_time) {
-                const exitIdx = timestamps.findIndex((ts: string) =>
-                    new Date(ts).getTime() >= new Date(trade.exit_time!).getTime()
-                );
+                const exitTime = new Date(trade.exit_time).getTime();
+                let closestExitIdx = -1;
+                let minExitDiff = Infinity;
                 
-                if (exitIdx >= 0 && analysisData.zscore_series[exitIdx] !== undefined) {
+                timestamps.forEach((ts: string, i: number) => {
+                    const diff = Math.abs(new Date(ts).getTime() - exitTime);
+                    if (diff < minExitDiff) {
+                        minExitDiff = diff;
+                        closestExitIdx = i;
+                    }
+                });
+                
+                if (closestExitIdx >= 0 && zscores[closestExitIdx] !== undefined && trade.pnl != null) {
                     exits.push({
-                        x: exitIdx,
-                        y: analysisData.zscore_series[exitIdx],
-                        type: trade.pnl! > 0 ? 'profit' : 'loss'
+                        timestamp: timestamps[closestExitIdx],
+                        zscore: zscores[closestExitIdx],
+                        type: trade.pnl > 0 ? 'profit' : 'loss',
+                        pnl: trade.pnl
                     });
                 }
             }
+        });
+        
+        console.log('Trade markers created:', { 
+            entries: entries.length, 
+            exits: exits.length,
+            sampleEntry: entries[0],
+            sampleExit: exits[0]
         });
         
         return { entries, exits };
@@ -212,42 +253,55 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                     {/* Equity Curve */}
                     <Card title="Equity Curve - Portfolio Value Over Time">
                         {equityCurve.length > 1 ? (
-                            <div className="h-[350px]">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={equityCurve}>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                        <XAxis 
-                                            dataKey="timestamp" 
-                                            stroke="#64748b"
-                                            tick={{ fill: '#64748b', fontSize: 10 }}
-                                            tickFormatter={(val) => val.split(',')[0]}
-                                        />
-                                        <YAxis 
-                                            stroke="#64748b"
-                                            tick={{ fill: '#64748b', fontSize: 11 }}
-                                            tickFormatter={(val) => `$${(val / 1000).toFixed(0)}k`}
-                                        />
-                                        <Tooltip 
-                                            contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0' }}
-                                            formatter={(value: number) => [`$${value.toFixed(2)}`, 'Equity']}
-                                        />
-                                        <ReferenceLine 
-                                            y={100000} 
-                                            stroke="#94a3b8" 
-                                            strokeDasharray="3 3"
-                                            label={{ value: 'Initial Capital', fill: '#94a3b8', fontSize: 10 }}
-                                        />
-                                        <Line
-                                            type="monotone"
-                                            dataKey="equity"
-                                            stroke="#3b82f6"
-                                            strokeWidth={2}
-                                            dot={{ r: 3 }}
-                                            activeDot={{ r: 5 }}
-                                        />
-                                    </LineChart>
-                                </ResponsiveContainer>
-                            </div>
+                            <>
+                                <div className="h-[350px]">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={equityCurve}>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                            <XAxis 
+                                                dataKey="timestamp" 
+                                                stroke="#64748b"
+                                                tick={{ fill: '#64748b', fontSize: 10 }}
+                                            />
+                                            <YAxis 
+                                                stroke="#64748b"
+                                                tick={{ fill: '#64748b', fontSize: 11 }}
+                                                domain={['dataMin - 50', 'dataMax + 50']}
+                                                tickFormatter={(val) => `$${val.toLocaleString()}`}
+                                            />
+                                            <Tooltip 
+                                                contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0' }}
+                                                formatter={(value: number) => {
+                                                    const change = value - 100000;
+                                                    return [
+                                                        <>
+                                                            ${value.toFixed(2)}
+                                                            <span className={change >= 0 ? 'text-green-600 ml-2' : 'text-red-600 ml-2'}>
+                                                                ({change >= 0 ? '+' : ''}${change.toFixed(2)})
+                                                            </span>
+                                                        </>,
+                                                        'Equity'
+                                                    ];
+                                                }}
+                                            />
+                                            <ReferenceLine 
+                                                y={100000} 
+                                                stroke="#94a3b8" 
+                                                strokeDasharray="3 3"
+                                                label={{ value: 'Break Even', fill: '#94a3b8', fontSize: 10 }}
+                                            />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="equity"
+                                                stroke="#3b82f6"
+                                                strokeWidth={3}
+                                                dot={{ r: 4, fill: '#3b82f6', strokeWidth: 2, stroke: '#fff' }}
+                                                activeDot={{ r: 6 }}
+                                            />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </>
                         ) : (
                             <div className="h-[350px] flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200">
                                 <div className="text-center text-gray-500">
@@ -297,26 +351,43 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                     {/* Z-Score with Trade Markers (if analysis data available) */}
                     {analysisData?.zscore_series && (
                         <Card title="Z-Score with Trade Markers">
-                            <div className="mb-4 flex items-center gap-4 text-xs">
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                                    <span>Entry Points</span>
+                            <div className="mb-4 flex items-center justify-between">
+                                <div className="flex items-center gap-4 text-xs">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                                        <span>Entry Points ({tradeMarkers.entries.length})</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                                        <span>Profitable Exits</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                        <span>Loss Exits</span>
+                                    </div>
                                 </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                                    <span>Profitable Exits</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <div className="w-3 h-3 rounded-full bg-red-500"></div>
-                                    <span>Loss Exits</span>
-                                </div>
+                                {tradeMarkers.entries.length === 0 && tradeMarkers.exits.length === 0 && (
+                                    <div className="text-xs text-amber-600 bg-amber-50 px-3 py-1 rounded">
+                                        ⚠️ No trade markers (date range mismatch)
+                                    </div>
+                                )}
                             </div>
                             <div className="h-[350px]">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={analysisData.price_data.timestamps.map((ts: string, i: number) => ({
-                                        timestamp: new Date(ts).toLocaleString(),
-                                        zscore: analysisData.zscore_series[i]
-                                    }))}>
+                                    <LineChart data={analysisData.price_data.timestamps.map((ts: string, i: number) => {
+                                        const entry = tradeMarkers.entries.find(e => e.timestamp === ts);
+                                        const exit = tradeMarkers.exits.find(e => e.timestamp === ts);
+                                        
+                                        return {
+                                            timestamp: new Date(ts).toLocaleString(),
+                                            rawTimestamp: ts,
+                                            zscore: analysisData.zscore_series[i],
+                                            // Add marker data
+                                            entryMarker: entry?.zscore,
+                                            exitProfitMarker: exit && exit.type === 'profit' ? exit.zscore : undefined,
+                                            exitLossMarker: exit && exit.type === 'loss' ? exit.zscore : undefined
+                                        };
+                                    })}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                                         <XAxis 
                                             dataKey="timestamp" 
@@ -339,34 +410,47 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                             stroke="#3b82f6"
                                             dot={false}
                                             strokeWidth={2}
+                                            name="Z-Score"
                                         />
-                                        {/* Entry markers */}
-                                        {tradeMarkers.entries.map((marker, i) => (
-                                            <ReferenceLine
-                                                key={`entry-${i}`}
-                                                x={marker.x}
-                                                stroke="#10b981"
-                                                strokeWidth={2}
-                                                label={{ value: '▼', position: 'top', fill: '#10b981' }}
-                                            />
-                                        ))}
-                                        {/* Exit markers */}
-                                        {tradeMarkers.exits.map((marker, i) => (
-                                            <ReferenceLine
-                                                key={`exit-${i}`}
-                                                x={marker.x}
-                                                stroke={marker.type === 'profit' ? '#3b82f6' : '#ef4444'}
-                                                strokeWidth={2}
-                                                label={{ value: '▲', position: 'bottom', fill: marker.type === 'profit' ? '#3b82f6' : '#ef4444' }}
-                                            />
-                                        ))}
+                                        {/* Entry markers as green points */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="entryMarker"
+                                            stroke="none"
+                                            dot={{ fill: '#10b981', r: 7, strokeWidth: 2, stroke: '#fff' }}
+                                            name="Entry"
+                                            isAnimationActive={false}
+                                        />
+                                        {/* Profit exit markers as blue points */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="exitProfitMarker"
+                                            stroke="none"
+                                            dot={{ fill: '#3b82f6', r: 7, strokeWidth: 2, stroke: '#fff' }}
+                                            name="Profit Exit"
+                                            isAnimationActive={false}
+                                        />
+                                        {/* Loss exit markers as red points */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="exitLossMarker"
+                                            stroke="none"
+                                            dot={{ fill: '#ef4444', r: 7, strokeWidth: 2, stroke: '#fff' }}
+                                            name="Loss Exit"
+                                            isAnimationActive={false}
+                                        />
                                     </LineChart>
                                 </ResponsiveContainer>
                             </div>
                             <div className="mt-4 p-3 bg-amber-50 rounded-lg border border-amber-200">
                                 <p className="text-xs text-amber-800">
-                                    <strong>📊 How to interpret:</strong> Green arrows (▼) show where trades entered. Blue arrows (▲) show profitable exits. Red arrows (▲) show losing exits.
-                                    Look for patterns - are losses happening too early? Too late? Are entry thresholds too aggressive?
+                                    <strong>📊 How to interpret:</strong> Green dots show where trades entered. Blue dots show profitable exits. Red dots show losing exits.
+                                    {tradeMarkers.entries.length === 0 && tradeMarkers.exits.length === 0 && (
+                                        <span className="block mt-2 text-amber-900 font-semibold">
+                                            ⚠️ No markers visible: The backtest and analysis were run on different date ranges. 
+                                            Make sure to use the same date range for both.
+                                        </span>
+                                    )}
                                 </p>
                             </div>
                         </Card>
