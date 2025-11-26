@@ -28,6 +28,8 @@ class PairAnalysisRequest(BaseModel):
     lookback_days: int = 5
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+    # Optional strategy parameters to customize analysis
+    strategy_params: Optional[Dict] = None
 
 @router.post("/analyze-pair")
 async def analyze_pair_endpoint(request: PairAnalysisRequest):
@@ -59,12 +61,23 @@ async def analyze_pair_endpoint(request: PairAnalysisRequest):
             
             start_dt = end_dt - timedelta(days=effective_lookback)
 
+        # Extract strategy parameters if provided
+        entry_z = 2.0  # default
+        exit_z = 0.5   # default
+        min_bars = 100  # default
+        
+        if request.strategy_params:
+            # Map strategy parameter names to analysis parameter names
+            entry_z = float(request.strategy_params.get('entry_threshold', 2.0))
+            exit_z = float(request.strategy_params.get('exit_threshold', 0.5))
+            min_bars = int(request.strategy_params.get('lookback_window', 100))
+            
         params = AnalysisParams(
             timeframe=request.timeframe,
             bar_seconds=bar_seconds,
-            entry_z=2.0,
-            exit_z=0.5,
-            min_bars=100,  # Lower threshold for on-demand analysis
+            entry_z=entry_z,
+            exit_z=exit_z,
+            min_bars=min_bars,  # Lower threshold for on-demand analysis
             min_spread_std=1e-6,
             min_trades=1   # Lower threshold
         )

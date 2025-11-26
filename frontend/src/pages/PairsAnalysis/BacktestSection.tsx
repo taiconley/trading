@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card } from '../../components/Card';
 import { api, Strategy } from '../../services/api';
-import { Play, RefreshCw, AlertTriangle, CheckCircle, Terminal } from 'lucide-react';
+import { Play, RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
 import clsx from 'clsx';
 
 interface BacktestSectionProps {
@@ -10,74 +10,55 @@ interface BacktestSectionProps {
     timeframe: string;
     startDate?: string;
     endDate?: string;
+    preSelectedStrategy?: Strategy | null;
+    preSetParams?: string;
 }
 
-export const BacktestSection: React.FC<BacktestSectionProps> = ({ symbolA, symbolB, timeframe, startDate, endDate }) => {
-    const [strategies, setStrategies] = useState<Strategy[]>([]);
-    const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null);
-    const [params, setParams] = useState<string>('{}');
+export const BacktestSection: React.FC<BacktestSectionProps> = ({ 
+    symbolA, 
+    symbolB, 
+    timeframe, 
+    startDate, 
+    endDate,
+    preSelectedStrategy = null,
+    preSetParams = '{}'
+}) => {
     const [isRunning, setIsRunning] = useState(false);
     const [result, setResult] = useState<any | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
 
-    useEffect(() => {
-        loadStrategies();
-    }, []);
-
-    const loadStrategies = async () => {
-        try {
-            const data = await api.getStrategies();
-            setStrategies(data.strategies);
-            // Default to Kalman if available
-            const kalman = data.strategies.find((s: Strategy) => s.name.includes('Kalman'));
-            if (kalman) {
-                selectStrategy(kalman);
-            }
-        } catch (err) {
-            console.error('Failed to load strategies', err);
-        }
-    };
-
-    const selectStrategy = (strategy: Strategy) => {
-        setSelectedStrategy(strategy);
-        // Pre-fill params with current strategy params, but override pairs/symbols for this analysis
-        const currentParams = { ...strategy.params };
-
-        // Ensure we target the current pair
-        // The structure depends on the strategy, but usually it's 'pairs' or 'symbols'
-        // For Kalman/Pairs strategies, it's often 'pairs': [['A', 'B']]
-        if (currentParams.pairs) {
-            currentParams.pairs = [[symbolA, symbolB]];
-        }
-        if (currentParams.symbols) {
-            // If it uses a flat list of symbols
-            currentParams.symbols = [symbolA, symbolB];
-        }
-
-        setParams(JSON.stringify(currentParams, null, 2));
-    };
-
     const handleRunBacktest = async () => {
-        if (!selectedStrategy) return;
+        // If no strategy is selected, show error
+        if (!preSelectedStrategy) {
+            setError('Please select a strategy in the Analysis Configuration above');
+            return;
+        }
 
         setIsRunning(true);
         setResult(null);
         setError(null);
-        setLogs(['Starting backtest...', `Strategy: ${selectedStrategy.name}`, `Pair: ${symbolA}/${symbolB}`]);
+        setLogs(['Starting backtest...', `Strategy: ${preSelectedStrategy.name}`, `Pair: ${symbolA}/${symbolB}`]);
 
         try {
-            let parsedParams = {};
+            let parsedParams: any = {};
             try {
-                parsedParams = JSON.parse(params);
+                parsedParams = JSON.parse(preSetParams);
+                // Override pairs/symbols for this analysis
+                if (parsedParams.pairs) {
+                    parsedParams.pairs = [[symbolA, symbolB]];
+                }
+                if (parsedParams.symbols) {
+                    parsedParams.symbols = [symbolA, symbolB];
+                }
             } catch (e) {
-                setError('Invalid JSON parameters');
+                setError('Invalid JSON parameters in configuration above');
                 setIsRunning(false);
                 return;
             }
 
             const response = await api.runBacktest({
-                strategy_name: selectedStrategy.name,
+                strategy_name: preSelectedStrategy.name,
                 strategy_params: parsedParams,
                 symbols: [symbolA, symbolB],
                 timeframe: timeframe,
@@ -118,99 +99,129 @@ export const BacktestSection: React.FC<BacktestSectionProps> = ({ symbolA, symbo
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left Column: Configuration */}
-                <div className="lg:col-span-1 space-y-6">
-                    <Card title="Backtest Configuration" icon={<Terminal className="w-5 h-5 text-blue-500" />}>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Strategy</label>
-                                <select
-                                    className="w-full rounded-lg border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                                    value={selectedStrategy?.id || ''}
-                                    onChange={(e) => {
-                                        const s = strategies.find(s => s.id === e.target.value);
-                                        if (s) selectStrategy(s);
-                                    }}
-                                >
-                                    <option value="">Select Strategy...</option>
-                                    {strategies.map(s => (
-                                        <option key={s.id} value={s.id}>{s.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Parameters (JSON)</label>
-                                <textarea
-                                    className="w-full h-64 font-mono text-xs rounded-lg border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-all"
-                                    value={params}
-                                    onChange={(e) => setParams(e.target.value)}
-                                />
-                            </div>
-
-                            <button
-                                onClick={handleRunBacktest}
-                                disabled={isRunning || !selectedStrategy}
-                                className={clsx(
-                                    "w-full py-2 px-4 rounded-lg font-medium text-white transition-all flex items-center justify-center gap-2",
-                                    isRunning || !selectedStrategy
-                                        ? "bg-gray-400 cursor-not-allowed"
-                                        : "bg-blue-600 hover:bg-blue-700 shadow-md hover:shadow-lg active:transform active:scale-95"
-                                )}
-                            >
-                                {isRunning ? (
-                                    <>
-                                        <RefreshCw className="w-4 h-4 animate-spin" />
-                                        Running...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Play className="w-4 h-4" />
-                                        Run Backtest
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </Card>
+            {preSelectedStrategy && (
+                <div className="p-4 bg-gradient-to-r from-blue-50 to-cyan-50 border border-blue-200 rounded-lg flex items-start gap-3">
+                    <CheckCircle className="w-6 h-6 text-blue-600 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                        <p className="text-sm font-semibold text-blue-900">
+                            Ready to Run Backtest
+                        </p>
+                        <p className="text-xs text-blue-700 mt-1">
+                            Using <strong>{preSelectedStrategy.name}</strong> with the parameters you configured above.
+                            The backtest will use the same pair, timeframe, and date range from your analysis.
+                        </p>
+                    </div>
                 </div>
+            )}
 
-                {/* Right Column: Results */}
-                <div className="lg:col-span-2 space-y-6">
-                    <Card title="Backtest Results" icon={<CheckCircle className="w-5 h-5 text-green-500" />}>
-                        <div className="space-y-4">
-                            {/* Logs / Status */}
-                            <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-xs h-32 overflow-y-auto">
-                                {logs.map((log, i) => (
-                                    <div key={i}>{log}</div>
-                                ))}
-                                {logs.length === 0 && <div className="text-gray-500 italic">Ready to run backtest...</div>}
-                            </div>
-
-                            {error && (
-                                <div className="p-4 bg-red-50 text-red-700 rounded-lg flex items-center gap-2">
-                                    <AlertTriangle className="w-5 h-5" />
-                                    {error}
-                                </div>
-                            )}
-
-                            {result && (
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                    <StatBox label="Total P&L" value={`$${result.metrics.total_pnl?.toFixed(2)}`}
-                                        color={result.metrics.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'} />
-                                    <StatBox label="Sharpe Ratio" value={result.metrics.sharpe_ratio?.toFixed(2) || 'N/A'} />
-                                    <StatBox label="Win Rate" value={`${result.metrics.win_rate?.toFixed(1)}%`} />
-                                    <StatBox label="Max Drawdown" value={`${result.metrics.max_drawdown_pct?.toFixed(1)}%`} color="text-red-600" />
-                                    <StatBox label="Total Trades" value={result.metrics.total_trades} />
-                                    <StatBox label="Profit Factor" value={result.metrics.profit_factor?.toFixed(2) || 'N/A'} />
-                                    <StatBox label="Avg Win" value={`$${result.metrics.avg_win?.toFixed(2)}`} className="text-green-600" />
-                                    <StatBox label="Avg Loss" value={`$${result.metrics.avg_loss?.toFixed(2)}`} className="text-red-600" />
-                                </div>
-                            )}
-                        </div>
-                    </Card>
+            {!preSelectedStrategy && (
+                <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-3">
+                    <AlertTriangle className="w-6 h-6 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                        <p className="text-sm font-semibold text-amber-900">
+                            No Strategy Selected
+                        </p>
+                        <p className="text-xs text-amber-700 mt-1">
+                            Please select a strategy in the Analysis Configuration section above to run a backtest.
+                        </p>
+                    </div>
                 </div>
-            </div>
+            )}
+            
+            <Card title="Run Backtest">
+                <div className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+                        <div className="flex-1">
+                            <h4 className="text-sm font-medium text-slate-900">Configuration Summary</h4>
+                            <div className="mt-2 space-y-1 text-xs text-slate-600">
+                                <div className="flex items-center gap-2">
+                                    <span className="font-medium">Pair:</span>
+                                    <span className="font-mono">{symbolA} / {symbolB}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="font-medium">Timeframe:</span>
+                                    <span>{timeframe}</span>
+                                </div>
+                                {preSelectedStrategy && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-medium">Strategy:</span>
+                                        <span className="text-blue-700 font-semibold">{preSelectedStrategy.name}</span>
+                                    </div>
+                                )}
+                                {startDate && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="font-medium">Period:</span>
+                                        <span>{new Date(startDate).toLocaleDateString()} - {endDate ? new Date(endDate).toLocaleDateString() : 'now'}</span>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        <button
+                            onClick={handleRunBacktest}
+                            disabled={isRunning || !preSelectedStrategy}
+                            className={clsx(
+                                "py-3 px-6 rounded-lg font-semibold text-white transition-all flex items-center gap-2 shadow-md",
+                                isRunning || !preSelectedStrategy
+                                    ? "bg-gray-400 cursor-not-allowed"
+                                    : "bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 hover:shadow-lg active:transform active:scale-95"
+                            )}
+                        >
+                            {isRunning ? (
+                                <>
+                                    <RefreshCw className="w-5 h-5 animate-spin" />
+                                    Running Backtest...
+                                </>
+                            ) : (
+                                <>
+                                    <Play className="w-5 h-5" />
+                                    Run Backtest
+                                </>
+                            )}
+                        </button>
+                    </div>
+
+                    {/* Logs / Status */}
+                    <div className="bg-gray-900 text-gray-100 p-4 rounded-lg font-mono text-xs h-32 overflow-y-auto">
+                        {logs.map((log, i) => (
+                            <div key={i}>{log}</div>
+                        ))}
+                        {logs.length === 0 && <div className="text-gray-500 italic">Ready to run backtest...</div>}
+                    </div>
+
+                    {error && (
+                        <div className="p-4 bg-red-50 text-red-700 rounded-lg flex items-center gap-2">
+                            <AlertTriangle className="w-5 h-5" />
+                            {error}
+                        </div>
+                    )}
+
+                    {result && (
+                        <>
+                            <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg flex items-center gap-2">
+                                <CheckCircle className="w-5 h-5 text-emerald-600" />
+                                <div className="flex-1">
+                                    <p className="text-sm font-medium text-emerald-900">Backtest Complete!</p>
+                                    <p className="text-xs text-emerald-700 mt-0.5">
+                                        These results reflect your configured parameters. Modify parameters above and re-run to test different configurations.
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <StatBox label="Total P&L" value={`$${result.metrics.total_pnl?.toFixed(2)}`}
+                                    color={result.metrics.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'} />
+                                <StatBox label="Sharpe Ratio" value={result.metrics.sharpe_ratio?.toFixed(2) || 'N/A'} />
+                                <StatBox label="Win Rate" value={`${result.metrics.win_rate?.toFixed(1)}%`} />
+                                <StatBox label="Max Drawdown" value={`${result.metrics.max_drawdown_pct?.toFixed(1)}%`} color="text-red-600" />
+                                <StatBox label="Total Trades" value={result.metrics.total_trades} />
+                                <StatBox label="Profit Factor" value={result.metrics.profit_factor?.toFixed(2) || 'N/A'} />
+                                <StatBox label="Avg Win" value={`$${result.metrics.avg_win?.toFixed(2)}`} className="text-green-600" />
+                                <StatBox label="Avg Loss" value={`$${result.metrics.avg_loss?.toFixed(2)}`} className="text-red-600" />
+                            </div>
+                        </>
+                    )}
+                </div>
+            </Card>
         </div>
     );
 };

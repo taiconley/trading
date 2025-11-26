@@ -374,6 +374,7 @@ class ApiClient {
     timeframe: string;
     start_date?: string;
     end_date?: string;
+    strategy_params?: Record<string, any>;
   }) {
     const response = await this.client.post('/api/research/analyze-pair', params);
     return response.data;

@@ -1,8 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Card } from '../../components/Card';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush, ScatterChart, Scatter, ReferenceLine } from 'recharts';
-import { Activity, RefreshCw, AlertCircle, TrendingUp, BarChart2, Clock, Calendar, ZoomIn } from 'lucide-react';
-import { api } from '../../services/api';
+import { Activity, RefreshCw, AlertCircle, TrendingUp, BarChart2, Clock, Calendar, ZoomIn, CheckCircle } from 'lucide-react';
+import { api, Strategy } from '../../services/api';
 import { BacktestSection } from './BacktestSection';
 
 interface AnalysisResult {
@@ -46,6 +46,68 @@ export function PairsAnalysis() {
 
     const [priceChartMode, setPriceChartMode] = useState<'raw' | 'pct'>('raw');
 
+    // Strategy selection for backtest configuration
+    const [strategies, setStrategies] = useState<Strategy[]>([]);
+    const [selectedStrategy, setSelectedStrategy] = useState<Strategy | null>(null);
+    const [strategyParams, setStrategyParams] = useState<string>('{}');
+
+    // Load strategies on mount
+    useEffect(() => {
+        loadStrategies();
+    }, []);
+
+    const loadStrategies = async () => {
+        try {
+            const data = await api.getStrategies();
+            setStrategies(data.strategies || []);
+        } catch (err) {
+            console.error('Failed to load strategies', err);
+        }
+    };
+
+    const handleStrategySelect = (strategy: Strategy) => {
+        setSelectedStrategy(strategy);
+        // Pre-fill params with current strategy params, but override pairs/symbols for this analysis
+        const currentParams = { ...strategy.params };
+        
+        // Ensure we target the current pair if symbols are entered
+        if (symbolA && symbolB) {
+            if (currentParams.pairs) {
+                currentParams.pairs = [[symbolA, symbolB]];
+            }
+            if (currentParams.symbols) {
+                currentParams.symbols = [symbolA, symbolB];
+            }
+        }
+        
+        setStrategyParams(JSON.stringify(currentParams, null, 2));
+    };
+
+    // Update strategy params when symbols change (if a strategy is selected)
+    useEffect(() => {
+        if (selectedStrategy && symbolA && symbolB) {
+            try {
+                const currentParams = JSON.parse(strategyParams);
+                let updated = false;
+                
+                if (currentParams.pairs) {
+                    currentParams.pairs = [[symbolA, symbolB]];
+                    updated = true;
+                }
+                if (currentParams.symbols) {
+                    currentParams.symbols = [symbolA, symbolB];
+                    updated = true;
+                }
+                
+                if (updated) {
+                    setStrategyParams(JSON.stringify(currentParams, null, 2));
+                }
+            } catch (e) {
+                // Invalid JSON, ignore
+            }
+        }
+    }, [symbolA, symbolB]);
+
     // Fetch availability when symbols or timeframe change
     useEffect(() => {
         const fetchAvailability = async (sym: string, setAvail: (a: Availability | null) => void) => {
@@ -78,6 +140,16 @@ export function PairsAnalysis() {
             const payload: any = { symbol_a: symbolA, symbol_b: symbolB, timeframe };
             if (startDate) payload.start_date = new Date(startDate).toISOString();
             if (endDate) payload.end_date = new Date(endDate).toISOString();
+            
+            // Include strategy parameters if a strategy is selected
+            if (selectedStrategy && strategyParams && strategyParams !== '{}') {
+                try {
+                    const parsedParams = JSON.parse(strategyParams);
+                    payload.strategy_params = parsedParams;
+                } catch (e) {
+                    console.warn('Failed to parse strategy params for analysis, using defaults', e);
+                }
+            }
 
             const data = await api.analyzePair(payload);
             setResult(data);
@@ -217,6 +289,73 @@ export function PairsAnalysis() {
                         </div>
                     </div>
 
+                    {/* Strategy Selection and Parameters - New Section */}
+                    <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                        <div className="flex items-center justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                                <TrendingUp className="w-5 h-5 text-blue-600" />
+                                <h3 className="text-sm font-semibold text-slate-800">Strategy Configuration (Optional)</h3>
+                            </div>
+                            <div className="flex items-center gap-1 text-xs text-emerald-700 bg-emerald-50 px-2 py-1 rounded border border-emerald-300">
+                                <CheckCircle className="w-3 h-3" />
+                                <span>Affects both analysis & backtest</span>
+                            </div>
+                        </div>
+                        <p className="text-xs text-slate-600 mb-4">
+                            Select a strategy to use its parameters for the analysis. Parameters like <code className="bg-white px-1 rounded">entry_threshold</code>, 
+                            <code className="bg-white px-1 rounded mx-1">exit_threshold</code>, and <code className="bg-white px-1 rounded">lookback_window</code> will 
+                            affect the calculated statistics (Z-Score, Sharpe Ratio, etc.) and backtest results.
+                            <strong className="block mt-2 text-blue-700">💡 Modify parameters and re-run analysis to see how different settings affect the results.</strong>
+                        </p>
+                        
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 mb-1">Strategy</label>
+                                <select
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                    value={selectedStrategy?.id || ''}
+                                    onChange={(e) => {
+                                        const s = strategies.find(s => s.id === e.target.value);
+                                        if (s) handleStrategySelect(s);
+                                        else {
+                                            setSelectedStrategy(null);
+                                            setStrategyParams('{}');
+                                        }
+                                    }}
+                                >
+                                    <option value="">None - Use Default Parameters</option>
+                                    {strategies.map(s => (
+                                        <option key={s.id} value={s.id}>{s.name}</option>
+                                    ))}
+                                </select>
+                                {selectedStrategy && (
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        Loaded from: {selectedStrategy.name}
+                                    </p>
+                                )}
+                            </div>
+                            
+                            <div className="lg:col-span-2">
+                                <label className="block text-sm font-medium text-slate-700 mb-1">
+                                    Strategy Parameters (JSON)
+                                    {selectedStrategy && <span className="text-blue-600 ml-1">- Modify to test different configurations</span>}
+                                </label>
+                                <textarea
+                                    className="w-full h-32 font-mono text-xs px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                                    value={strategyParams}
+                                    onChange={(e) => setStrategyParams(e.target.value)}
+                                    placeholder={selectedStrategy ? "Modify parameters here..." : "Select a strategy to load its parameters"}
+                                    disabled={!selectedStrategy}
+                                />
+                                {selectedStrategy && (
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        💡 Tip: Modify entry_threshold, exit_threshold, or other params to see how they affect backtest results
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
                     <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
                         <div className="flex flex-col md:flex-row gap-4 items-end">
                             <div className="flex-1 w-full">
@@ -244,15 +383,18 @@ export function PairsAnalysis() {
                             <button
                                 onClick={handleAnalyze}
                                 disabled={loading || !symbolA || !symbolB}
-                                className={`flex items-center justify-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors min-w-[140px] h-[42px] ${loading || !symbolA || !symbolB ? 'opacity-50 cursor-not-allowed' : ''
+                                className={`flex items-center justify-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors min-w-[180px] h-[42px] ${loading || !symbolA || !symbolB ? 'opacity-50 cursor-not-allowed' : ''
                                     }`}
+                                title={selectedStrategy 
+                                    ? `Analyzes pair using ${selectedStrategy.name}'s parameters` 
+                                    : "Analyzes pair with default parameters"}
                             >
                                 {loading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
                                 {loading ? 'Analyzing...' : 'Run Analysis'}
                             </button>
                         </div>
                         <p className="text-xs text-slate-500 mt-2">
-                            Leave dates empty to use the default lookback period (smart auto-detection).
+                            📊 Leave dates empty to use the default lookback period (smart auto-detection).
                         </p>
                     </div>
                 </div>
@@ -267,6 +409,42 @@ export function PairsAnalysis() {
 
             {result && (
                 <div className="space-y-6">
+                    {/* Header for Results */}
+                    <div className="bg-gradient-to-r from-emerald-50 to-blue-50 border border-emerald-200 rounded-lg p-4">
+                        <div className="flex items-start gap-3">
+                            <CheckCircle className="w-5 h-5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                            <div className="flex-1">
+                                <h3 className="text-sm font-semibold text-slate-900">Statistical Analysis Complete</h3>
+                                <p className="text-xs text-slate-600 mt-1">
+                                    These statistics show the relationship between {result.symbol_a} and {result.symbol_b} using
+                                    {selectedStrategy ? (
+                                        <span className="font-semibold text-blue-700"> {selectedStrategy.name}'s parameters</span>
+                                    ) : (
+                                        <span className="font-semibold"> default parameters</span>
+                                    )}.
+                                </p>
+                                {selectedStrategy && (() => {
+                                    try {
+                                        const params = JSON.parse(strategyParams);
+                                        return (
+                                            <p className="text-xs text-emerald-700 mt-2 font-medium flex items-center gap-1">
+                                                <CheckCircle className="w-3 h-3" />
+                                                Using: entry_threshold={params.entry_threshold || 'N/A'}, 
+                                                exit_threshold={params.exit_threshold || 'N/A'}, 
+                                                lookback_window={params.lookback_window || 'N/A'}
+                                            </p>
+                                        );
+                                    } catch {
+                                        return null;
+                                    }
+                                })()}
+                                <p className="text-xs text-blue-700 mt-2 font-medium">
+                                    💡 Change parameters above and re-run analysis to see how different settings affect these results.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Statistics Cards */}
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                         <Card>
@@ -532,16 +710,24 @@ export function PairsAnalysis() {
             {/* Backtest Section */}
             {result && (
                 <div className="mt-8">
-                    <h2 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                        <RefreshCw className="w-6 h-6 text-blue-600" />
-                        Strategy Backtest
-                    </h2>
+                    <div className="mb-4">
+                        <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                            <RefreshCw className="w-6 h-6 text-blue-600" />
+                            Strategy Backtest
+                        </h2>
+                        <p className="text-sm text-slate-600 mt-1">
+                            Test how different strategy parameters affect trading performance. Modify entry_threshold, exit_threshold, 
+                            position_size, and other params to optimize results.
+                        </p>
+                    </div>
                     <BacktestSection
                         symbolA={result.symbol_a}
                         symbolB={result.symbol_b}
                         timeframe={timeframe}
                         startDate={startDate || undefined}
                         endDate={endDate || undefined}
+                        preSelectedStrategy={selectedStrategy}
+                        preSetParams={strategyParams}
                     />
                 </div>
             )}
