@@ -40,7 +40,7 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
         try {
             setLoading(true);
             const data = await api.getBacktestTrades(runId);
-            
+
             // Map API field names to frontend-friendly names
             const mappedTrades = (data.trades || []).map((t: any) => ({
                 id: t.id,
@@ -53,9 +53,9 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                 exit_price: t.exit_px ?? t.exit_price,
                 pnl: t.pnl
             }));
-            
+
             console.log('Loaded', mappedTrades.length, 'trades');
-            
+
             setTrades(mappedTrades);
         } catch (err) {
             console.error('Failed to load trades', err);
@@ -67,16 +67,16 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
     // Calculate equity curve from trades
     const equityCurve = React.useMemo(() => {
         if (!trades.length) return [];
-        
+
         const points: Array<{ timestamp: string; equity: number; tradeType?: string }> = [];
         let runningEquity = 100000; // Initial capital
-        
+
         // Add initial point
         points.push({
             timestamp: 'Start',
             equity: runningEquity
         });
-        
+
         // Add points for each trade with valid P&L (don't require exit_time)
         trades.forEach((trade, idx) => {
             if (trade.pnl != null && !isNaN(trade.pnl)) {
@@ -88,8 +88,8 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                 });
             }
         });
-        
-        
+
+
         return points;
     }, [trades]);
 
@@ -98,20 +98,20 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
         if (!trades.length || !analysisData?.zscore_series) {
             return { entries: [], exits: [] };
         }
-        
+
         const entries: Array<{ timestamp: string; zscore: number; type: string; trade: any }> = [];
         const exits: Array<{ timestamp: string; zscore: number; type: string; pnl: number }> = [];
-        
+
         const timestamps = analysisData.price_data.timestamps;
         const zscores = analysisData.zscore_series;
-        
-        
+
+
         trades.forEach((trade) => {
             // Find closest timestamp for entry
             const entryTime = new Date(trade.entry_time).getTime();
             let closestEntryIdx = -1;
             let minEntryDiff = Infinity;
-            
+
             timestamps.forEach((ts: string, i: number) => {
                 const diff = Math.abs(new Date(ts).getTime() - entryTime);
                 if (diff < minEntryDiff) {
@@ -119,22 +119,41 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                     closestEntryIdx = i;
                 }
             });
-            
-            if (closestEntryIdx >= 0 && zscores[closestEntryIdx] !== undefined) {
-                entries.push({
-                    timestamp: timestamps[closestEntryIdx],
-                    zscore: zscores[closestEntryIdx],
-                    type: trade.side,
-                    trade: trade
-                });
+
+            if (closestEntryIdx >= 0) {
+                let zscore = zscores[closestEntryIdx];
+
+                // If zscore is missing (e.g. during warmup), search nearby
+                if (zscore === undefined || zscore === null) {
+                    // Search up to 10 bars forward and backward
+                    for (let offset = 1; offset <= 10; offset++) {
+                        if (zscores[closestEntryIdx + offset] != null) {
+                            zscore = zscores[closestEntryIdx + offset];
+                            break;
+                        }
+                        if (zscores[closestEntryIdx - offset] != null) {
+                            zscore = zscores[closestEntryIdx - offset];
+                            break;
+                        }
+                    }
+                }
+
+                if (zscore != null) {
+                    entries.push({
+                        timestamp: timestamps[closestEntryIdx],
+                        zscore: zscore,
+                        type: trade.side,
+                        trade: trade
+                    });
+                }
             }
-            
+
             // Find closest timestamp for exit
             if (trade.exit_time) {
                 const exitTime = new Date(trade.exit_time).getTime();
                 let closestExitIdx = -1;
                 let minExitDiff = Infinity;
-                
+
                 timestamps.forEach((ts: string, i: number) => {
                     const diff = Math.abs(new Date(ts).getTime() - exitTime);
                     if (diff < minExitDiff) {
@@ -142,18 +161,35 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                         closestExitIdx = i;
                     }
                 });
-                
-                if (closestExitIdx >= 0 && zscores[closestExitIdx] !== undefined && trade.pnl != null) {
-                    exits.push({
-                        timestamp: timestamps[closestExitIdx],
-                        zscore: zscores[closestExitIdx],
-                        type: trade.pnl > 0 ? 'profit' : 'loss',
-                        pnl: trade.pnl
-                    });
+
+                if (closestExitIdx >= 0 && trade.pnl != null) {
+                    let zscore = zscores[closestExitIdx];
+
+                    if (zscore === undefined || zscore === null) {
+                        for (let offset = 1; offset <= 10; offset++) {
+                            if (zscores[closestExitIdx + offset] != null) {
+                                zscore = zscores[closestExitIdx + offset];
+                                break;
+                            }
+                            if (zscores[closestExitIdx - offset] != null) {
+                                zscore = zscores[closestExitIdx - offset];
+                                break;
+                            }
+                        }
+                    }
+
+                    if (zscore != null) {
+                        exits.push({
+                            timestamp: timestamps[closestExitIdx],
+                            zscore: zscore,
+                            type: trade.pnl > 0 ? 'profit' : 'loss',
+                            pnl: trade.pnl
+                        });
+                    }
                 }
             }
         });
-        
+
         return { entries, exits };
     }, [trades, analysisData]);
 
@@ -236,18 +272,18 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                     <ResponsiveContainer width="100%" height="100%">
                                         <LineChart data={equityCurve}>
                                             <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                            <XAxis 
-                                                dataKey="timestamp" 
+                                            <XAxis
+                                                dataKey="timestamp"
                                                 stroke="#64748b"
                                                 tick={{ fill: '#64748b', fontSize: 10 }}
                                             />
-                                            <YAxis 
+                                            <YAxis
                                                 stroke="#64748b"
                                                 tick={{ fill: '#64748b', fontSize: 11 }}
                                                 domain={['dataMin - 50', 'dataMax + 50']}
                                                 tickFormatter={(val) => `$${val.toLocaleString()}`}
                                             />
-                                            <Tooltip 
+                                            <Tooltip
                                                 contentStyle={{ backgroundColor: '#fff', borderColor: '#e2e8f0' }}
                                                 formatter={(value: number) => {
                                                     const change = value - 100000;
@@ -262,9 +298,9 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                                     ];
                                                 }}
                                             />
-                                            <ReferenceLine 
-                                                y={100000} 
-                                                stroke="#94a3b8" 
+                                            <ReferenceLine
+                                                y={100000}
+                                                stroke="#94a3b8"
                                                 strokeDasharray="3 3"
                                                 label={{ value: 'Break Even', fill: '#94a3b8', fontSize: 10 }}
                                             />
@@ -356,7 +392,7 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                         const chartData = analysisData.price_data.timestamps.map((ts: string, i: number) => {
                                             const entry = tradeMarkers.entries.find(e => e.timestamp === ts);
                                             const exit = tradeMarkers.exits.find(e => e.timestamp === ts);
-                                            
+
                                             return {
                                                 timestamp: new Date(ts).toLocaleString(),
                                                 rawTimestamp: ts,
@@ -367,19 +403,19 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                                 exitLossMarker: exit && exit.type === 'loss' ? exit.zscore : undefined
                                             };
                                         });
-                                        
-                                        
+
+
                                         return chartData;
                                     })()}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                                        <XAxis 
-                                            dataKey="timestamp" 
+                                        <XAxis
+                                            dataKey="timestamp"
                                             stroke="#64748b"
                                             tick={{ fill: '#64748b', fontSize: 10 }}
                                             tickFormatter={(val) => val.split(',')[0]}
                                             minTickGap={50}
                                         />
-                                        <YAxis 
+                                        <YAxis
                                             stroke="#64748b"
                                             tick={{ fill: '#64748b', fontSize: 11 }}
                                         />
@@ -395,33 +431,33 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                             strokeWidth={2}
                                             name="Z-Score"
                                         />
-                                        {/* Entry markers as green points */}
+                                        {/* Entry markers as green points - Rendered FIRST (behind) but LARGER to create a halo effect if overlapping */}
                                         <Line
                                             type="monotone"
                                             dataKey="entryMarker"
                                             stroke="none"
-                                            dot={{ fill: '#10b981', r: 8, strokeWidth: 2, stroke: '#fff' }}
+                                            dot={{ fill: '#10b981', r: 10, strokeWidth: 2, stroke: '#fff' }}
                                             name="Entry"
                                             isAnimationActive={false}
                                             connectNulls={false}
                                         />
-                                        {/* Profit exit markers as blue points */}
-                                        <Line
-                                            type="monotone"
-                                            dataKey="exitProfitMarker"
-                                            stroke="none"
-                                            dot={{ fill: '#3b82f6', r: 8, strokeWidth: 2, stroke: '#fff' }}
-                                            name="Profit Exit"
-                                            isAnimationActive={false}
-                                            connectNulls={false}
-                                        />
-                                        {/* Loss exit markers as red points */}
+                                        {/* Loss exit markers as red points - Rendered ON TOP but SMALLER */}
                                         <Line
                                             type="monotone"
                                             dataKey="exitLossMarker"
                                             stroke="none"
-                                            dot={{ fill: '#ef4444', r: 8, strokeWidth: 2, stroke: '#fff' }}
+                                            dot={{ fill: '#ef4444', r: 6, strokeWidth: 2, stroke: '#fff' }}
                                             name="Loss Exit"
+                                            isAnimationActive={false}
+                                            connectNulls={false}
+                                        />
+                                        {/* Profit exit markers as blue points - Rendered ON TOP but SMALLER */}
+                                        <Line
+                                            type="monotone"
+                                            dataKey="exitProfitMarker"
+                                            stroke="none"
+                                            dot={{ fill: '#3b82f6', r: 6, strokeWidth: 2, stroke: '#fff' }}
+                                            name="Profit Exit"
                                             isAnimationActive={false}
                                             connectNulls={false}
                                         />
@@ -433,7 +469,7 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                     <strong>📊 How to interpret:</strong> Green dots show where trades entered. Blue dots show profitable exits. Red dots show losing exits.
                                     {tradeMarkers.entries.length === 0 && tradeMarkers.exits.length === 0 && (
                                         <span className="block mt-2 text-amber-900 font-semibold">
-                                            ⚠️ No markers visible: The backtest and analysis were run on different date ranges. 
+                                            ⚠️ No markers visible: The backtest and analysis were run on different date ranges.
                                             Make sure to use the same date range for both.
                                         </span>
                                     )}
@@ -464,10 +500,10 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                             </thead>
                             <tbody className="bg-white divide-y divide-gray-200">
                                 {tradesWithRunningPnL.map((trade, idx) => {
-                                    const duration = trade.exit_time 
+                                    const duration = trade.exit_time
                                         ? Math.round((new Date(trade.exit_time).getTime() - new Date(trade.entry_time).getTime()) / (1000 * 60)) // minutes
                                         : null;
-                                    
+
                                     return (
                                         <tr key={trade.id} className={clsx(
                                             "hover:bg-gray-50",
