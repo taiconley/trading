@@ -54,9 +54,7 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                 pnl: t.pnl
             }));
             
-            console.log('=== TRADE DATA DEBUG ===');
-            console.log('Total trades:', mappedTrades.length);
-            console.log('First mapped trade:', JSON.stringify(mappedTrades[0], null, 2));
+            console.log('Loaded', mappedTrades.length, 'trades');
             
             setTrades(mappedTrades);
         } catch (err) {
@@ -91,7 +89,6 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
             }
         });
         
-        console.log('Equity curve points:', points.length, 'trades with P&L:', points.length - 1);
         
         return points;
     }, [trades]);
@@ -99,10 +96,6 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
     // Create trade markers for spread/z-score chart
     const tradeMarkers = React.useMemo(() => {
         if (!trades.length || !analysisData?.zscore_series) {
-            console.log('No trade markers:', { 
-                tradesLength: trades.length, 
-                hasZscoreData: !!analysisData?.zscore_series 
-            });
             return { entries: [], exits: [] };
         }
         
@@ -112,14 +105,6 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
         const timestamps = analysisData.price_data.timestamps;
         const zscores = analysisData.zscore_series;
         
-        console.log('Building trade markers from:', {
-            totalTrades: trades.length,
-            totalTimestamps: timestamps?.length,
-            firstAnalysisTime: timestamps?.[0],
-            lastAnalysisTime: timestamps?.[timestamps?.length - 1],
-            firstTradeEntry: trades[0]?.entry_time,
-            lastTradeEntry: trades[trades.length - 1]?.entry_time
-        });
         
         trades.forEach((trade) => {
             // Find closest timestamp for entry
@@ -167,13 +152,6 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                     });
                 }
             }
-        });
-        
-        console.log('Trade markers created:', { 
-            entries: entries.length, 
-            exits: exits.length,
-            sampleEntry: entries[0],
-            sampleExit: exits[0]
         });
         
         return { entries, exits };
@@ -374,20 +352,25 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                             </div>
                             <div className="h-[350px]">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={analysisData.price_data.timestamps.map((ts: string, i: number) => {
-                                        const entry = tradeMarkers.entries.find(e => e.timestamp === ts);
-                                        const exit = tradeMarkers.exits.find(e => e.timestamp === ts);
+                                    <LineChart data={(() => {
+                                        const chartData = analysisData.price_data.timestamps.map((ts: string, i: number) => {
+                                            const entry = tradeMarkers.entries.find(e => e.timestamp === ts);
+                                            const exit = tradeMarkers.exits.find(e => e.timestamp === ts);
+                                            
+                                            return {
+                                                timestamp: new Date(ts).toLocaleString(),
+                                                rawTimestamp: ts,
+                                                zscore: analysisData.zscore_series[i],
+                                                // Add marker data
+                                                entryMarker: entry?.zscore,
+                                                exitProfitMarker: exit && exit.type === 'profit' ? exit.zscore : undefined,
+                                                exitLossMarker: exit && exit.type === 'loss' ? exit.zscore : undefined
+                                            };
+                                        });
                                         
-                                        return {
-                                            timestamp: new Date(ts).toLocaleString(),
-                                            rawTimestamp: ts,
-                                            zscore: analysisData.zscore_series[i],
-                                            // Add marker data
-                                            entryMarker: entry?.zscore,
-                                            exitProfitMarker: exit && exit.type === 'profit' ? exit.zscore : undefined,
-                                            exitLossMarker: exit && exit.type === 'loss' ? exit.zscore : undefined
-                                        };
-                                    })}>
+                                        
+                                        return chartData;
+                                    })()}>
                                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                                         <XAxis 
                                             dataKey="timestamp" 
@@ -417,27 +400,30 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
                                             type="monotone"
                                             dataKey="entryMarker"
                                             stroke="none"
-                                            dot={{ fill: '#10b981', r: 7, strokeWidth: 2, stroke: '#fff' }}
+                                            dot={{ fill: '#10b981', r: 8, strokeWidth: 2, stroke: '#fff' }}
                                             name="Entry"
                                             isAnimationActive={false}
+                                            connectNulls={false}
                                         />
                                         {/* Profit exit markers as blue points */}
                                         <Line
                                             type="monotone"
                                             dataKey="exitProfitMarker"
                                             stroke="none"
-                                            dot={{ fill: '#3b82f6', r: 7, strokeWidth: 2, stroke: '#fff' }}
+                                            dot={{ fill: '#3b82f6', r: 8, strokeWidth: 2, stroke: '#fff' }}
                                             name="Profit Exit"
                                             isAnimationActive={false}
+                                            connectNulls={false}
                                         />
                                         {/* Loss exit markers as red points */}
                                         <Line
                                             type="monotone"
                                             dataKey="exitLossMarker"
                                             stroke="none"
-                                            dot={{ fill: '#ef4444', r: 7, strokeWidth: 2, stroke: '#fff' }}
+                                            dot={{ fill: '#ef4444', r: 8, strokeWidth: 2, stroke: '#fff' }}
                                             name="Loss Exit"
                                             isAnimationActive={false}
+                                            connectNulls={false}
                                         />
                                     </LineChart>
                                 </ResponsiveContainer>
