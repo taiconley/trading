@@ -3,7 +3,7 @@ import { Card } from '../../components/Card';
 import { api, Strategy } from '../../services/api';
 import { Play, RefreshCw, AlertTriangle, CheckCircle } from 'lucide-react';
 import clsx from 'clsx';
-import { BacktestVisualization } from './BacktestVisualization';
+import { BacktestVisualization } from '../../components/BacktestVisualization';
 
 interface BacktestSectionProps {
     symbolA: string;
@@ -16,11 +16,11 @@ interface BacktestSectionProps {
     analysisData?: any; // Pass through the analysis results for visualization
 }
 
-export const BacktestSection: React.FC<BacktestSectionProps> = ({ 
-    symbolA, 
-    symbolB, 
-    timeframe, 
-    startDate, 
+export const BacktestSection: React.FC<BacktestSectionProps> = ({
+    symbolA,
+    symbolB,
+    timeframe,
+    startDate,
     endDate,
     preSelectedStrategy = null,
     preSetParams = '{}',
@@ -130,7 +130,7 @@ export const BacktestSection: React.FC<BacktestSectionProps> = ({
                     </div>
                 </div>
             )}
-            
+
             <Card title="Run Backtest">
                 <div className="space-y-4">
                     <div className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
@@ -209,7 +209,7 @@ export const BacktestSection: React.FC<BacktestSectionProps> = ({
                                     </p>
                                 </div>
                             </div>
-                            
+
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                 <StatBox label="Total P&L" value={`$${result.metrics.total_pnl?.toFixed(2)}`}
                                     color={result.metrics.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'} />
@@ -228,14 +228,56 @@ export const BacktestSection: React.FC<BacktestSectionProps> = ({
 
             {/* Detailed Visualization */}
             {result && result.run_id && (
-                <BacktestVisualization
+                <BacktestVisualizationWrapper
                     runId={result.run_id}
-                    symbolA={symbolA}
-                    symbolB={symbolB}
                     analysisData={analysisData}
                 />
             )}
         </div>
+    );
+};
+
+const BacktestVisualizationWrapper: React.FC<{ runId: number, analysisData: any }> = ({ runId, analysisData }) => {
+    const [trades, setTrades] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+
+    React.useEffect(() => {
+        const loadTrades = async () => {
+            try {
+                setLoading(true);
+                const data = await api.getBacktestTrades(runId);
+
+                // Map API field names to frontend-friendly names
+                const mappedTrades = (data.trades || []).map((t: any) => ({
+                    id: t.id,
+                    symbol: t.symbol,
+                    side: t.side,
+                    quantity: t.qty ?? t.quantity,
+                    entry_time: t.entry_ts ?? t.entry_time,
+                    entry_price: t.entry_px ?? t.entry_price,
+                    exit_time: t.exit_ts ?? t.exit_time,
+                    exit_price: t.exit_px ?? t.exit_price,
+                    pnl: t.pnl
+                }));
+
+                setTrades(mappedTrades);
+            } catch (err) {
+                console.error('Failed to load trades', err);
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        loadTrades();
+    }, [runId]);
+
+    if (loading) return <div className="text-center py-8 text-gray-500">Loading trade data...</div>;
+
+    return (
+        <BacktestVisualization
+            trades={trades}
+            analysisData={analysisData}
+        />
     );
 };
 

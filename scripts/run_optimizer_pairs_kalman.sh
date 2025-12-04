@@ -36,17 +36,24 @@ END_DATE=${END_DATE:-""}      # e.g. 2024-12-31
 # WORKERS can be set to control CPU cores used (default: auto-detect)
 
 
-SYMBOLS=(ITW PKG V MA SSB UBSI WM RSG PPL EVRG WEC CMS FFIN CATY)
-SYMBOLS_CSV="ITW,PKG,V,MA,SSB,UBSI,WM,RSG,PPL,EVRG,WEC,CMS,FFIN,CATY"
-SYMBOLS_JSON='["ITW","PKG","V","MA","SSB","UBSI","WM","RSG","PPL","EVRG","WEC","CMS","FFIN","CATY"]'
+# SYMBOLS=(ITW PKG V MA SSB UBSI WM RSG PPL EVRG WEC CMS FFIN CATY)
+# SYMBOLS_CSV="ITW,PKG,V,MA,SSB,UBSI,WM,RSG,PPL,EVRG,WEC,CMS,FFIN,CATY"
+# SYMBOLS_JSON='["ITW","PKG","V","MA","SSB","UBSI","WM","RSG","PPL","EVRG","WEC","CMS","FFIN","CATY"]'
+# PAIRS_JSON='[
+#   ["ITW","PKG"],
+#   ["V","MA"],
+#   ["SSB","UBSI"],
+#   ["WM","RSG"],
+#   ["PPL","EVRG"],
+#   ["WEC","CMS"],
+#   ["FFIN","CATY"]
+# ]'
+
+SYMBOLS=(ITW PKG)
+SYMBOLS_CSV="ITW,PKG"
+SYMBOLS_JSON='["ITW","PKG"]'
 PAIRS_JSON='[
-  ["ITW","PKG"],
-  ["V","MA"],
-  ["SSB","UBSI"],
-  ["WM","RSG"],
-  ["PPL","EVRG"],
-  ["WEC","CMS"],
-  ["FFIN","CATY"]
+  ["ITW","PKG"]
 ]'
 
 # Parameter ranges for optimization
@@ -55,25 +62,16 @@ PAIRS_JSON='[
 PARAM_RANGES=$(cat <<JSON
 {
   "lookback_window": [10, 20, 30, 40, 50],
-  "entry_threshold": [1.2, 1.5, 1.8, 2.0, 2.5, 3.0, 3.5],
-  "exit_threshold": [0.3, 0.5, 0.7, 1.0, 1.2],
-  "max_hold_bars": [5400, 7200, 10800, 14400, 21600, 28800],
+  "entry_threshold": [1.5, 1.8, 2.0, 2.5, 3.0, 3.5],
+  "exit_threshold": [0.5, 0.7, 1.0, 1.2],
+  "max_hold_bars": [5400, 7200, 10800],
   "stop_loss_zscore": [2.5, 3.0, 3.5],
-  "cooldown_bars": [180, 240, 300, 600, 900],
-  "hedge_refresh_bars": [90, 120, 180, 240, 360, 480],
-  "volatility_window": [8, 10, 15, 20, 25, 30],
-  "stats_aggregation_seconds": [60, 120, 180, 300, 600, 900, 1800],
+  "cooldown_bars": [180, 240, 300],
+  "hedge_refresh_bars": [90, 120, 180, 240],
+  "volatility_window": [8, 10, 15, 20, 25],
+  "stats_aggregation_seconds": [60, 120, 180, 300],
   "kalman_delta": [1e-5, 1e-4, 1e-3, 1e-2],
-  "kalman_R": [1e-4, 1e-3, 1e-2, 1e-1],
-  "pair_selection": {
-    "ITW/PKG": [true, false],
-    "V/MA": [true, false],
-    "SSB/UBSI": [true, false],
-    "WM/RSG": [true, false],
-    "PPL/EVRG": [true, false],
-    "WEC/CMS": [true, false],
-    "FFIN/CATY": [true, false]
-  }
+  "kalman_R": [1e-4, 1e-3, 1e-2, 1e-1]
 }
 JSON
 )
@@ -135,7 +133,7 @@ echo "  • cooldown_bars:      180 - 900 (15 min - 75 min RAW bars)"
 echo "  • hedge_refresh_bars: 90 - 480 (7.5 min - 40 min RAW bars)"
 echo "  • kalman_delta:       1e-5 - 1e-2"
 echo "  • kalman_R:           1e-4 - 1e-1"
-echo "  • pair_selection:     AMN/CORT, FITB/TMHC, ACT/DUK (8 combos)"
+echo "  • pair_selection:     ITW/PKG"
 echo ""
 echo "Position Sizing (Notional-Based):"
 echo "  • base_pair_notional: \$50,000 (target capital per pair)"
@@ -156,7 +154,7 @@ echo "  • hedge_refresh_bars: 90-480 raw bars (7.5 min - 40 min)"
 echo "  • volatility_window:  8-30 spread entries"
 echo "  • kalman_delta:       1e-5 - 1e-2"
 echo "  • kalman_R:           1e-4 - 1e-1"
-echo "  • pair_selection:     8 combinations (2^3) of AMN/CORT, FITB/TMHC, ACT/DUK"
+echo "  • pair_selection:     ITW/PKG"
 echo ""
 echo "Z-Score Aggregation Periods Being Tested:"
 echo "  • 60 sec   (1 min)   - Fast intraday (WORKING BASELINE)"

@@ -274,6 +274,8 @@ class BacktesterService:
         run_id = self._store_backtest_results(
             strategy_name=strategy_name,
             strategy_params=strategy_params,
+            symbols=symbols,
+            timeframe=timeframe,
             metrics=metrics,
             trades=engine.trades
         )
@@ -382,16 +384,23 @@ class BacktesterService:
         self,
         strategy_name: str,
         strategy_params: Dict[str, Any],
+        symbols: List[str],
+        timeframe: str,
         metrics: BacktestMetrics,
         trades: List
     ) -> int:
         """Store backtest results in database."""
         
         def _store_results(session):
+            # Merge symbols and timeframe into params for storage
+            stored_params = strategy_params.copy()
+            stored_params['symbols'] = symbols
+            stored_params['timeframe'] = timeframe
+
             # Create backtest run record with comprehensive metrics
             run = BacktestRun(
                 strategy_name=strategy_name,
-                params_json=strategy_params,
+                params_json=stored_params,
                 start_ts=metrics.start_date,
                 end_ts=metrics.end_date,
                 

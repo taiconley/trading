@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { LineChart, Line, Scatter, ScatterChart, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart, ReferenceDot } from 'recharts';
 import { Card } from '../components/Card';
 import { api, Backtest } from '../services/api';
 import { RefreshCw, Eye, TrendingUp, TrendingDown, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { BacktestVisualization } from '../components/BacktestVisualization';
 
 export function Backtests() {
   const [backtests, setBacktests] = useState<Backtest[]>([]);
   const [selectedBacktest, setSelectedBacktest] = useState<Backtest | null>(null);
   const [trades, setTrades] = useState<any[]>([]);
+  const [analysisData, setAnalysisData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,8 +31,54 @@ export function Backtests() {
   const handleViewDetails = async (backtest: Backtest) => {
     try {
       setSelectedBacktest(backtest);
+      setAnalysisData(null); // Reset analysis data
+
+      // Fetch trades
       const data = await api.getBacktestTrades(backtest.id);
-      setTrades(data.trades || []);
+
+      // Map API field names to frontend-friendly names
+      const mappedTrades = (data.trades || []).map((t: any) => ({
+        id: t.id,
+        symbol: t.symbol,
+        side: t.side,
+        quantity: t.qty ?? t.quantity,
+        entry_time: t.entry_ts ?? t.entry_time,
+        entry_price: t.entry_px ?? t.entry_price,
+        exit_time: t.exit_ts ?? t.exit_time,
+        exit_price: t.exit_px ?? t.exit_price,
+        pnl: t.pnl
+      }));
+
+      setTrades(mappedTrades);
+
+      // Fetch analysis data for visualization
+      // Extract params from backtest object
+      const params = backtest.params || {};
+      let symbols = params.symbols || [];
+
+      // Fallback: extract symbols from trades if not in params
+      if ((!symbols || symbols.length === 0) && data.trades && data.trades.length > 0) {
+        const uniqueSymbols = Array.from(new Set(data.trades.map((t: any) => t.symbol)));
+        if (uniqueSymbols.length >= 2) {
+          symbols = uniqueSymbols;
+        }
+      }
+
+      if (symbols.length >= 2) {
+        try {
+          const analysis = await api.analyzePair({
+            symbol_a: symbols[0],
+            symbol_b: symbols[1],
+            timeframe: params.timeframe || '5 mins',
+            start_date: backtest.start_ts, // Use actual run times
+            end_date: backtest.end_ts,
+            strategy_params: params.strategy_params
+          });
+          setAnalysisData(analysis);
+        } catch (e) {
+          console.error('Failed to fetch analysis data for visualization', e);
+        }
+      }
     } catch (err: any) {
       setError(err.message);
     }
@@ -52,6 +99,7 @@ export function Backtests() {
           onClick={() => {
             setSelectedBacktest(null);
             setTrades([]);
+            setAnalysisData(null);
           }}
           className="text-blue-600 hover:text-blue-700 font-medium"
         >
@@ -66,9 +114,8 @@ export function Backtests() {
               <div>
                 <p className="text-sm text-gray-500">Total P&L</p>
                 <p
-                  className={`text-2xl font-bold ${
-                    (selectedBacktest.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}
+                  className={`text-2xl font-bold ${(selectedBacktest.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                    }`}
                 >
                   ${selectedBacktest.pnl?.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) || '0.00'}
                 </p>
@@ -76,9 +123,8 @@ export function Backtests() {
               <div>
                 <p className="text-sm text-gray-500">Total Return</p>
                 <p
-                  className={`text-2xl font-bold ${
-                    (selectedBacktest.total_return_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                  }`}
+                  className={`text-2xl font-bold ${(selectedBacktest.total_return_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                    }`}
                 >
                   {selectedBacktest.total_return_pct?.toFixed(2) || 'N/A'}%
                 </p>
@@ -250,11 +296,10 @@ export function Backtests() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <span
-                          className={`px-2 py-1 text-xs font-medium rounded ${
-                            trade.side === 'BUY'
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}
+                          className={`px-2 py-1 text-xs font-medium rounded ${trade.side === 'BUY'
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                            }`}
                         >
                           {trade.side}
                         </span>
@@ -269,9 +314,8 @@ export function Backtests() {
                         ${trade.exit_px?.toFixed(2)}
                       </td>
                       <td
-                        className={`px-6 py-4 whitespace-nowrap font-medium ${
-                          trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'
-                        }`}
+                        className={`px-6 py-4 whitespace-nowrap font-medium ${trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'
+                          }`}
                       >
                         ${trade.pnl?.toFixed(2)}
                       </td>
@@ -284,6 +328,14 @@ export function Backtests() {
             <p className="text-gray-500 text-center py-8">No trades found</p>
           )}
         </Card>
+
+        {/* Visualization Component */}
+        {selectedBacktest && analysisData && (
+          <BacktestVisualization
+            trades={trades}
+            analysisData={analysisData}
+          />
+        )}
       </div>
     );
   }
@@ -358,9 +410,8 @@ export function Backtests() {
                       {backtest.strategy_name}
                     </td>
                     <td
-                      className={`px-6 py-4 whitespace-nowrap font-medium ${
-                        (backtest.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                      }`}
+                      className={`px-6 py-4 whitespace-nowrap font-medium ${(backtest.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}
                     >
                       {backtest.pnl ? (
                         <div className="flex items-center">
@@ -376,9 +427,8 @@ export function Backtests() {
                       )}
                     </td>
                     <td
-                      className={`px-6 py-4 whitespace-nowrap font-medium ${
-                        (backtest.total_return_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
-                      }`}
+                      className={`px-6 py-4 whitespace-nowrap font-medium ${(backtest.total_return_pct || 0) >= 0 ? 'text-green-600' : 'text-red-600'
+                        }`}
                     >
                       {backtest.total_return_pct?.toFixed(2) || 'N/A'}%
                     </td>

@@ -1,18 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { Card } from '../../components/Card';
+import React, { useState } from 'react';
+import { Card } from './Card';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts';
 import { BarChart2, Table as TableIcon, AlertTriangle } from 'lucide-react';
-import { api } from '../../services/api';
 import clsx from 'clsx';
 
 interface BacktestVisualizationProps {
-    runId: number;
-    symbolA: string;
-    symbolB: string;
+    trades: Trade[];
     analysisData?: any; // The original analysis result with spread/zscore data
 }
 
-interface Trade {
+export interface Trade {
     id: number;
     symbol: string;
     side: string;
@@ -22,47 +19,14 @@ interface Trade {
     exit_time: string | null;
     exit_price: number | null;
     pnl: number | null;
+    runningPnL?: number;
 }
 
 export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
-    runId,
+    trades,
     analysisData
 }) => {
-    const [trades, setTrades] = useState<Trade[]>([]);
-    const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'charts' | 'trades'>('charts');
-
-    useEffect(() => {
-        loadTrades();
-    }, [runId]);
-
-    const loadTrades = async () => {
-        try {
-            setLoading(true);
-            const data = await api.getBacktestTrades(runId);
-
-            // Map API field names to frontend-friendly names
-            const mappedTrades = (data.trades || []).map((t: any) => ({
-                id: t.id,
-                symbol: t.symbol,
-                side: t.side,
-                quantity: t.qty ?? t.quantity,  // Support both field names
-                entry_time: t.entry_ts ?? t.entry_time,
-                entry_price: t.entry_px ?? t.entry_price,
-                exit_time: t.exit_ts ?? t.exit_time,
-                exit_price: t.exit_px ?? t.exit_price,
-                pnl: t.pnl
-            }));
-
-            console.log('Loaded', mappedTrades.length, 'trades');
-
-            setTrades(mappedTrades);
-        } catch (err) {
-            console.error('Failed to load trades', err);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     // Calculate equity curve from trades
     const equityCurve = React.useMemo(() => {
@@ -207,9 +171,7 @@ export const BacktestVisualization: React.FC<BacktestVisualizationProps> = ({
         });
     }, [trades]);
 
-    if (loading) {
-        return <div className="text-center py-8 text-gray-500">Loading trade data...</div>;
-    }
+
 
     // Check if trades have data quality issues
     const hasDateIssues = trades.some(t => !t.entry_time || isNaN(new Date(t.entry_time).getTime()));
