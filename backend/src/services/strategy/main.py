@@ -336,6 +336,10 @@ class StrategyService:
                         # Backfill for disabled strategy (no warmup trigger)
                         await self._backfill_disabled_strategy(strategy_id, db_strategy)
                 
+                # After requesting historical data, load it from DB into memory cache
+                print(f"[BACKFILL] Loading historical data from database into memory cache", flush=True)
+                await self._backfill_bar_cache()
+                
                 return {"message": f"Backfill initiated for strategy {strategy_id}", "strategy_id": strategy_id}
             except HTTPException:
                 raise
@@ -364,14 +368,20 @@ class StrategyService:
         @self.app.post("/strategies/{strategy_id}/warmup")
         async def warmup_strategy(strategy_id: str):
             """Trigger strategy warmup from cached historical data."""
+            print(f"[WARMUP ROUTE] Received warmup request for strategy {strategy_id}", flush=True)
+            logger.info(f"[WARMUP ROUTE] Received warmup request for strategy {strategy_id}")
             try:
+                logger.info(f"[WARMUP ROUTE] Looking for runner in strategy_runners: {list(self.strategy_runners.keys())}")
                 runner = self.strategy_runners.get(strategy_id)
                 if not runner:
+                    logger.error(f"[WARMUP ROUTE] Strategy {strategy_id} not found in runners")
                     raise HTTPException(status_code=404, detail=f"Strategy {strategy_id} is not running")
                 
+                logger.info(f"[WARMUP ROUTE] Found runner for {strategy_id}, calling _warmup_strategy_from_cache")
                 # Trigger warmup from cache
                 await self._warmup_strategy_from_cache(strategy_id, runner)
                 
+                logger.info(f"[WARMUP ROUTE] Warmup completed for {strategy_id}")
                 return {
                     "message": f"Warmup completed for strategy {strategy_id}",
                     "strategy_id": strategy_id
@@ -379,7 +389,7 @@ class StrategyService:
             except HTTPException:
                 raise
             except Exception as e:
-                logger.error(f"Failed to warmup strategy {strategy_id}: {e}")
+                logger.error(f"[WARMUP ROUTE] Failed to warmup strategy {strategy_id}: {e}", exc_info=True)
                 raise HTTPException(status_code=500, detail=str(e))
         
         @self.app.websocket("/ws")
@@ -1121,53 +1131,64 @@ class StrategyService:
     async def _warmup_strategy_from_cache(self, strategy_id: str, runner: StrategyRunner):
         """Trigger strategy warmup using cached historical bars."""
         try:
-            logger.info(f"Warming up strategy {strategy_id} from cached historical data")
+            print(f"[WARMUP] Starting warmup for strategy {strategy_id}", flush=True)
             
             config = runner.strategy.config
             
             # Check if strategy supports multi-symbol processing (pairs trading does)
-            if not hasattr(runner.strategy, 'supports_multi_symbol') or not runner.strategy.supports_multi_symbol:
-                logger.info(f"Strategy {strategy_id} doesn't support multi-symbol warmup, skipping")
+            has_attr = hasattr(runner.strategy, 'supports_multi_symbol')
+            supports_multi = runner.strategy.supports_multi_symbol if has_attr else False
+            print(f"[WARMUP] Strategy {strategy_id} - has_attr={has_attr}, supports_multi={supports_multi}", flush=True)
+            
+            if not has_attr or not supports_multi:
+                print(f"[WARMUP] Strategy {strategy_id} doesn't support multi-symbol warmup, skipping", flush=True)
                 return
             
             # Collect cached bars for all symbols
+            print(f"[WARMUP] Collecting cached bars for {len(config.symbols)} symbols: {config.symbols}", flush=True)
+            print(f"[WARMUP] Bar cache keys: {list(self.bar_cache.keys())}", flush=True)
+            print(f"[WARMUP] Bar cache sizes: {[(k, len(v)) for k, v in self.bar_cache.items()]}", flush=True)
+            
             bars_data = {}
             for symbol in config.symbols:
-                if symbol not in self.bar_cache or len(self.bar_cache[symbol]) == 0:
-                    logger.warning(f"No cached bars for {symbol}, skipping warmup")
+                if symbol not in self.bar_cache:
+                    print(f"[WARMUP] Symbol {symbol} not in bar_cache, skipping", flush=True)
+                    continue
+                if len(self.bar_cache[symbol]) == 0:
+                    print(f"[WARMUP] No cached bars for {symbol}, skipping", flush=True)
                     continue
                 
                 # Convert cached bars to DataFrame
                 bars_list = list(self.bar_cache[symbol])
                 if len(bars_list) == 0:
+                    print(f"[WARMUP] bars_list empty for {symbol}, skipping", flush=True)
                     continue
                 
                 df = pd.DataFrame(bars_list)
                 bars_data[symbol] = df
-                logger.info(f"Prepared {len(df)} cached bars for {symbol} warmup")
+                print(f"[WARMUP] Prepared {len(df)} cached bars for {symbol}", flush=True)
             
             if len(bars_data) == 0:
-                logger.warning(f"No cached bars available for strategy {strategy_id} warmup")
+                print(f"[WARMUP] No cached bars available for strategy {strategy_id}", flush=True)
                 return
             
             # Trigger strategy processing with cached bars
             # This will trigger the fast_warmup logic in pairs trading strategies
             timeframe = getattr(config, 'bar_timeframe', '5 secs')
             
-            logger.info(f"Triggering strategy warmup with {len(bars_data)} symbols")
+            print(f"[WARMUP] Triggering strategy warmup with {len(bars_data)} symbols, timeframe={timeframe}", flush=True)
             signals = await runner.strategy.on_bar_multi(
                 symbols=list(bars_data.keys()),
                 timeframe=timeframe,
                 bars_data=bars_data
             )
             
-            if signals:
-                logger.info(f"Strategy {strategy_id} generated {len(signals)} signals during warmup")
-            
-            logger.info(f"Strategy {strategy_id} warmup completed successfully")
+            print(f"[WARMUP] Strategy on_bar_multi completed, signals: {len(signals) if signals else 0}", flush=True)
+            print(f"[WARMUP] Strategy {strategy_id} warmup completed successfully", flush=True)
             
         except Exception as e:
-            logger.error(f"Failed to warmup strategy {strategy_id} from cache: {e}")
+            print(f"[WARMUP] Exception: {e}", flush=True)
+            logger.error(f"[WARMUP] Failed to warmup strategy {strategy_id} from cache: {e}", exc_info=True)
             # Don't raise - warmup failure shouldn't break backfill
     
     async def _handle_strategy_signals(self, runner: StrategyRunner, signals: List[Any]):
