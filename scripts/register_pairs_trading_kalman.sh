@@ -18,14 +18,24 @@ STRATEGY_ID="pairs_trading_kalman_v1"
 STRATEGY_NAME="Pairs_Trading_Adaptive_Kalman"
 ENABLE_STRATEGY=false  # flip to true when you're ready to let the live service load it
 
-# Optimized pair from optimization run
-SYMBOLS_JSON='["ITW","PKG","WEC","CMS"]'
+# Selected pairs from potential pairs analysis
+SYMBOLS_JSON='["PG","MUSA","AMN","CORT","ACA","KTB","FITB","TMHC","D","SPXC","RTX","AEP"]'
 
-# Optimized pair selection
+# Selected pair combinations
 PAIRS_JSON='[
-  ["ITW","PKG"],
-  ["WEC","CMS"]
+  ["PG","MUSA"],
+  ["AMN","CORT"],
+  ["ACA","KTB"],
+  ["FITB","TMHC"],
+  ["D","SPXC"],
+  ["RTX","AEP"]
 ]'
+
+# Configure lookback_window (edit this value as needed)
+LOOKBACK_WINDOW=120
+STATS_AGGREGATION_SECONDS=60
+# Automatically calculate spread_history_bars as lookback_window + 10
+SPREAD_HISTORY_BARS=$((LOOKBACK_WINDOW + 10))
 
 # Strategy parameters persisted to strategies.params_json
 PARAMS_JSON=$(cat <<JSON
@@ -35,7 +45,11 @@ PARAMS_JSON=$(cat <<JSON
   "symbols": $SYMBOLS_JSON,
   "pairs": $PAIRS_JSON,
   "bar_timeframe": "5 secs",
-  "lookback_window": 30,
+  "lookback_window": $LOOKBACK_WINDOW,
+  "stats_aggregation_seconds": $STATS_AGGREGATION_SECONDS,
+  "spread_history_bars": $SPREAD_HISTORY_BARS,
+  "hedge_refresh_bars": 180,
+  "min_hedge_lookback": 180,
   "entry_threshold": 2.0,
   "exit_threshold": 0.5,
   "position_size": 48,
@@ -47,9 +61,6 @@ PARAMS_JSON=$(cat <<JSON
   "cooldown_bars": 180,
   "cooldown_after_all_exits": true,
   "timezone": "US/Eastern",
-  "spread_history_bars": 40,
-  "hedge_refresh_bars": 180,
-  "min_hedge_lookback": 40,
   "use_kalman": true,
   "kalman_delta": 0.01,
   "kalman_R": 0.1,
@@ -76,8 +87,8 @@ PARAMS_JSON=$(cat <<JSON
   "max_halflife_bars": 720,
   "require_half_life": true,
   "max_pair_loss_pct": 0.02,
-  "volatility_stop_multiplier": 2.5,
-  "stats_aggregation_seconds": 1800
+  "volatility_stop_multiplier": 2.5
+
 }
 JSON
 )

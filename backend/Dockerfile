@@ -32,8 +32,6 @@ RUN pip install -r requirements.txt
 COPY src/ ./src/
 COPY migrations/ ./migrations/
 COPY alembic.ini ./
-COPY update_pairs_trading_params.py ./
-COPY verify_tws_sync.py ./ 
 
 # Change ownership to non-root user
 RUN chown -R appuser:appuser /app
