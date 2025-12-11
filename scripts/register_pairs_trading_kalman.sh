@@ -32,10 +32,10 @@ PAIRS_JSON='[
 ]'
 
 # Configure lookback_window (edit this value as needed)
-LOOKBACK_WINDOW=120
-STATS_AGGREGATION_SECONDS=60
-# Automatically calculate spread_history_bars as lookback_window + 10
-SPREAD_HISTORY_BARS=$((LOOKBACK_WINDOW + 10))
+LOOKBACK_WINDOW=200
+STATS_AGGREGATION_SECONDS=1800
+# Automatically calculate spread_history_bars as lookback_window + 100 for buffer
+SPREAD_HISTORY_BARS=300
 
 # Strategy parameters persisted to strategies.params_json
 PARAMS_JSON=$(cat <<JSON
@@ -48,17 +48,17 @@ PARAMS_JSON=$(cat <<JSON
   "lookback_window": $LOOKBACK_WINDOW,
   "stats_aggregation_seconds": $STATS_AGGREGATION_SECONDS,
   "spread_history_bars": $SPREAD_HISTORY_BARS,
-  "hedge_refresh_bars": 180,
-  "min_hedge_lookback": 180,
+  "hedge_refresh_bars": 1000000,
+  "min_hedge_lookback": 100000,
   "entry_threshold": 2.0,
   "exit_threshold": 0.5,
   "position_size": 48,
-  "max_hold_bars": 28800,
+  "max_hold_bars": 200000,
   "stop_loss_zscore": 3.5,
   "market_close_hour": 16,
   "market_close_minute": 0,
-  "close_before_eod_minutes": 5,
-  "cooldown_bars": 180,
+  "close_before_eod_minutes": -60,
+  "cooldown_bars": 720,
   "cooldown_after_all_exits": true,
   "timezone": "US/Eastern",
   "use_kalman": true,
