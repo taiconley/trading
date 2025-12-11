@@ -1144,6 +1144,38 @@ class StrategyService:
                 print(f"[WARMUP] Strategy {strategy_id} doesn't support multi-symbol warmup, skipping", flush=True)
                 return
             
+            # Load bars from database into cache first
+            print(f"[WARMUP] Loading bars from database for {len(config.symbols)} symbols: {config.symbols}", flush=True)
+            with self.db_session_factory() as db:
+                for symbol in config.symbols:
+                    # Fetch recent bars (enough for max lookback + buffer)
+                    candles = db.query(Candle).filter(
+                        and_(
+                            Candle.symbol == symbol,
+                            Candle.tf == "5 secs"  # Match MarketData service format
+                        )
+                    ).order_by(desc(Candle.ts)).limit(self.bar_cache_size).all()
+                    
+                    if candles:
+                        # Initialize or clear cache for this symbol
+                        self.bar_cache[symbol] = deque(maxlen=self.bar_cache_size)
+                        
+                        # Add bars in chronological order
+                        candles.reverse()
+                        for candle in candles:
+                            self.bar_cache[symbol].append({
+                                'timestamp': candle.ts,
+                                'open': float(candle.open),
+                                'high': float(candle.high),
+                                'low': float(candle.low),
+                                'close': float(candle.close),
+                                'volume': int(candle.volume)
+                            })
+                        
+                        print(f"[WARMUP] Loaded {len(self.bar_cache[symbol])} bars from database for {symbol}", flush=True)
+                    else:
+                        print(f"[WARMUP] No bars found in database for {symbol}", flush=True)
+            
             # Collect cached bars for all symbols
             print(f"[WARMUP] Collecting cached bars for {len(config.symbols)} symbols: {config.symbols}", flush=True)
             print(f"[WARMUP] Bar cache keys: {list(self.bar_cache.keys())}", flush=True)
@@ -1171,6 +1203,14 @@ class StrategyService:
             if len(bars_data) == 0:
                 print(f"[WARMUP] No cached bars available for strategy {strategy_id}", flush=True)
                 return
+            
+            # Reset last_processed_timestamp for all pairs so warmup can reprocess historical bars
+            # This is necessary because the strategy may have already processed these bars during normal operation
+            if hasattr(runner.strategy, '_pair_states'):
+                print(f"[WARMUP] Resetting last_processed_timestamp for all pairs", flush=True)
+                for pair_key, pair_state in runner.strategy._pair_states.items():
+                    pair_state['last_processed_timestamp'] = None
+                    print(f"[WARMUP] Reset {pair_key} - spread_history has {len(pair_state.get('spread_history', []))} bars", flush=True)
             
             # Trigger strategy processing with cached bars
             # This will trigger the fast_warmup logic in pairs trading strategies
