@@ -1248,23 +1248,33 @@ class StrategyService:
                 await self._store_signal(signal, runner.strategy.config.strategy_id)
                 logger.debug(f"Stored signal in database: {signal.symbol} {signal.signal_type}")
                 
-                # Check if strategy is enabled and risk limits allow trading
+                # Check if strategy is enabled and ready to trade
                 if runner.strategy.config.enabled:
-                    should_execute = await self._should_execute_signal(signal)
-                    logger.info(
-                        f"Signal execution check: enabled={runner.strategy.config.enabled}, "
-                        f"should_execute={should_execute}, signal_type={signal.signal_type}"
-                    )
+                    # Check if strategy is ready to trade (must be explicitly enabled)
+                    ready_to_trade = await self._is_strategy_ready_to_trade(runner.strategy.config.strategy_id)
                     
-                    if should_execute:
-                        # Place order through Trader service
-                        logger.info(f"Placing order for signal: {signal.symbol} {signal.signal_type}")
-                        await self._place_order_for_signal(signal, runner.strategy.config.strategy_id)
-                    else:
-                        logger.warning(
-                            f"Signal not executed: enabled={runner.strategy.config.enabled}, "
-                            f"should_execute={should_execute}"
+                    if not ready_to_trade:
+                        logger.info(
+                            f"Strategy {runner.strategy.config.strategy_id} is not ready to trade yet. "
+                            f"Signal stored but order not placed. Toggle 'Ready to Trade' to begin trading."
                         )
+                    else:
+                        should_execute = await self._should_execute_signal(signal)
+                        logger.info(
+                            f"Signal execution check: enabled={runner.strategy.config.enabled}, "
+                            f"ready_to_trade={ready_to_trade}, should_execute={should_execute}, "
+                            f"signal_type={signal.signal_type}"
+                        )
+                        
+                        if should_execute:
+                            # Place order through Trader service
+                            logger.info(f"Placing order for signal: {signal.symbol} {signal.signal_type}")
+                            await self._place_order_for_signal(signal, runner.strategy.config.strategy_id)
+                        else:
+                            logger.warning(
+                                f"Signal not executed: enabled={runner.strategy.config.enabled}, "
+                                f"ready_to_trade={ready_to_trade}, should_execute={should_execute}"
+                            )
                 else:
                     logger.warning(f"Strategy {runner.strategy.config.strategy_id} is disabled, skipping order placement")
                 
@@ -1293,6 +1303,18 @@ class StrategyService:
                 
         except Exception as e:
             logger.error(f"Failed to store signal in database: {e}")
+    
+    async def _is_strategy_ready_to_trade(self, strategy_id: str) -> bool:
+        """Check if strategy is marked as ready to trade in the database."""
+        try:
+            with self.db_session_factory() as db:
+                strategy = db.query(Strategy).filter(Strategy.strategy_id == strategy_id).first()
+                if strategy:
+                    return getattr(strategy, 'ready_to_trade', False)
+                return False
+        except Exception as e:
+            logger.error(f"Failed to check ready_to_trade status: {e}")
+            return False
     
     async def _should_execute_signal(self, signal: Any) -> bool:
         """Check if signal should be executed based on risk limits."""

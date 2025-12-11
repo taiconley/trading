@@ -72,6 +72,7 @@ class Strategy(Base):
     strategy_id = Column(String(50), primary_key=True, nullable=False)
     name = Column(String(100), nullable=False)
     enabled = Column(Boolean, nullable=False, default=False)
+    ready_to_trade = Column(Boolean, nullable=False, default=False)  # Must be explicitly enabled after warmup
     params_json = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
     

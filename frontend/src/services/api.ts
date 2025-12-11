@@ -246,6 +246,14 @@ class ApiClient {
     return response.data;
   }
 
+  async toggleReadyToTrade(strategyId: string, readyToTrade: boolean) {
+    const response = await this.client.post(
+      `/api/strategies/${strategyId}/ready-to-trade`,
+      { ready_to_trade: readyToTrade }
+    );
+    return response.data;
+  }
+
   async updateStrategyParams(strategyId: string, params: Record<string, any>) {
     const response = await this.client.put(
       `/api/strategies/${strategyId}/params`,
@@ -475,6 +483,7 @@ export interface Strategy {
   id: string;
   name: string;
   enabled: boolean;
+  ready_to_trade?: boolean;
   running?: boolean;
   state?: string;
   symbols?: string[];

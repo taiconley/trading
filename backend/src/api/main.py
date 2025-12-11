@@ -629,6 +629,7 @@ async def get_strategies():
             "id": db_strategy.strategy_id,
             "name": service_data.get("name") or db_strategy.name,
             "enabled": db_strategy.enabled,
+            "ready_to_trade": getattr(db_strategy, 'ready_to_trade', False),
             "running": service_data.get("running", False),
             "state": service_data.get("state", "stopped" if not db_strategy.enabled else "unknown"),
             "symbols": service_data.get("symbols", []),
@@ -674,6 +675,27 @@ async def enable_strategy(strategy_id: str, data: Dict = Body(...)):
         "message": f"Strategy {'enabled' if enabled else 'disabled'}",
         "strategy_id": strategy_id,
         "enabled": enabled
+    }
+
+
+@app.post("/api/strategies/{strategy_id}/ready-to-trade")
+async def toggle_ready_to_trade(strategy_id: str, data: Dict = Body(...)):
+    """Toggle ready-to-trade status for a strategy."""
+    
+    ready_to_trade = data.get("ready_to_trade", False)
+    
+    with get_db_session() as db:
+        strategy = db.query(Strategy).filter(Strategy.strategy_id == strategy_id).first()
+        if not strategy:
+            raise HTTPException(status_code=404, detail="Strategy not found")
+        
+        strategy.ready_to_trade = ready_to_trade
+        db.commit()
+    
+    return {
+        "message": f"Strategy {'ready to trade' if ready_to_trade else 'not ready to trade'}",
+        "strategy_id": strategy_id,
+        "ready_to_trade": ready_to_trade
     }
 
 

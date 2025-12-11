@@ -127,6 +127,17 @@ export function Strategies() {
     }
   };
 
+  const handleReadyToTrade = async (strategyId: string, currentReadyToTrade: boolean) => {
+    try {
+      setError(null);
+      const newReadyToTrade = !currentReadyToTrade;
+      await api.toggleReadyToTrade(strategyId, newReadyToTrade);
+      await fetchStrategies();
+    } catch (err: any) {
+      setError(`Failed to toggle ready-to-trade for ${strategyId}: ` + err.message);
+    }
+  };
+
   const togglePairDetails = (pairKey: string) => {
     setExpandedPairs(prev => {
       const next = new Set(prev);
@@ -323,6 +334,19 @@ export function Strategies() {
                       >
                         <Power className="w-4 h-4 mr-2" />
                         {strategy.enabled ? 'Enabled' : 'Disabled'}
+                      </button>
+
+                      <button
+                        onClick={() => handleReadyToTrade(strategy.id, strategy.ready_to_trade || false)}
+                        disabled={!strategy.enabled}
+                        className={`flex items-center px-4 py-2 rounded-md font-medium text-sm shadow-sm ${
+                          strategy.ready_to_trade
+                            ? 'bg-green-600 text-white hover:bg-green-700'
+                            : 'bg-amber-500 text-white hover:bg-amber-600'
+                        } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        title={strategy.ready_to_trade ? 'Strategy can place trades' : 'Strategy will only collect data, not place trades'}
+                      >
+                        {strategy.ready_to_trade ? 'Ready to Trade' : 'Not Ready to Trade'}
                       </button>
                     </div>
                   </div>
