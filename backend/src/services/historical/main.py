@@ -1314,12 +1314,10 @@ class HistoricalDataService:
             request.started_at = datetime.now(timezone.utc)
             self.active_requests[request.id] = request
             
-            # Record request timestamp for pacing
-            self.request_timestamps.append(time.time())
-            
             if not self.connected:
                 raise Exception("Not connected to TWS")
             
+            # Check if we should skip (before recording timestamp!)
             skipped, reason = await self._mark_chunk_started(request)
             if skipped:
                 request.status = RequestStatus.COMPLETED if reason in ("already_completed", "already_skipped") else RequestStatus.SKIPPED
@@ -1334,6 +1332,9 @@ class HistoricalDataService:
                     del self.active_requests[request.id]
                 self.logger.info(f"Skipped historical request {request.id} ({reason})")
                 return
+            
+            # Only record request timestamp for pacing if we're actually making an API call
+            self.request_timestamps.append(time.time())
             
             # Create contract
             contract = Stock(request.symbol, 'SMART', 'USD')
