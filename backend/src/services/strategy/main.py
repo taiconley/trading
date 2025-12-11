@@ -1145,7 +1145,21 @@ class StrategyService:
                 return
             
             # Load bars from database into cache first
+            # Calculate how many bars we need for warmup based on strategy requirements
+            # For Kalman strategy: need lookback_window spread bars
+            # Each spread bar requires stats_aggregation_bars raw bars
+            lookback_window = getattr(config, 'lookback_window', 200)
+            stats_agg_seconds = getattr(config, 'stats_aggregation_seconds', 1800)
+            bar_timeframe_seconds = 5  # 5 secs
+            stats_aggregation_bars = stats_agg_seconds // bar_timeframe_seconds
+            
+            # Add buffer for hedge ratio calculation and safety margin
+            required_bars = (lookback_window + 50) * stats_aggregation_bars
+            warmup_bar_limit = max(required_bars, self.bar_cache_size)
+            
             print(f"[WARMUP] Loading bars from database for {len(config.symbols)} symbols: {config.symbols}", flush=True)
+            print(f"[WARMUP] Calculated warmup requirements: lookback={lookback_window}, agg_bars={stats_aggregation_bars}, loading {warmup_bar_limit} bars per symbol", flush=True)
+            
             with self.db_session_factory() as db:
                 for symbol in config.symbols:
                     # Fetch recent bars (enough for max lookback + buffer)
@@ -1154,11 +1168,13 @@ class StrategyService:
                             Candle.symbol == symbol,
                             Candle.tf == "5 secs"  # Match MarketData service format
                         )
-                    ).order_by(desc(Candle.ts)).limit(self.bar_cache_size).all()
+                    ).order_by(desc(Candle.ts)).limit(warmup_bar_limit).all()
                     
                     if candles:
                         # Initialize or clear cache for this symbol
-                        self.bar_cache[symbol] = deque(maxlen=self.bar_cache_size)
+                        # Use the larger of bar_cache_size or warmup_bar_limit for warmup
+                        cache_size = max(self.bar_cache_size, warmup_bar_limit)
+                        self.bar_cache[symbol] = deque(maxlen=cache_size)
                         
                         # Add bars in chronological order
                         candles.reverse()
