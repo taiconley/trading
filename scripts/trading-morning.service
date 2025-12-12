@@ -1,0 +1,25 @@
+[Unit]
+Description=Morning Trading Automation Service
+After=network.target
+
+[Service]
+Type=oneshot
+# Don't specify User= in user services - it runs as the user who started it
+WorkingDirectory=/home/taiconley/Desktop/Projects/trading
+# Use the virtual environment's Python interpreter
+ExecStart=/home/taiconley/Desktop/Projects/trading/env/bin/python3 /home/taiconley/Desktop/Projects/trading/scripts/morning_automation.py
+StandardOutput=append:/home/taiconley/Desktop/Projects/trading/logs/morning_automation.log
+StandardError=append:/home/taiconley/Desktop/Projects/trading/logs/morning_automation.log
+
+# Environment variables
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/taiconley/.Xauthority"
+Environment="PATH=/home/taiconley/Desktop/Projects/trading/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="VIRTUAL_ENV=/home/taiconley/Desktop/Projects/trading/env"
+
+# Restart policy
+Restart=no
+
+[Install]
+WantedBy=default.target
+

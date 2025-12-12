@@ -88,4 +88,5 @@ coverage.xml
 # mypy
 .mypy_cache/
 .dmypy.json
-dmypy.json
+dmypy.jsontws_credentials.env
+scripts/tws_credentials.env

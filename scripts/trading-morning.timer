@@ -1,0 +1,29 @@
+[Unit]
+Description=Morning Trading Automation Timer
+Requires=trading-morning.service
+
+[Timer]
+# Run at 6:25 AM PST (14:25 UTC, adjust based on daylight savings)
+# PST is UTC-8, PDT is UTC-7
+# For PST (Standard Time): 6:25 AM PST = 14:25 UTC
+# For PDT (Daylight Time): 6:25 AM PDT = 13:25 UTC
+
+# Run at 6:25 AM local time on weekdays only (Monday-Friday)
+OnCalendar=Mon..Fri *-*-* 06:25:00
+
+# Option 2: If you want to run every day including weekends:
+# OnCalendar=*-*-* 06:25:00
+
+# Option 3: If you want to ensure PST timezone regardless of system timezone:
+# OnCalendar=Mon..Fri America/Los_Angeles *-*-* 06:25:00
+
+# Persist timer across reboots
+Persistent=true
+
+# Run immediately if the timer was missed (e.g., system was off)
+# Comment this out if you don't want to run missed executions
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+
