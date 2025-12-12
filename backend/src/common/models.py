@@ -247,6 +247,44 @@ class Position(Base):
     )
 
 
+class PositionContext(Base):
+    """
+    Strategy position context for state persistence across restarts.
+    
+    Stores minimal critical state that cannot be reconstructed from candles or positions.
+    This allows strategies to survive container restarts and continue managing positions
+    correctly without full stateful persistence.
+    """
+    __tablename__ = 'position_context'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    strategy_id = Column(String(100), nullable=False)
+    pair_key = Column(String(50), nullable=False)
+    position_type = Column(String(20), nullable=False)  # 'long_a_short_b', 'short_a_long_b'
+    
+    # Entry context (cannot be reconstructed from historical data)
+    entry_zscore = Column(Numeric(10, 4), nullable=True)
+    entry_spread = Column(Numeric(10, 6), nullable=True)
+    entry_timestamp = Column(DateTime(timezone=True), nullable=False)
+    entry_bar_count = Column(Integer, nullable=True)  # Total bars at entry time (for reference)
+    
+    # Exit tracking (for cooldown calculations)
+    last_exit_timestamp = Column(DateTime(timezone=True), nullable=True)
+    last_exit_bar_count = Column(Integer, nullable=True)
+    
+    # Metadata
+    created_at = Column(DateTime(timezone=True), nullable=False, default=func.now())
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), onupdate=func.now())
+    
+    # Constraints
+    __table_args__ = (
+        UniqueConstraint('strategy_id', 'pair_key', name='uq_position_context_strategy_pair'),
+        Index('ix_position_context_strategy', 'strategy_id'),
+        Index('ix_position_context_pair', 'pair_key'),
+        Index('ix_position_context_timestamp', 'entry_timestamp'),
+    )
+
+
 # =============================================================================
 # Market Data Tables
 # =============================================================================

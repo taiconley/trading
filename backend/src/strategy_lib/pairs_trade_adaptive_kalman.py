@@ -13,7 +13,7 @@ Classic pairs trading strategy:
 """
 
 from collections import deque
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -21,13 +21,19 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 import re
+from sqlalchemy import func
 
-from .base import BaseStrategy, StrategyConfig, StrategySignal, SignalType, StrategyState
-from .registry import strategy
 from .base import BaseStrategy, StrategyConfig, StrategySignal, SignalType, StrategyState
 from .registry import strategy
 from .pairs_trading_kalman_config import PAIRS_TRADING_KALMAN_CONFIG
 from .kalman import KalmanFilter
+
+# Import for database access
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from common.db import get_db_session
+from common.models import Position, PositionContext, Candle
 
 try:  # Optional dependency for stationarity tests
     from statsmodels.tsa.stattools import adfuller, coint
@@ -448,6 +454,9 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             if self.config.use_kalman:
                 self._pair_states[pair_key]['kalman_filter'] = KalmanFilter(delta=self.config.kalman_delta, R=self.config.kalman_R)
         
+        # Reconcile with actual positions from database/broker
+        await self._reconcile_positions()
+        
         self.log_info(
             f"Started intraday pairs trading strategy with {len(self.pairs)} pairs, "
             f"entry_threshold={self.config.entry_threshold}, "
@@ -459,6 +468,88 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             f"stats_aggregation_seconds={self.stats_aggregation_seconds}, "
             f"use_kalman={self.config.use_kalman}"
         )
+    
+    async def _reconcile_positions(self):
+        """
+        Restore strategy state from actual broker positions.
+        
+        This allows the strategy to survive container restarts and continue
+        managing positions correctly by reconstructing state from the database.
+        """
+        try:
+            with get_db_session() as session:
+                
+                # Get all current positions for our symbols
+                all_symbols = list(set([sym for pair in self.pairs for sym in pair]))
+                positions = session.query(Position).filter(
+                    Position.symbol.in_(all_symbols),
+                    Position.qty != 0
+                ).all()
+                
+                if not positions:
+                    self.log_info("✅ No open positions to reconcile")
+                    return
+                
+                # Build position map: symbol -> (qty, avg_price)
+                position_map = {p.symbol: (float(p.qty), float(p.avg_price)) for p in positions}
+                
+                reconciled_count = 0
+                
+                # Check each pair
+                for pair in self.pairs:
+                    stock_a, stock_b = pair[0], pair[1]
+                    pair_key = f"{stock_a}/{stock_b}"
+                    pair_state = self._pair_states[pair_key]
+                    
+                    qty_a = position_map.get(stock_a, (0, 0))[0]
+                    qty_b = position_map.get(stock_b, (0, 0))[0]
+                    price_a = position_map.get(stock_a, (0, 0))[1]
+                    price_b = position_map.get(stock_b, (0, 0))[1]
+                    
+                    # Determine if we have a pair position
+                    if qty_a != 0 and qty_b != 0:
+                        # Check the direction
+                        if qty_a > 0 and qty_b < 0:
+                            pair_state['current_position'] = 'long_a_short_b'
+                        elif qty_a < 0 and qty_b > 0:
+                            pair_state['current_position'] = 'short_a_long_b'
+                        else:
+                            self.log_warning(
+                                f"⚠️  Unexpected position combination for {pair_key}: "
+                                f"{stock_a}={qty_a}, {stock_b}={qty_b} (both same direction)"
+                            )
+                            continue
+                        
+                        # Restore critical state from positions
+                        pair_state['entry_quantities'] = {
+                            stock_a: int(qty_a),
+                            stock_b: int(qty_b)
+                        }
+                        pair_state['entry_prices'] = {
+                            stock_a: price_a,
+                            stock_b: price_b
+                        }
+                        pair_state['entry_notional'] = abs(qty_a * price_a) + abs(qty_b * price_b)
+                        
+                        # Restore entry context from database (z-score, timestamp, etc.)
+                        self._restore_entry_context(pair_key, pair_state)
+                        
+                        reconciled_count += 1
+                        
+                        self.log_warning(
+                            f"🔄 RECONCILED {pair_key}: Found existing position "
+                            f"{pair_state['current_position']} (notional=${pair_state['entry_notional']:.0f})"
+                        )
+                
+                if reconciled_count > 0:
+                    self.log_warning(
+                        f"🔄 Reconciled {reconciled_count} pair position(s) from database"
+                    )
+                    
+        except Exception as e:
+            self.log_error(f"Failed to reconcile positions: {e}")
+            import traceback
+            self.log_error(traceback.format_exc())
     
     def _fast_warmup_pair(
         self,
@@ -811,14 +902,9 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             signals = []
             
             if pair_state['current_position'] == "flat":
-                cooldown = pair_state.get('cooldown_remaining', 0)
-                if cooldown > 0:
-                    if not is_optimization:
-                        self.log_info(
-                            f"[SKIP ENTRY] {stock_a}/{stock_b}: z={zscore:.3f}, "
-                            f"entry_threshold={adjusted_entry:.3f}, cooldown={cooldown}"
-                        )
-                    continue
+                # Check cooldown using database (market-time aware)
+                if self._check_cooldown(pair_key, pair_state):
+                    continue  # Skip entry during cooldown (logged in _check_cooldown)
                 
                 # Look for entry signals
                 if zscore > adjusted_entry:
@@ -1170,6 +1256,200 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             return
         pair_state['half_life'] = halflife
     
+    def _count_bars_since(self, timestamp: datetime, symbol: str) -> int:
+        """
+        Count actual market bars since a given timestamp.
+        
+        This correctly handles market hours, holidays, and weekends
+        by counting real candles in the database.
+        
+        Args:
+            timestamp: Starting timestamp
+            symbol: Symbol to count bars for
+            
+        Returns:
+            Number of bars since timestamp
+        """
+        try:
+            with get_db_session() as session:
+                
+                # Count candles for this symbol since the timestamp
+                bar_count = session.query(func.count(Candle.id)).filter(
+                    Candle.symbol == symbol,
+                    Candle.bar_size == self.config.bar_timeframe,  # '5 secs'
+                    Candle.ts > timestamp
+                ).scalar()
+                
+                return bar_count or 0
+                
+        except Exception as e:
+            self.log_error(f"Failed to count bars since {timestamp}: {e}")
+            return 0
+    
+    def _save_entry_context(self, pair_key: str, position_type: str, 
+                           zscore: float, spread: float, timestamp: datetime):
+        """Save entry context to database for future reconstruction."""
+        try:
+            with get_db_session() as session:
+                
+                # Get current bar count (for reference)
+                stock_a = pair_key.split('/')[0]
+                current_bar_count = session.query(func.count(Candle.id)).filter(
+                    Candle.symbol == stock_a,
+                    Candle.bar_size == self.config.bar_timeframe
+                ).scalar()
+                
+                # Upsert context
+                context = session.query(PositionContext).filter(
+                    PositionContext.strategy_id == self.config.strategy_id,
+                    PositionContext.pair_key == pair_key
+                ).first()
+                
+                if context:
+                    # Update existing
+                    context.position_type = position_type
+                    context.entry_zscore = zscore
+                    context.entry_spread = spread
+                    context.entry_timestamp = timestamp
+                    context.entry_bar_count = current_bar_count
+                    context.updated_at = datetime.now(timezone.utc)
+                else:
+                    # Create new
+                    context = PositionContext(
+                        strategy_id=self.config.strategy_id,
+                        pair_key=pair_key,
+                        position_type=position_type,
+                        entry_zscore=zscore,
+                        entry_spread=spread,
+                        entry_timestamp=timestamp,
+                        entry_bar_count=current_bar_count
+                    )
+                    session.add(context)
+                
+                session.commit()
+                self.log_info(f"💾 Saved entry context for {pair_key}: z={zscore:.2f}")
+                
+        except Exception as e:
+            self.log_error(f"Failed to save entry context for {pair_key}: {e}")
+    
+    def _save_exit_context(self, pair_key: str, timestamp: datetime):
+        """Update position context with exit timestamp for cooldown tracking."""
+        try:
+            with get_db_session() as session:
+                
+                context = session.query(PositionContext).filter(
+                    PositionContext.strategy_id == self.config.strategy_id,
+                    PositionContext.pair_key == pair_key
+                ).first()
+                
+                if context:
+                    # Get current bar count
+                    stock_a = pair_key.split('/')[0]
+                    current_bar_count = session.query(func.count(Candle.id)).filter(
+                        Candle.symbol == stock_a,
+                        Candle.bar_size == self.config.bar_timeframe
+                    ).scalar()
+                    
+                    context.last_exit_timestamp = timestamp
+                    context.last_exit_bar_count = current_bar_count
+                    context.updated_at = datetime.now(timezone.utc)
+                    session.commit()
+                    
+                    self.log_info(f"💾 Saved exit context for {pair_key}")
+                    
+        except Exception as e:
+            self.log_error(f"Failed to save exit context for {pair_key}: {e}")
+    
+    def _restore_entry_context(self, pair_key: str, pair_state: Dict[str, Any]) -> bool:
+        """
+        Restore entry context from database for an existing position.
+        
+        Returns:
+            True if context was restored, False otherwise
+        """
+        try:
+            with get_db_session() as session:
+                
+                context = session.query(PositionContext).filter(
+                    PositionContext.strategy_id == self.config.strategy_id,
+                    PositionContext.pair_key == pair_key
+                ).first()
+                
+                if context:
+                    # Restore saved context
+                    pair_state['entry_zscore'] = float(context.entry_zscore) if context.entry_zscore else 0.0
+                    pair_state['entry_spread'] = float(context.entry_spread) if context.entry_spread else None
+                    pair_state['entry_timestamp'] = context.entry_timestamp
+                    
+                    # Count bars since entry (market time only!)
+                    stock_a = pair_state['stock_a']
+                    bars_since_entry = self._count_bars_since(context.entry_timestamp, stock_a)
+                    pair_state['bars_in_trade'] = bars_since_entry
+                    
+                    self.log_info(
+                        f"✅ Restored {pair_key}: entry_z={context.entry_zscore:.2f}, "
+                        f"bars_in_trade={bars_since_entry} (entered at {context.entry_timestamp})"
+                    )
+                    return True
+                else:
+                    self.log_warning(
+                        f"⚠️  Position exists for {pair_key} but no entry context found - "
+                        f"will approximate from current data"
+                    )
+                    # Fallback: approximate entry_zscore from current threshold
+                    pair_state['entry_zscore'] = self.config.entry_threshold
+                    pair_state['entry_timestamp'] = datetime.now(timezone.utc)
+                    return False
+                    
+        except Exception as e:
+            self.log_error(f"Failed to restore entry context for {pair_key}: {e}")
+            return False
+    
+    def _check_cooldown(self, pair_key: str, pair_state: Dict[str, Any]) -> bool:
+        """
+        Check if pair is in cooldown period using market-time bar counting.
+        
+        Returns:
+            True if in cooldown (should skip entry), False otherwise
+        """
+        if pair_state['current_position'] != 'flat':
+            return False  # Already in position, no cooldown
+        
+        try:
+            with get_db_session() as session:
+                
+                context = session.query(PositionContext).filter(
+                    PositionContext.strategy_id == self.config.strategy_id,
+                    PositionContext.pair_key == pair_key
+                ).first()
+                
+                if not context or not context.last_exit_timestamp:
+                    return False  # Never traded, no cooldown
+                
+                # Count bars since last exit (market time aware)
+                stock_a = pair_state['stock_a']
+                bars_since_exit = self._count_bars_since(context.last_exit_timestamp, stock_a)
+                
+                cooldown_bars = self.config.cooldown_bars
+                
+                if bars_since_exit < cooldown_bars:
+                    remaining = cooldown_bars - bars_since_exit
+                    pair_state['cooldown_remaining'] = remaining
+                    
+                    self.log_info(
+                        f"⏳ {pair_key} in cooldown: {bars_since_exit}/{cooldown_bars} bars "
+                        f"({remaining} remaining)"
+                    )
+                    return True
+                
+                # Cooldown expired
+                pair_state['cooldown_remaining'] = 0
+                return False
+                
+        except Exception as e:
+            self.log_error(f"Failed to check cooldown for {pair_key}: {e}")
+            return False  # Fail open (allow trading)
+    
     def _calculate_unrealized_pnl(
         self,
         pair_state: Dict[str, Any],
@@ -1436,6 +1716,15 @@ class PairsTradingKalmanStrategy(BaseStrategy):
         pair_state['unrealized_pnl'] = 0.0
         pair_state['position_strength'] = float(position_plan['signal_strength'])
         
+        # Save entry context to database for persistence across restarts
+        self._save_entry_context(
+            pair_key=pair_key,
+            position_type=position_type,
+            zscore=zscore,
+            spread=spread,
+            timestamp=timestamp
+        )
+        
         return signals
 
     def _generate_exit_signals(
@@ -1547,6 +1836,10 @@ class PairsTradingKalmanStrategy(BaseStrategy):
         )
         
         pair_state['realized_pnl'] += pair_state.get('unrealized_pnl', 0.0)
+        
+        # Save exit context to database for cooldown tracking
+        self._save_exit_context(pair_key=pair_key, timestamp=timestamp)
+        
         # Reset pair state
         pair_state['current_position'] = "flat"
         pair_state['entry_zscore'] = 0.0
