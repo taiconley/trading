@@ -561,12 +561,16 @@ class PairsTradingKalmanStrategy(BaseStrategy):
         """
         Fast warmup by processing all historical bars in aggregated chunks.
         This quickly populates spread_history from historical data on startup.
+        
+        Optimized approach: First accumulate all price history, then calculate spreads.
+        This avoids skipping the first N chunks waiting for min_hedge_lookback.
         """
         self.log_info(f"[FAST WARMUP] {pair_key}: Processing {len(bars_a)} historical bars in aggregated chunks")
         
-        # Process bars in aggregated chunks
+        # Phase 1: Accumulate all price history first
         chunk_size = self.stats_aggregation_bars
         num_chunks = len(bars_a) // chunk_size
+        chunk_data = []  # Store (timestamp, price_a, price_b, start_idx, end_idx) for each chunk
         
         for chunk_idx in range(num_chunks):
             start_idx = chunk_idx * chunk_size
@@ -605,15 +609,20 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                     pair_state['price_history_a'].append(p_a)
                     pair_state['price_history_b'].append(p_b)
             
-            # Need enough data to build hedge ratio
-            if len(pair_state['price_history_a']) < self.config.min_hedge_lookback:
-                continue
-            
-            # Refresh hedge ratio periodically
-            pair_state['bars_since_hedge'] += chunk_size
-            if pair_state['bars_since_hedge'] >= self.config.hedge_refresh_bars or pair_state['hedge_ratio'] is None:
-                self._refresh_hedge_ratio(pair_key, pair_state)
-            
+            # Save chunk data for Phase 2
+            chunk_data.append((timestamp, price_a, price_b, start_idx, end_idx))
+        
+        # Phase 2: Calculate hedge ratio if we have enough data
+        if len(pair_state['price_history_a']) >= self.config.min_hedge_lookback:
+            self._refresh_hedge_ratio(pair_key, pair_state)
+        else:
+            self.log_warning(
+                f"[FAST WARMUP] {pair_key}: Only {len(pair_state['price_history_a'])} price bars, "
+                f"need {self.config.min_hedge_lookback} for hedge ratio - spreads may be inaccurate"
+            )
+        
+        # Phase 3: Now calculate spreads for all chunks using the hedge ratio
+        for timestamp, price_a, price_b, start_idx, end_idx in chunk_data:
             # Compute spread
             if self.config.use_kalman:
                 # Update Kalman Filter with log prices (stationary spread)

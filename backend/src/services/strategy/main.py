@@ -195,19 +195,28 @@ class StrategyService:
                         
                         # Check for Pairs Trading specific attributes
                         if 'lookback_window' in config and 'spread_history_bars' in config and 'stats_aggregation_seconds' in config:
-                            # Pairs Trading Strategy
-                            lookback_window = config.get('lookback_window', 30)
-                            spread_history_bars = config.get('spread_history_bars', 40)
-                            min_hedge_lookback = config.get('min_hedge_lookback', 40)
-                            stats_aggregation_seconds = config.get('stats_aggregation_seconds', 1800)
+                            # Pairs Trading Strategy - all parameters required, no defaults
+                            try:
+                                lookback_window = config['lookback_window']  # aggregated bars
+                                spread_history_bars = config['spread_history_bars']  # aggregated bars
+                                min_hedge_lookback = config['min_hedge_lookback']  # RAW bars
+                                stats_aggregation_seconds = config['stats_aggregation_seconds']
+                            except KeyError as e:
+                                logger.warning(
+                                    f"Strategy {strategy.strategy_id} missing required parameter {e}, "
+                                    f"skipping cache size calculation"
+                                )
+                                continue
                             
-                            # Calculate maximum bars needed
-                            max_spread_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
-                            
-                            # Convert spread bars to raw 5-second bars
-                            # Each spread bar requires stats_aggregation_seconds worth of 5-second bars
+                            # Convert aggregated bars to raw 5-second bars
                             bars_per_spread = stats_aggregation_seconds // 5  # 1800 / 5 = 360 bars
-                            required_bars = max_spread_bars * bars_per_spread
+                            
+                            # Calculate maximum bars needed (all in raw bars)
+                            # - lookback_window and spread_history_bars need to be converted to raw bars
+                            # - min_hedge_lookback is already in raw bars
+                            max_spread_bars = max(lookback_window, spread_history_bars)
+                            required_bars_for_spreads = max_spread_bars * bars_per_spread
+                            required_bars = max(required_bars_for_spreads, min_hedge_lookback)
                             
                             max_bars_needed = max(max_bars_needed, required_bars)
                             
@@ -915,14 +924,16 @@ class StrategyService:
                 
                 # Check for Pairs Trading specific attributes
                 if hasattr(config, 'lookback_window') and hasattr(config, 'spread_history_bars') and hasattr(config, 'stats_aggregation_seconds'):
-                    # Pairs Trading Strategy
-                    lookback_window = getattr(config, 'lookback_window')
-                    spread_history_bars = getattr(config, 'spread_history_bars')
-                    min_hedge_lookback = getattr(config, 'min_hedge_lookback', 120)
-                    stats_aggregation_seconds = getattr(config, 'stats_aggregation_seconds')
+                    # Pairs Trading Strategy - fail if min_hedge_lookback missing
+                    lookback_window = config.lookback_window  # aggregated bars
+                    spread_history_bars = config.spread_history_bars  # aggregated bars
+                    min_hedge_lookback = config.min_hedge_lookback  # RAW bars
+                    stats_aggregation_seconds = config.stats_aggregation_seconds
                     
-                    max_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
-                    required_seconds = max_bars * stats_aggregation_seconds
+                    # Calculate in raw bars: convert aggregated bars, compare with raw hedge lookback
+                    max_spread_bars = max(lookback_window, spread_history_bars)
+                    required_bars = max(max_spread_bars * (stats_aggregation_seconds // 5), min_hedge_lookback)
+                    required_seconds = required_bars * 5  # Convert raw bars back to seconds
                 elif hasattr(config, 'lookback_periods'):
                     # Generic Strategy
                     # Assuming 5-second bars for generic strategies if not specified
@@ -1049,14 +1060,19 @@ class StrategyService:
             
             # Check for Pairs Trading specific attributes
             if 'lookback_window' in params and 'spread_history_bars' in params and 'stats_aggregation_seconds' in params:
-                # Pairs Trading Strategy
-                lookback_window = params.get('lookback_window')
-                spread_history_bars = params.get('spread_history_bars')
-                min_hedge_lookback = params.get('min_hedge_lookback', 120)
-                stats_aggregation_seconds = params.get('stats_aggregation_seconds')
+                # Pairs Trading Strategy - fail if min_hedge_lookback missing
+                try:
+                    lookback_window = params['lookback_window']  # aggregated bars
+                    spread_history_bars = params['spread_history_bars']  # aggregated bars
+                    min_hedge_lookback = params['min_hedge_lookback']  # RAW bars
+                    stats_aggregation_seconds = params['stats_aggregation_seconds']
+                except KeyError as e:
+                    raise ValueError(f"Strategy {strategy_id} missing required parameter: {e}")
                 
-                max_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
-                required_seconds = max_bars * stats_aggregation_seconds
+                # Calculate in raw bars: convert aggregated bars, compare with raw hedge lookback
+                max_spread_bars = max(lookback_window, spread_history_bars)
+                required_bars = max(max_spread_bars * (stats_aggregation_seconds // 5), min_hedge_lookback)
+                required_seconds = required_bars * 5  # Convert raw bars back to seconds
             elif 'lookback_periods' in params:
                 # Generic Strategy
                 required_seconds = params.get('lookback_periods') * 5
@@ -1093,14 +1109,16 @@ class StrategyService:
             
             # Check for Pairs Trading specific attributes
             if hasattr(config, 'lookback_window') and hasattr(config, 'spread_history_bars') and hasattr(config, 'stats_aggregation_seconds'):
-                # Pairs Trading Strategy
-                lookback_window = getattr(config, 'lookback_window')
-                spread_history_bars = getattr(config, 'spread_history_bars')
-                min_hedge_lookback = getattr(config, 'min_hedge_lookback', 120)
-                stats_aggregation_seconds = getattr(config, 'stats_aggregation_seconds')
+                # Pairs Trading Strategy - fail if min_hedge_lookback missing
+                lookback_window = config.lookback_window  # aggregated bars
+                spread_history_bars = config.spread_history_bars  # aggregated bars
+                min_hedge_lookback = config.min_hedge_lookback  # RAW bars
+                stats_aggregation_seconds = config.stats_aggregation_seconds
                 
-                max_bars = max(lookback_window, spread_history_bars, min_hedge_lookback)
-                required_seconds = max_bars * stats_aggregation_seconds
+                # Calculate in raw bars: convert aggregated bars, compare with raw hedge lookback
+                max_spread_bars = max(lookback_window, spread_history_bars)
+                required_bars = max(max_spread_bars * (stats_aggregation_seconds // 5), min_hedge_lookback)
+                required_seconds = required_bars * 5  # Convert raw bars back to seconds
             elif hasattr(config, 'lookback_periods'):
                 # Generic Strategy
                 required_seconds = config.lookback_periods * 5
@@ -1148,14 +1166,29 @@ class StrategyService:
             # Calculate how many bars we need for warmup based on strategy requirements
             # For Kalman strategy: need lookback_window spread bars
             # Each spread bar requires stats_aggregation_bars raw bars
-            lookback_window = getattr(config, 'lookback_window', 200)
-            stats_agg_seconds = getattr(config, 'stats_aggregation_seconds', 1800)
+            
+            # Get required parameters - fail if missing (no defaults)
+            try:
+                lookback_window = config.lookback_window  # aggregated bars
+                spread_history_bars = config.spread_history_bars  # aggregated bars
+                min_hedge_lookback = config.min_hedge_lookback  # RAW bars
+                stats_agg_seconds = config.stats_aggregation_seconds
+            except AttributeError as e:
+                raise ValueError(
+                    f"Strategy {strategy_id} is missing required warmup parameter: {e}. "
+                    f"Required: lookback_window, spread_history_bars, min_hedge_lookback, stats_aggregation_seconds"
+                )
+            
             bar_timeframe_seconds = 5  # 5 secs
             stats_aggregation_bars = stats_agg_seconds // bar_timeframe_seconds
             
-            # Add buffer for hedge ratio calculation and safety margin
-            required_bars = (lookback_window + 50) * stats_aggregation_bars
-            warmup_bar_limit = max(required_bars, self.bar_cache_size)
+            # Calculate required bars (all in raw bars):
+            # - Convert aggregated bars (lookback_window, spread_history_bars) to raw bars
+            # - min_hedge_lookback is already in raw bars
+            # - Add safety margin
+            max_spread_bars = max(lookback_window, spread_history_bars) + 50  # 50 bar safety margin
+            required_bars_for_spreads = max_spread_bars * stats_aggregation_bars
+            warmup_bar_limit = max(required_bars_for_spreads, min_hedge_lookback)
             
             print(f"[WARMUP] Loading bars from database for {len(config.symbols)} symbols: {config.symbols}", flush=True)
             print(f"[WARMUP] Calculated warmup requirements: lookback={lookback_window}, agg_bars={stats_aggregation_bars}, loading {warmup_bar_limit} bars per symbol", flush=True)
@@ -1172,9 +1205,8 @@ class StrategyService:
                     
                     if candles:
                         # Initialize or clear cache for this symbol
-                        # Use the larger of bar_cache_size or warmup_bar_limit for warmup
-                        cache_size = max(self.bar_cache_size, warmup_bar_limit)
-                        self.bar_cache[symbol] = deque(maxlen=cache_size)
+                        # Use warmup_bar_limit for warmup (already accounts for all requirements)
+                        self.bar_cache[symbol] = deque(maxlen=warmup_bar_limit)
                         
                         # Add bars in chronological order
                         candles.reverse()
