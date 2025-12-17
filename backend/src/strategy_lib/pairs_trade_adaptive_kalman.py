@@ -1298,6 +1298,12 @@ class PairsTradingKalmanStrategy(BaseStrategy):
     def _save_entry_context(self, pair_key: str, position_type: str, 
                            zscore: float, spread: float, timestamp: datetime):
         """Save entry context to database for future reconstruction."""
+        
+        # Skip database writes during backtests/optimizer runs
+        if self.config.strategy_id.startswith(('opt_', 'backtest_')):
+            self.log_debug(f"Skipping entry context save (backtest mode) for {pair_key}")
+            return
+        
         try:
             with get_db_session() as session:
                 
@@ -1305,7 +1311,7 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                 stock_a = pair_key.split('/')[0]
                 current_bar_count = session.query(func.count(Candle.id)).filter(
                     Candle.symbol == stock_a,
-                    Candle.bar_size == self.config.bar_timeframe
+                    Candle.tf == self.config.bar_timeframe
                 ).scalar()
                 
                 # Upsert context
@@ -1343,6 +1349,12 @@ class PairsTradingKalmanStrategy(BaseStrategy):
     
     def _save_exit_context(self, pair_key: str, timestamp: datetime):
         """Update position context with exit timestamp for cooldown tracking."""
+        
+        # Skip database writes during backtests/optimizer runs
+        if self.config.strategy_id.startswith(('opt_', 'backtest_')):
+            self.log_debug(f"Skipping exit context save (backtest mode) for {pair_key}")
+            return
+        
         try:
             with get_db_session() as session:
                 
@@ -1356,7 +1368,7 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                     stock_a = pair_key.split('/')[0]
                     current_bar_count = session.query(func.count(Candle.id)).filter(
                         Candle.symbol == stock_a,
-                        Candle.bar_size == self.config.bar_timeframe
+                        Candle.tf == self.config.bar_timeframe
                     ).scalar()
                     
                     context.last_exit_timestamp = timestamp

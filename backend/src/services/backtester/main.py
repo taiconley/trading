@@ -291,11 +291,14 @@ class BacktesterService:
         symbols: List[str],
         timeframe: str,
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
+        market_hours_only: bool = True
     ) -> Dict[str, pd.DataFrame]:
-        """Load historical data from database."""
+        """Load historical data from database, optionally filtered to market hours only."""
         
         def _load_data(session):
+            from sqlalchemy import extract, and_, or_
+            
             data = {}
             
             for symbol in symbols:
@@ -308,6 +311,34 @@ class BacktesterService:
                     query = query.filter(Candle.ts >= start_date)
                 if end_date:
                     query = query.filter(Candle.ts <= end_date)
+                
+                # Filter to regular market hours (9:30 AM - 4:00 PM ET, Monday-Friday)
+                # Convert timestamp to ET timezone before extracting hour/minute/dow
+                if market_hours_only:
+                    from sqlalchemy import func as sql_func
+                    
+                    # Convert timestamp to ET (America/New_York handles EST/EDT automatically)
+                    ts_et = sql_func.timezone('America/New_York', Candle.ts)
+                    
+                    query = query.filter(
+                        and_(
+                            # Monday-Friday (dow: 1=Monday, 5=Friday in PostgreSQL)
+                            extract('dow', ts_et).between(1, 5),
+                            # Between 9:30 AM and 4:00 PM ET
+                            or_(
+                                # Hour > 9 (10 AM onwards)
+                                extract('hour', ts_et) > 9,
+                                # Hour = 9 AND minute >= 30 (9:30 AM onwards)
+                                and_(
+                                    extract('hour', ts_et) == 9,
+                                    extract('minute', ts_et) >= 30
+                                )
+                            ),
+                            # Before 4:00 PM (hour < 16)
+                            extract('hour', ts_et) < 16
+                        )
+                    )
+                
                 candles = query.order_by(Candle.ts).all()
                 
                 if not candles:
@@ -328,14 +359,15 @@ class BacktesterService:
                 ])
                 
                 data[symbol] = df
+                market_hours_str = " (market hours only)" if market_hours_only else ""
                 if start_date or end_date:
                     self.logger.info(
                         f"Loaded {len(df)} bars for {symbol} between "
                         f"{start_date.isoformat() if start_date else 'start'} and "
-                        f"{end_date.isoformat() if end_date else 'end'}"
+                        f"{end_date.isoformat() if end_date else 'end'}{market_hours_str}"
                     )
                 else:
-                    self.logger.info(f"Loaded {len(df)} bars for {symbol}")
+                    self.logger.info(f"Loaded {len(df)} bars for {symbol}{market_hours_str}")
             
             return data
         

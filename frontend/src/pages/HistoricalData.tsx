@@ -74,6 +74,8 @@ export default function HistoricalData() {
   const [loading, setLoading] = useState(true);
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null);
   const [candles, setCandles] = useState<Candle[]>([]);
+  const [allCandles, setAllCandles] = useState<Candle[]>([]); // Store all loaded candles
+  const [samplingPercent, setSamplingPercent] = useState<number>(100); // Default to 100% (all data)
   const [loadingChart, setLoadingChart] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [queueStatus, setQueueStatus] = useState<QueueSummary | null>(null);
@@ -184,9 +186,13 @@ useEffect(() => {
     }
   };
 
-  const prepareRequestParams = () => {
-    const requestParams: Record<string, any> = {
-      bar_size: barSize
+  const prepareRequestParams = (): {
+    requestParams: { bar_size: string; duration: string; end_datetime?: string };
+    modeDescription: string;
+  } => {
+    const requestParams: { bar_size: string; duration: string; end_datetime?: string } = {
+      bar_size: barSize,
+      duration: ''
     };
 
     if (dateRangeMode === 'absolute') {
@@ -243,15 +249,48 @@ useEffect(() => {
   const loadCandles = useCallback(async (dataset: Dataset) => {
     setLoadingChart(true);
     setSelectedDataset(dataset);
+    
     try {
       console.log('Loading candles for:', dataset);
+      
+      // Determine safe limit based on dataset size
+      let limit = dataset.bar_count;
+      let autoSamplePercent = 100;
+      
+      // For very large datasets, automatically sample to prevent crashes
+      if (dataset.bar_count > 100000) {
+        // Load all data but start with lower sampling
+        autoSamplePercent = Math.max(1, Math.floor((50000 / dataset.bar_count) * 100));
+        console.log(`Large dataset detected (${dataset.bar_count.toLocaleString()} bars). Auto-sampling to ${autoSamplePercent}%`);
+      } else if (dataset.bar_count > 50000) {
+        autoSamplePercent = 10;
+        console.log(`Medium dataset detected (${dataset.bar_count.toLocaleString()} bars). Auto-sampling to ${autoSamplePercent}%`);
+      }
+      
+      // Cap the initial limit at 100k bars to prevent browser crashes
+      const initialLimit = Math.min(limit, 100000);
+      
       const data = await api.getCandles({
         symbol: dataset.symbol,
         timeframe: dataset.timeframe,
-        limit: 500
+        limit: initialLimit
       });
-      console.log('Received candles:', data);
-      setCandles(data.candles || []);
+      
+      console.log('Received candles:', data.candles.length);
+      const allCandlesData = data.candles || [];
+      setAllCandles(allCandlesData);
+      
+      // Set auto-calculated sampling percentage
+      setSamplingPercent(autoSamplePercent);
+      
+      // Apply initial sampling
+      const sampled = sampleCandles(allCandlesData, autoSamplePercent);
+      setCandles(sampled);
+      
+      // Show info if we couldn't load all data
+      if (dataset.bar_count > initialLimit) {
+        console.warn(`Only loaded ${initialLimit.toLocaleString()} of ${dataset.bar_count.toLocaleString()} bars`);
+      }
     } catch (error: any) {
       console.error('Failed to load candles:', error);
       alert(`Failed to load chart: ${error.response?.data?.detail || error.message}`);
@@ -259,6 +298,40 @@ useEffect(() => {
       setLoadingChart(false);
     }
   }, []);
+
+  // Helper function to sample candles based on percentage
+  const sampleCandles = (candlesArray: Candle[], percent: number): Candle[] => {
+    if (percent >= 100 || candlesArray.length === 0) {
+      return candlesArray;
+    }
+    
+    if (percent <= 0) {
+      return [];
+    }
+    
+    // Calculate step size: if 50%, take every 2nd element; if 10%, take every 10th
+    const step = Math.max(1, Math.floor(100 / percent));
+    
+    const sampled: Candle[] = [];
+    for (let i = 0; i < candlesArray.length; i += step) {
+      sampled.push(candlesArray[i]);
+    }
+    
+    // Always include the last candle to show the full range
+    if (sampled.length > 0 && sampled[sampled.length - 1] !== candlesArray[candlesArray.length - 1]) {
+      sampled.push(candlesArray[candlesArray.length - 1]);
+    }
+    
+    return sampled;
+  };
+
+  // Effect to resample when sampling percentage changes
+  useEffect(() => {
+    if (allCandles.length > 0) {
+      const sampled = sampleCandles(allCandles, samplingPercent);
+      setCandles(sampled);
+    }
+  }, [samplingPercent, allCandles]);
 
   const deleteDataset = useCallback(async (dataset: Dataset) => {
     if (!confirm(`Are you sure you want to delete all ${dataset.bar_count.toLocaleString()} candles for ${dataset.symbol} (${dataset.timeframe})?`)) {
@@ -273,6 +346,7 @@ useEffect(() => {
       if (selectedDataset?.symbol === dataset.symbol && selectedDataset?.timeframe === dataset.timeframe) {
         setSelectedDataset(null);
         setCandles([]);
+        setAllCandles([]);
       }
       
       // Refresh datasets
@@ -448,11 +522,11 @@ useEffect(() => {
   // Memoize queue overview to prevent re-renders when data hasn't changed
   const queueOverview = useMemo(() => {
     if (!queueStatus) {
-      return <div className="text-center py-6 text-slate-600">Loading queue status...</div>;
+      return <div className="text-center py-6 text-slate-600 min-h-[300px] flex items-center justify-center">Loading queue status...</div>;
     }
 
     return (
-      <div className="space-y-4">
+      <div className="space-y-4 min-h-[300px]">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div>
             <div className="text-xs text-slate-600 uppercase tracking-wide">Queue Size</div>
@@ -484,11 +558,11 @@ useEffect(() => {
               Active Requests
             </h3>
             {queueStatus.active_requests.length === 0 ? (
-              <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 min-h-[80px] flex items-center justify-center">
                 None currently running.
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 min-h-[80px]">
                 {queueStatus.active_requests.slice(0, 5).map((req) => (
                   <div
                     key={req.id}
@@ -518,11 +592,11 @@ useEffect(() => {
               Recent Completions
             </h3>
             {queueStatus.recent_completions.length === 0 ? (
-              <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <div className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg p-3 min-h-[80px] flex items-center justify-center">
                 No recent activity.
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-2 min-h-[80px]">
                 {queueStatus.recent_completions.slice().reverse().slice(0, 5).map((req) => (
                   <div
                     key={req.id}
@@ -631,22 +705,21 @@ useEffect(() => {
 
   // Memoize jobs table to prevent re-renders when data hasn't changed
   const jobsTable = useMemo(() => {
-    if (jobsLoading) {
-      return <div className="text-center py-6 text-slate-600">Loading jobs...</div>;
-    }
-    
-    if (jobs.length === 0) {
-      return (
-        <div className="text-center py-6 text-slate-600">
-          No jobs yet. Submit a request to start collecting data.
-        </div>
-      );
-    }
-
+    // Always render the container to prevent layout shift
     return (
-      <div className="overflow-x-auto max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50 sticky top-0 z-10">
+      <div style={{ minHeight: '200px', contain: 'layout' }}>
+        {jobsLoading ? (
+          <div className="text-center py-6 text-slate-600 flex items-center justify-center h-full">
+            Loading jobs...
+          </div>
+        ) : jobs.length === 0 ? (
+          <div className="text-center py-6 text-slate-600 flex items-center justify-center h-full">
+            No jobs yet. Submit a request to start collecting data.
+          </div>
+        ) : (
+          <div className="overflow-x-auto max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50 sticky top-0 z-10">
             <tr>
               <th className="px-4 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wide">
                 Job
@@ -667,57 +740,59 @@ useEffect(() => {
                 Updated
               </th>
             </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-100">
-            {jobs.map((job) => {
-              const progress = job.total_chunks > 0
-                ? Math.round((job.completed_chunks / job.total_chunks) * 100)
-                : 0;
-              return (
-                <tr key={job.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="text-sm font-semibold text-slate-900">#{job.id}</div>
-                    <div className="text-xs text-slate-500">{job.job_key}</div>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {job.symbol}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
-                    {job.bar_size}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <div className="text-sm text-slate-700">
-                      {progress}% ({job.completed_chunks}/{job.total_chunks})
-                    </div>
-                    {job.failed_chunks > 0 && (
-                      <div className="text-xs text-rose-600">
-                        {job.failed_chunks} failed chunk{job.failed_chunks === 1 ? '' : 's'}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <span
-                      className={`px-2 py-1 text-xs font-semibold rounded-full ${
-                        job.status === 'completed'
-                          ? 'bg-emerald-50 text-emerald-700'
-                          : job.status === 'failed'
-                          ? 'bg-rose-50 text-rose-700'
-                          : job.status === 'pending'
-                          ? 'bg-slate-50 text-slate-700'
-                          : 'bg-blue-50 text-blue-700'
-                      }`}
-                    >
-                      {job.status.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-500">
-                    {job.updated_at ? new Date(job.updated_at).toLocaleString() : '—'}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-100">
+                {jobs.map((job) => {
+                  const progress = job.total_chunks > 0
+                    ? Math.round((job.completed_chunks / job.total_chunks) * 100)
+                    : 0;
+                  return (
+                    <tr key={job.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="text-sm font-semibold text-slate-900">#{job.id}</div>
+                        <div className="text-xs text-slate-500">{job.job_key}</div>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                        {job.symbol}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
+                        {job.bar_size}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <div className="text-sm text-slate-700">
+                          {progress}% ({job.completed_chunks}/{job.total_chunks})
+                        </div>
+                        {job.failed_chunks > 0 && (
+                          <div className="text-xs text-rose-600">
+                            {job.failed_chunks} failed chunk{job.failed_chunks === 1 ? '' : 's'}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span
+                          className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                            job.status === 'completed'
+                              ? 'bg-emerald-50 text-emerald-700'
+                              : job.status === 'failed'
+                              ? 'bg-rose-50 text-rose-700'
+                              : job.status === 'pending'
+                              ? 'bg-slate-50 text-slate-700'
+                              : 'bg-blue-50 text-blue-700'
+                          }`}
+                        >
+                          {job.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-500">
+                        {job.updated_at ? new Date(job.updated_at).toLocaleString() : '—'}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     );
   }, [jobs, jobsLoading]);
@@ -1000,6 +1075,58 @@ useEffect(() => {
             <div className="text-center py-12 text-slate-600">No data available</div>
           ) : (
             <div className="space-y-6">
+              {/* Sampling Controls */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                  <div className="flex-1">
+                    <label className="block text-sm font-semibold text-slate-700 mb-2">
+                      Data Sampling: {samplingPercent}%
+                    </label>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="range"
+                        min="1"
+                        max="100"
+                        value={samplingPercent}
+                        onChange={(e) => setSamplingPercent(Number(e.target.value))}
+                        className="flex-1 h-2 bg-blue-200 rounded-lg appearance-none cursor-pointer"
+                        style={{
+                          background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${samplingPercent}%, #cbd5e1 ${samplingPercent}%, #cbd5e1 100%)`
+                        }}
+                      />
+                      <select
+                        value={samplingPercent}
+                        onChange={(e) => setSamplingPercent(Number(e.target.value))}
+                        className="px-3 py-1 border border-blue-300 rounded-lg text-sm bg-white"
+                      >
+                        <option value="1">1%</option>
+                        <option value="5">5%</option>
+                        <option value="10">10%</option>
+                        <option value="25">25%</option>
+                        <option value="50">50%</option>
+                        <option value="75">75%</option>
+                        <option value="100">100%</option>
+                      </select>
+                    </div>
+                    {selectedDataset && selectedDataset.bar_count > 50000 && (
+                      <div className="text-xs text-slate-600 mt-2 bg-white/50 rounded px-2 py-1">
+                        💡 Large dataset auto-sampled for performance. Adjust sampling % to view more or less detail.
+                      </div>
+                    )}
+                  </div>
+                  <div className="text-sm text-slate-700">
+                    <div><span className="font-semibold">Dataset size:</span> {selectedDataset?.bar_count.toLocaleString()}</div>
+                    <div><span className="font-semibold">Loaded:</span> {allCandles.length.toLocaleString()} bars</div>
+                    <div><span className="font-semibold">Displaying:</span> {candles.length.toLocaleString()} bars</div>
+                    {selectedDataset && allCandles.length < selectedDataset.bar_count && (
+                      <div className="text-xs text-amber-600 mt-1 font-semibold">
+                        ⚠ Limited to first {allCandles.length.toLocaleString()} bars (browser memory protection)
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
               {/* Price Chart */}
               <div>
                 <h3 className="text-sm font-semibold text-slate-700 mb-3">Price Action</h3>
@@ -1080,25 +1207,28 @@ useEffect(() => {
               {/* Data Stats */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t border-gray-200">
                 <div>
-                  <div className="text-xs text-slate-600">Bars Loaded</div>
-                  <div className="text-lg font-bold text-slate-900">{candles.length.toLocaleString()}</div>
+                  <div className="text-xs text-slate-600">Bars in Dataset</div>
+                  <div className="text-lg font-bold text-slate-900">{allCandles.length.toLocaleString()}</div>
+                  {samplingPercent < 100 && (
+                    <div className="text-xs text-slate-500">({candles.length.toLocaleString()} shown)</div>
+                  )}
                 </div>
                 <div>
                   <div className="text-xs text-slate-600">Highest Price</div>
                   <div className="text-lg font-bold text-green-600">
-                    ${Math.max(...candles.map(c => c.high)).toFixed(2)}
+                    ${allCandles.length > 0 ? Math.max(...allCandles.map(c => c.high)).toFixed(2) : '0.00'}
                   </div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-600">Lowest Price</div>
                   <div className="text-lg font-bold text-red-600">
-                    ${Math.min(...candles.map(c => c.low)).toFixed(2)}
+                    ${allCandles.length > 0 ? Math.min(...allCandles.map(c => c.low)).toFixed(2) : '0.00'}
                   </div>
                 </div>
                 <div>
                   <div className="text-xs text-slate-600">Avg Volume</div>
                   <div className="text-lg font-bold text-slate-900">
-                    {(candles.reduce((sum, c) => sum + c.volume, 0) / candles.length).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                    {allCandles.length > 0 ? (allCandles.reduce((sum, c) => sum + c.volume, 0) / allCandles.length).toLocaleString(undefined, { maximumFractionDigits: 0 }) : '0'}
                   </div>
                 </div>
               </div>

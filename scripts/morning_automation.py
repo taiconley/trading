@@ -3,12 +3,13 @@
 Morning Trading Automation Script
 
 Automates the daily morning routine:
-1. Opens TWS and signs in (Paper Trading mode) at 6:25 AM
-2. Runs docker compose up at 6:27 AM
-3. Waits 1 minute and checks service health at 6:28 AM
-4. Ensures "Pairs_Trading_Adaptive_Kalman" is enabled at 6:29 AM
-5. Triggers "Warmup" at 6:30 AM (takes over a minute)
-6. Waits 5 minutes, then enables "Ready to Trade" at 6:35 AM
+1. Runs docker compose down to clean up any existing containers
+2. Opens TWS and signs in (Paper Trading mode) at 6:25 AM
+3. Runs docker compose up at 6:27 AM
+4. Waits 1 minute and checks service health at 6:28 AM
+5. Ensures "Pairs_Trading_Adaptive_Kalman" is enabled at 6:29 AM
+6. Triggers "Warmup" at 6:30 AM (takes over a minute)
+7. Waits 5 minutes, then enables "Ready to Trade" at 6:35 AM
 
 Usage:
     # Activate virtual environment first (if running manually)
@@ -75,6 +76,9 @@ class TradingAutomation:
             logger.info(f"Timestamp: {datetime.now().isoformat()}")
             logger.info("=" * 80)
             
+            # Step 0: Docker compose down (clean slate)
+            self.step0_docker_down()
+            
             # Step 1: Open TWS and sign in (6:25 AM)
             tws_was_started = self.step1_open_tws()
             
@@ -127,6 +131,42 @@ class TradingAutomation:
             logger.error(f"CRITICAL ERROR in automation: {e}", exc_info=True)
             return 1
     
+    def step0_docker_down(self):
+        """Step 0: Clean up any existing Docker containers."""
+        self.log_step("STEP 0", "Stopping and removing existing Docker containers...")
+        
+        try:
+            # Check if there are any running containers first
+            result = subprocess.run(
+                ["docker", "ps", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                cwd=self.project_dir
+            )
+            
+            running_containers = result.stdout.strip().split('\n')
+            if running_containers and running_containers[0]:  # Check if list is not empty and first item is not empty string
+                self.log_step("STEP 0", f"Found running containers: {', '.join(running_containers)}")
+                
+                # Run docker compose down
+                subprocess.run(
+                    ["docker", "compose", "down"],
+                    cwd=self.project_dir,
+                    check=True,
+                    capture_output=True
+                )
+                
+                self.log_step("STEP 0", "Docker containers stopped and removed successfully ✓")
+            else:
+                self.log_step("STEP 0", "No running containers found, skipping docker compose down")
+            
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Error running docker compose down: {e}")
+            logger.info("Continuing with automation anyway...")
+        except Exception as e:
+            logger.warning(f"Unexpected error during docker compose down: {e}")
+            logger.info("Continuing with automation anyway...")
+    
     def step1_open_tws(self):
         """Step 1: Open TWS and sign in (Paper Trading mode)."""
         self.log_step("STEP 1", "Opening TWS and signing in...")
@@ -156,10 +196,32 @@ class TradingAutomation:
                 )
                 
                 if result.returncode == 0:
-                    self.log_step("STEP 1", "TWS launched and logged in successfully")
-                    return True  # Indicate we just started TWS
+                    # Verify TWS is actually running (not just that the script succeeded)
+                    time.sleep(5)  # Give TWS a moment to fully start or crash
+                    verify_result = subprocess.run(
+                        ["pgrep", "-f", "java.*Desktop/tws"],
+                        capture_output=True,
+                        text=True
+                    )
+                    
+                    if verify_result.returncode == 0:
+                        self.log_step("STEP 1", "TWS launched and verified running successfully")
+                        return True  # Indicate we just started TWS
+                    else:
+                        logger.error("TWS startup script succeeded but TWS process is not running!")
+                        logger.error("This usually indicates an X11 display connection issue.")
+                        logger.error("Check the TWS startup log for errors:")
+                        logger.error(f"  tail -50 {self.project_dir}/logs/tws_startup.log")
+                        logger.error("")
+                        logger.error("Quick fix: Run this command and restart automation:")
+                        logger.error("  xhost +local:")
+                        raise Exception("TWS failed to start - likely X11 display issue")
                 else:
-                    logger.error(f"TWS startup script failed: {result.stderr}")
+                    logger.error(f"TWS startup script failed with return code {result.returncode}")
+                    if result.stderr:
+                        logger.error(f"Error output: {result.stderr}")
+                    if result.stdout:
+                        logger.info(f"Script output: {result.stdout}")
                     logger.warning("Please manually ensure TWS is running in Paper Trading mode")
                     return False
             else:

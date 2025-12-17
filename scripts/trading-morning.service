@@ -11,9 +11,11 @@ ExecStart=/home/taiconley/Desktop/Projects/trading/env/bin/python3 /home/taiconl
 StandardOutput=append:/home/taiconley/Desktop/Projects/trading/logs/morning_automation.log
 StandardError=append:/home/taiconley/Desktop/Projects/trading/logs/morning_automation.log
 
-# Environment variables
+# Environment variables for X11 access
 Environment="DISPLAY=:0"
 Environment="XAUTHORITY=/home/taiconley/.Xauthority"
+Environment="XDG_RUNTIME_DIR=/run/user/1000"
+Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"
 Environment="PATH=/home/taiconley/Desktop/Projects/trading/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="VIRTUAL_ENV=/home/taiconley/Desktop/Projects/trading/env"
 

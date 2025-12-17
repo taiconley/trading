@@ -202,6 +202,29 @@ mkdir -p "$TWS_LOG_DIR"
 # Log start time
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting TWS..." >> "$TWS_LOG_FILE"
 
+# Check X11 display availability
+if [ -z "$DISPLAY" ]; then
+    export DISPLAY=:0
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] DISPLAY not set, defaulting to :0" >> "$TWS_LOG_FILE"
+fi
+
+# Verify X server is accessible
+if ! xdpyinfo >/dev/null 2>&1; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Cannot connect to X server at $DISPLAY" >> "$TWS_LOG_FILE"
+    echo "ERROR: Cannot connect to X server at $DISPLAY"
+    echo "Make sure you are logged in to a graphical session and X server is running."
+    echo "Try running: xhost +local: (to allow local connections)"
+    exit 1
+fi
+
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] X server connection verified (DISPLAY=$DISPLAY)" >> "$TWS_LOG_FILE"
+
+# Set XAUTHORITY if not set
+if [ -z "$XAUTHORITY" ]; then
+    export XAUTHORITY="$HOME/.Xauthority"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] XAUTHORITY not set, using $XAUTHORITY" >> "$TWS_LOG_FILE"
+fi
+
 # Load credentials if available
 if [ -f "$CREDENTIALS_FILE" ]; then
     source "$CREDENTIALS_FILE"

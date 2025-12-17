@@ -108,6 +108,29 @@ class HistoricalDataSettings(BaseSettings):
         return v
 
 
+class MarketHoursSettings(BaseSettings):
+    """Market hours filtering configuration."""
+    
+    enabled: bool = Field(default=True, env="MARKET_HOURS_FILTER_ENABLED")
+    timezone: str = Field(default="America/New_York", env="MARKET_HOURS_TIMEZONE")
+    market_open_hour: int = Field(default=9, env="MARKET_OPEN_HOUR")
+    market_open_minute: int = Field(default=30, env="MARKET_OPEN_MINUTE")
+    market_close_hour: int = Field(default=16, env="MARKET_CLOSE_HOUR")
+    market_close_minute: int = Field(default=0, env="MARKET_CLOSE_MINUTE")
+    
+    @validator("market_open_hour", "market_close_hour")
+    def validate_hour(cls, v):
+        if not 0 <= v <= 23:
+            raise ValueError("Hour must be between 0 and 23")
+        return v
+    
+    @validator("market_open_minute", "market_close_minute")
+    def validate_minute(cls, v):
+        if not 0 <= v <= 59:
+            raise ValueError("Minute must be between 0 and 59")
+        return v
+
+
 class BacktestSettings(BaseSettings):
     """Backtest simulation configuration."""
     
@@ -156,6 +179,7 @@ class TradingBotSettings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     tws: TWSSettings = Field(default_factory=TWSSettings)
     market_data: MarketDataSettings = Field(default_factory=MarketDataSettings)
+    market_hours: MarketHoursSettings = Field(default_factory=MarketHoursSettings)
     historical: HistoricalDataSettings = Field(default_factory=HistoricalDataSettings)
     backtest: BacktestSettings = Field(default_factory=BacktestSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)

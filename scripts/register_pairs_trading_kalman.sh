@@ -4,10 +4,10 @@
 # Data Requirements Calculation:
 # - stats_aggregation_seconds: 1800s (30 minutes per spread bar)
 # - Required lookback = max(lookback_window, spread_history_bars, min_hedge_lookback)
-# - Current: max(30, 40, 40) = 40 bars
-# - Total seconds: 40 bars × 1800s = 72,000 seconds
-# - Market time: 72,000s ÷ 3600 = 20 hours = ~3 days (at 6.5 hrs/day)
-# - TWS requests: ~10 chunks per symbol × 4 symbols = ~40 total requests
+# - Current: max(200, 300, 100000 raw bars) = 300 spread bars
+# - Total seconds: 300 bars × 1800s = 540,000 seconds = 150 hours = ~23 days (at 6.5 hrs/day)
+# - TWS requests: ~10 chunks per symbol × 43 symbols = ~430 total requests
+# - Note: With 24 pairs vs 6, data fetching will take ~4x longer but provides 4x more trading opportunities
 
 set -euo pipefail
 
@@ -18,17 +18,37 @@ STRATEGY_ID="pairs_trading_kalman_v1"
 STRATEGY_NAME="Pairs_Trading_Adaptive_Kalman"
 ENABLE_STRATEGY=false  # flip to true when you're ready to let the live service load it
 
-# Selected pairs from potential pairs analysis
-SYMBOLS_JSON='["PG","MUSA","AMN","CORT","ACA","KTB","FITB","TMHC","D","SPXC","RTX","AEP"]'
+# Selected pairs from potential pairs analysis (24 pairs - expanded for better capital utilization)
+# Criteria: Sharpe > 3.0, half_life < 11 days, strong cointegration, NO duplicate tickers
+SYMBOLS_JSON='["PG","MUSA","AMN","CORT","ACA","KTB","FITB","TMHC","D","SPXC","RTX","AEP","ANDE","LYEL","ABR","GRPN","AHCO","MGY","AIN","ESE","ADPT","IBEX","ACT","DUK","ADC","AFL","AMZN","PFBC","ADEA","PTCT","DE","ENPH","ALRM","NNOX","WELL","PBI","ACCO","WERN","ALHC","ATKR","ANIP","UAA","O","CTRA","ETSY","SHLS","MSCI","PECO"]'
 
-# Selected pair combinations
+# Selected pair combinations (24 total - 4x increase from original 6)
+# Note: Each ticker appears in exactly ONE pair to avoid position sizing conflicts
 PAIRS_JSON='[
   ["PG","MUSA"],
   ["AMN","CORT"],
   ["ACA","KTB"],
   ["FITB","TMHC"],
   ["D","SPXC"],
-  ["RTX","AEP"]
+  ["RTX","AEP"],
+  ["ANDE","LYEL"],
+  ["ABR","GRPN"],
+  ["AHCO","MGY"],
+  ["AIN","ESE"],
+  ["ADPT","IBEX"],
+  ["ACT","DUK"],
+  ["ADC","AFL"],
+  ["AMZN","PFBC"],
+  ["ADEA","PTCT"],
+  ["DE","ENPH"],
+  ["ALRM","NNOX"],
+  ["WELL","PBI"],
+  ["ACCO","WERN"],
+  ["ALHC","ATKR"],
+  ["ANIP","UAA"],
+  ["O","CTRA"],
+  ["ETSY","SHLS"],
+  ["MSCI","PECO"]
 ]'
 
 # Configure lookback_window (edit this value as needed)

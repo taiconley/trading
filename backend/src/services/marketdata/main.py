@@ -11,9 +11,10 @@ import signal
 import sys
 import time
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timezone, time as dt_time
 from typing import Dict, List, Optional, Set
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
@@ -75,6 +76,51 @@ class MarketDataService:
         # Setup signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
+    
+    def _is_market_hours(self, timestamp: datetime) -> bool:
+        """
+        Check if timestamp falls within configured market hours.
+        
+        Args:
+            timestamp: Timestamp to check (will be converted to market timezone)
+            
+        Returns:
+            True if during market hours, False otherwise or if filtering disabled
+        """
+        # If filtering disabled, always return True (save all bars)
+        if not self.settings.market_hours.enabled:
+            return True
+        
+        try:
+            # Get market timezone
+            market_tz = ZoneInfo(self.settings.market_hours.timezone)
+            
+            # Convert timestamp to market timezone
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            market_time = timestamp.astimezone(market_tz)
+            
+            # Skip weekends (Saturday = 5, Sunday = 6)
+            if market_time.weekday() >= 5:
+                return False
+            
+            # Check time of day
+            current_time = market_time.time()
+            market_open = dt_time(
+                self.settings.market_hours.market_open_hour,
+                self.settings.market_hours.market_open_minute
+            )
+            market_close = dt_time(
+                self.settings.market_hours.market_close_hour,
+                self.settings.market_hours.market_close_minute
+            )
+            
+            return market_open <= current_time < market_close
+            
+        except Exception as e:
+            self.logger.error(f"Error checking market hours: {e}")
+            # On error, default to saving the bar (fail-open)
+            return True
     
     def _setup_routes(self):
         """Setup FastAPI routes."""
@@ -642,24 +688,33 @@ class MarketDataService:
                 "volume": int(bar.volume)
             }
             
-            # Add to in-memory cache
+            # Add to in-memory cache (always, for websocket clients)
             if symbol in self.bar_cache:
                 self.bar_cache[symbol].append(bar_data)
             
-            # Store to database asynchronously
-            asyncio.create_task(self._store_bar_to_db(symbol, bar_data))
+            # Check market hours before saving to database
+            if self._is_market_hours(bar_data["timestamp"]):
+                # Store to database asynchronously
+                asyncio.create_task(self._store_bar_to_db(symbol, bar_data))
+            else:
+                # Log skipped bar (at debug level to avoid spam)
+                self.logger.debug(
+                    f"Skipped after-hours bar for {symbol} at {bar_data['timestamp']}"
+                )
             
-            # Broadcast to WebSocket clients
+            # Broadcast to WebSocket clients (always send, regardless of market hours)
             await self._broadcast_bar_update(symbol, bar_data)
             
-            log_market_data_event(
-                self.logger, "bar_update", symbol,
-                open=float(bar_data["open"]),
-                high=float(bar_data["high"]),
-                low=float(bar_data["low"]),
-                close=float(bar_data["close"]),
-                volume=bar_data["volume"]
-            )
+            # Only log at info level if saved to DB
+            if self._is_market_hours(bar_data["timestamp"]):
+                log_market_data_event(
+                    self.logger, "bar_update", symbol,
+                    open=float(bar_data["open"]),
+                    high=float(bar_data["high"]),
+                    low=float(bar_data["low"]),
+                    close=float(bar_data["close"]),
+                    volume=bar_data["volume"]
+                )
             
         except Exception as e:
             self.logger.error(f"Error processing real-time bar for {symbol}: {e}")
