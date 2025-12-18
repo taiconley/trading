@@ -449,7 +449,6 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             self._pair_states[pair_key]['unrealized_pnl'] = 0.0
             self._pair_states[pair_key]['realized_pnl'] = 0.0
             self._pair_states[pair_key]['half_life'] = None
-            self._pair_states[pair_key]['half_life'] = None
             self._pair_states[pair_key]['last_volatility_ratio'] = 1.0
             if self.config.use_kalman:
                 self._pair_states[pair_key]['kalman_filter'] = KalmanFilter(delta=self.config.kalman_delta, R=self.config.kalman_R)
@@ -1289,7 +1288,7 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                 # Count candles for this symbol since the timestamp
                 bar_count = session.query(func.count(Candle.id)).filter(
                     Candle.symbol == symbol,
-                    Candle.bar_size == self.config.bar_timeframe,  # '5 secs'
+                    Candle.tf == self.config.bar_timeframe,  # '5 secs'
                     Candle.ts > timestamp
                 ).scalar()
                 
