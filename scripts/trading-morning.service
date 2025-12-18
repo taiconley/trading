@@ -12,8 +12,8 @@ StandardOutput=append:/home/taiconley/Desktop/Projects/trading/logs/morning_auto
 StandardError=append:/home/taiconley/Desktop/Projects/trading/logs/morning_automation.log
 
 # Environment variables for X11 access
-Environment="DISPLAY=:0"
-Environment="XAUTHORITY=/home/taiconley/.Xauthority"
+Environment="DISPLAY=:1"
+Environment="XAUTHORITY=/run/user/1000/gdm/Xauthority"
 Environment="XDG_RUNTIME_DIR=/run/user/1000"
 Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus"
 Environment="PATH=/home/taiconley/Desktop/Projects/trading/env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"

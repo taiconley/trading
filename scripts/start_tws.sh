@@ -204,8 +204,8 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting TWS..." >> "$TWS_LOG_FILE"
 
 # Check X11 display availability
 if [ -z "$DISPLAY" ]; then
-    export DISPLAY=:0
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] DISPLAY not set, defaulting to :0" >> "$TWS_LOG_FILE"
+    export DISPLAY=:1
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] DISPLAY not set, defaulting to :1" >> "$TWS_LOG_FILE"
 fi
 
 # Verify X server is accessible
@@ -221,7 +221,14 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] X server connection verified (DISPLAY=$DISP
 
 # Set XAUTHORITY if not set
 if [ -z "$XAUTHORITY" ]; then
-    export XAUTHORITY="$HOME/.Xauthority"
+    # Try GDM location first (most common on modern systems)
+    if [ -f "/run/user/$(id -u)/gdm/Xauthority" ]; then
+        export XAUTHORITY="/run/user/$(id -u)/gdm/Xauthority"
+    elif [ -f "$HOME/.Xauthority" ]; then
+        export XAUTHORITY="$HOME/.Xauthority"
+    else
+        export XAUTHORITY="$HOME/.Xauthority"
+    fi
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] XAUTHORITY not set, using $XAUTHORITY" >> "$TWS_LOG_FILE"
 fi
 

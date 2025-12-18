@@ -536,6 +536,9 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                         
                         reconciled_count += 1
                         
+                        # Clear cooldown for active positions (we're in a trade, not cooling down)
+                        pair_state['cooldown_remaining'] = 0
+                        
                         self.log_warning(
                             f"🔄 RECONCILED {pair_key}: Found existing position "
                             f"{pair_state['current_position']} (notional=${pair_state['entry_notional']:.0f})"
@@ -745,6 +748,10 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                 pair_state['bars_since_stationarity'] += 1
                 pair_state['bars_since_entry'] += 1
                 
+                # Increment bars_in_trade for each bar while in position (critical for exit timing)
+                if pair_state['current_position'] != "flat":
+                    pair_state['bars_in_trade'] += 1
+                
                 # Reduce cooldown when flat
                 if pair_state['current_position'] == "flat" and pair_state['cooldown_remaining'] > 0:
                     pair_state['cooldown_remaining'] = max(0, pair_state['cooldown_remaining'] - 1)
@@ -801,9 +808,6 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             # Get current prices (from last bar)
             price_a = float(bars_a['close'].iloc[-1])
             price_b = float(bars_b['close'].iloc[-1])
-            
-            if pair_state['current_position'] != "flat":
-                pair_state['bars_in_trade'] += 1
             
             # Update adaptive thresholds and volatility ratio
             vol_ratio, adjusted_entry, adjusted_exit = self._get_adaptive_thresholds(pair_state)
@@ -1402,6 +1406,13 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                     pair_state['entry_spread'] = float(context.entry_spread) if context.entry_spread else None
                     pair_state['entry_timestamp'] = context.entry_timestamp
                     
+                    # Clear stale exit timestamp (we have an active position, not exited)
+                    if context.last_exit_timestamp is not None:
+                        self.log_info(f"Clearing stale exit timestamp for active position {pair_key}")
+                        context.last_exit_timestamp = None
+                        context.last_exit_bar_count = None
+                        session.commit()
+                    
                     # Count bars since entry (market time only!)
                     stock_a = pair_state['stock_a']
                     bars_since_entry = self._count_bars_since(context.entry_timestamp, stock_a)
@@ -1985,7 +1996,8 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             blocking_reasons = []
             if spread_history_len < self.config.lookback_window:
                 blocking_reasons.append(f"Warming up: {spread_history_len}/{self.config.lookback_window} spread bars")
-            if state.get('cooldown_remaining', 0) > 0:
+            # Only show cooldown if we're actually flat (not in a position)
+            if state['current_position'] == 'flat' and state.get('cooldown_remaining', 0) > 0:
                 blocking_reasons.append(f"Cooldown: {state['cooldown_remaining']} bars remaining")
             if self.config.stationarity_checks_enabled:
                 adf_pval = state.get('adf_pvalue')

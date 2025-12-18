@@ -172,6 +172,21 @@ class TradingAutomation:
         self.log_step("STEP 1", "Opening TWS and signing in...")
         
         try:
+            # Ensure X11 access is granted (fallback in case systemd service didn't run)
+            try:
+                xhost_result = subprocess.run(
+                    ["xhost", "+local:"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if xhost_result.returncode == 0:
+                    self.log_step("STEP 1", "Granted X11 access to local processes")
+                else:
+                    logger.warning("xhost command returned non-zero, but continuing anyway")
+            except Exception as e:
+                logger.warning(f"Could not run xhost (may already be set): {e}")
+            
             # Check if TWS Java process is already running (more specific check)
             result = subprocess.run(
                 ["pgrep", "-f", "java.*Desktop/tws"],

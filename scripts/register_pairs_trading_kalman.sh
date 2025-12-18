@@ -70,7 +70,7 @@ PARAMS_JSON=$(cat <<JSON
   "spread_history_bars": $SPREAD_HISTORY_BARS,
   "hedge_refresh_bars": 1000000,
   "min_hedge_lookback": 100000,
-  "entry_threshold": 2.0,
+  "entry_threshold": 1.9,
   "exit_threshold": 0.5,
   "position_size": 48,
   "max_hold_bars": 200000,

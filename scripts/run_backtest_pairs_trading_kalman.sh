@@ -67,7 +67,7 @@ PARAMS_JSON=$(cat <<JSON
   "bar_timeframe": "$TIMEFRAME",
   "lookback_periods": $LOOKBACK,
   "lookback_window": 200,
-  "entry_threshold": 2.0,
+  "entry_threshold": 1.9,
   "exit_threshold": 0.5,
   "position_size": 48,
   "base_pair_notional": 25000,
