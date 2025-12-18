@@ -84,7 +84,7 @@ PARAMS_JSON=$(cat <<JSON
   "use_kalman": true,
   "kalman_delta": 0.01,
   "kalman_R": 0.1,
-  "stationarity_checks_enabled": true,
+  "stationarity_checks_enabled": false,
   "adf_pvalue_threshold": 0.05,
   "cointegration_pvalue_threshold": 0.05,
   "stationarity_check_interval": 60,
