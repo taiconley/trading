@@ -203,11 +203,13 @@ class TradingAutomation:
             
             if tws_script.exists():
                 # Run the script and wait for it to complete
+                # Use start_new_session=True to fully detach TWS from this process
                 result = subprocess.run(
                     [str(tws_script)],
                     capture_output=True,
                     text=True,
-                    cwd=self.project_dir
+                    cwd=self.project_dir,
+                    start_new_session=True
                 )
                 
                 if result.returncode == 0:

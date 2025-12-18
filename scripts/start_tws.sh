@@ -267,7 +267,8 @@ echo "Launching TWS..."
 # Start TWS (it will use settings from tws.vmoptions and jts.ini in $TWS_DATA_DIR)
 # Paper Trading mode is configured in $TWS_DATA_DIR/jts.ini
 # Make sure you have Paper Trading selected in TWS before running this automation
-nohup "$TWS_LAUNCHER" >> "$TWS_LOG_FILE" 2>&1 &
+# Use setsid to fully detach TWS from the parent process tree
+setsid nohup "$TWS_LAUNCHER" >> "$TWS_LOG_FILE" 2>&1 < /dev/null &
 
 LAUNCHER_PID=$!
 

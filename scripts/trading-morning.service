@@ -10,6 +10,8 @@ WorkingDirectory=/home/taiconley/Desktop/Projects/trading
 ExecStart=/home/taiconley/Desktop/Projects/trading/env/bin/python3 /home/taiconley/Desktop/Projects/trading/scripts/morning_automation.py
 StandardOutput=append:/home/taiconley/Desktop/Projects/trading/logs/morning_automation.log
 StandardError=append:/home/taiconley/Desktop/Projects/trading/logs/morning_automation.log
+# Don't kill child processes (like TWS) when the service exits
+KillMode=process
 
 # Environment variables for X11 access
 Environment="DISPLAY=:1"
