@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from common.config import get_settings
 from common.logging import setup_logging
 from common.db import get_db_session
-from common.models import AccountSummary, Position, Account, Symbol
+from common.models import AccountSummary, Position, Account, Symbol, Tick
 from common.sync_status import update_sync_status
 
 logger = logging.getLogger(__name__)
@@ -720,14 +720,49 @@ class AccountService:
                         )
                     ).all()
                     
-                    positions = [{
-                        'symbol': p.symbol,
-                        'qty': float(p.qty),
-                        'avg_price': float(p.avg_price),
-                        'market_price': None,  # Not stored in positions table
-                        'market_value': None,
-                        'unrealized_pnl': None
-                    } for p in db_positions]
+                    # Calculate P&L using latest tick prices
+                    positions = []
+                    for p in db_positions:
+                        try:
+                            symbol = p.symbol
+                            qty = float(p.qty)
+                            avg_price = float(p.avg_price)
+                            
+                            market_price = None
+                            market_value = None
+                            unrealized_pnl = None
+                            
+                            # Get latest tick price for this symbol
+                            latest_tick = session.query(Tick).filter(
+                                Tick.symbol == symbol
+                            ).order_by(Tick.ts.desc()).first()
+                            
+                            if latest_tick and latest_tick.last:
+                                market_price = float(latest_tick.last)
+                                market_value = qty * market_price
+                                # P&L = (current_price - entry_price) * qty
+                                # This works for both long and short positions
+                                unrealized_pnl = (market_price - avg_price) * qty
+                            
+                            positions.append({
+                                'symbol': symbol,
+                                'qty': qty,
+                                'avg_price': avg_price,
+                                'market_price': market_price,
+                                'market_value': market_value,
+                                'unrealized_pnl': unrealized_pnl
+                            })
+                        except Exception as e:
+                            logger.error(f"Error calculating P&L for {p.symbol}: {e}")
+                            # Still add position without P&L data
+                            positions.append({
+                                'symbol': p.symbol,
+                                'qty': float(p.qty),
+                                'avg_price': float(p.avg_price),
+                                'market_price': None,
+                                'market_value': None,
+                                'unrealized_pnl': None
+                            })
                     
                     return {
                         'account_id': self.account,

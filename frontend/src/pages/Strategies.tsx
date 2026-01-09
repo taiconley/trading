@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Card } from '../components/Card';
-import { api, Strategy } from '../services/api';
+import { api, Strategy, Position } from '../services/api';
 import { Power, Edit, RefreshCw, Save, X, TrendingUp, TrendingDown, Activity, AlertCircle, CheckCircle, Clock, Download, ChevronDown, ChevronUp, Zap } from 'lucide-react';
 
 export function Strategies() {
   const [strategies, setStrategies] = useState<Strategy[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -26,13 +27,26 @@ export function Strategies() {
     }
   };
 
+  const fetchPositions = async () => {
+    try {
+      const data = await api.getPositions();
+      setPositions(data.positions || []);
+    } catch (err: any) {
+      console.error('Failed to fetch positions:', err);
+    }
+  };
+
   useEffect(() => {
     fetchStrategies();
+    fetchPositions();
     
     // Auto-refresh every 5 seconds if enabled
     let intervalId: number | null = null;
     if (autoRefresh) {
-      intervalId = setInterval(fetchStrategies, 5000);
+      intervalId = setInterval(() => {
+        fetchStrategies();
+        fetchPositions();
+      }, 5000);
     }
     
     return () => {
@@ -177,6 +191,10 @@ export function Strategies() {
       return <span className="px-2 py-1 text-xs rounded bg-red-100 text-red-700">Short A / Long B</span>;
     }
     return <span className="px-2 py-1 text-xs rounded bg-gray-100 text-gray-700">{position}</span>;
+  };
+
+  const getPositionInfo = (symbol: string) => {
+    return positions.find(p => p.symbol === symbol && p.qty !== 0);
   };
 
   if (loading) {
@@ -400,6 +418,7 @@ export function Strategies() {
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Exit %</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Bars in Trade</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Spread Bars</th>
+                              <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Pair P&L</th>
                               <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                             </tr>
                           </thead>
@@ -451,6 +470,16 @@ export function Strategies() {
                                 const blockingReasons = pairState.blocking_reasons || [];
                                 const aggBuffer = pairState.aggregation_buffer;
                                 
+                                // Calculate aggregate P&L for the pair
+                                const [tickerA, tickerB] = pairKey.split('/');
+                                const posA = getPositionInfo(tickerA);
+                                const posB = getPositionInfo(tickerB);
+                                const pnlA = posA?.unrealized_pnl || 0;
+                                const pnlB = posB?.unrealized_pnl || 0;
+                                const totalPairPnl = pnlA + pnlB;
+                                const hasPnlData = (posA?.unrealized_pnl !== undefined && posA?.unrealized_pnl !== null) || 
+                                                   (posB?.unrealized_pnl !== undefined && posB?.unrealized_pnl !== null);
+                                
                                 return (
                                   <React.Fragment key={pairKey}>
                                     <tr className="hover:bg-gray-50">
@@ -491,6 +520,15 @@ export function Strategies() {
                                         )}
                                       </td>
                                       <td className="px-3 py-2 whitespace-nowrap text-sm">
+                                        {hasPnlData ? (
+                                          <span className={`font-medium ${totalPairPnl >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                            ${Math.round(totalPairPnl).toLocaleString()}
+                                          </span>
+                                        ) : (
+                                          <span className="text-gray-400">—</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-2 whitespace-nowrap text-sm">
                                         <div className="flex items-center space-x-1">
                                           {statusIcon}
                                           <span>{statusText}</span>
@@ -499,7 +537,112 @@ export function Strategies() {
                                     </tr>
                                     {isExpanded && (
                                       <tr className="bg-gray-50">
-                                        <td colSpan={9} className="px-3 py-4">
+                                        <td colSpan={10} className="px-3 py-4">
+                                          {/* Position Information for each ticker */}
+                                          {(() => {
+                                            const [tickerA, tickerB] = pairKey.split('/');
+                                            const posA = getPositionInfo(tickerA);
+                                            const posB = getPositionInfo(tickerB);
+                                            
+                                            return (
+                                              <div className="mb-4 p-3 bg-blue-50 rounded border border-blue-200">
+                                                <h6 className="font-semibold text-gray-700 mb-2 text-xs">Current Positions</h6>
+                                                <div className="grid grid-cols-2 gap-3">
+                                                  {/* Ticker A Position */}
+                                                  <div className="bg-white p-2 rounded border border-gray-200">
+                                                    <div className="font-semibold text-sm text-gray-800 mb-1">{tickerA}</div>
+                                                      {posA ? (
+                                                        <div className="space-y-1 text-xs">
+                                                          <div className="flex justify-between">
+                                                            <span className="text-gray-600">Quantity:</span>
+                                                            <span className={`font-medium ${posA.qty > 0 ? 'text-green-700' : posA.qty < 0 ? 'text-red-700' : 'text-gray-700'}`}>
+                                                              {posA.qty}
+                                                            </span>
+                                                          </div>
+                                                          <div className="flex justify-between">
+                                                            <span className="text-gray-600">Avg Entry:</span>
+                                                            <span className="font-medium text-gray-900">${posA.avg_price.toFixed(2)}</span>
+                                                          </div>
+                                                          <div className="flex justify-between">
+                                                            <span className="text-gray-600">Cost Basis:</span>
+                                                            <span className="font-medium text-gray-900">
+                                                              ${Math.round(posA.qty * posA.avg_price).toLocaleString()}
+                                                            </span>
+                                                          </div>
+                                                          {posA.unrealized_pnl !== undefined && posA.unrealized_pnl !== null && (
+                                                            <div className="flex justify-between">
+                                                              <span className="text-gray-600">Unrealized P&L:</span>
+                                                              <span className={`font-medium ${posA.unrealized_pnl >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                                                ${Math.round(posA.unrealized_pnl).toLocaleString()}
+                                                              </span>
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                      ) : (
+                                                        <div className="text-xs text-gray-500 italic">No position</div>
+                                                      )}
+                                                  </div>
+                                                  
+                                                  {/* Ticker B Position */}
+                                                  <div className="bg-white p-2 rounded border border-gray-200">
+                                                    <div className="font-semibold text-sm text-gray-800 mb-1">{tickerB}</div>
+                                                      {posB ? (
+                                                        <div className="space-y-1 text-xs">
+                                                          <div className="flex justify-between">
+                                                            <span className="text-gray-600">Quantity:</span>
+                                                            <span className={`font-medium ${posB.qty > 0 ? 'text-green-700' : posB.qty < 0 ? 'text-red-700' : 'text-gray-700'}`}>
+                                                              {posB.qty}
+                                                            </span>
+                                                          </div>
+                                                          <div className="flex justify-between">
+                                                            <span className="text-gray-600">Avg Entry:</span>
+                                                            <span className="font-medium text-gray-900">${posB.avg_price.toFixed(2)}</span>
+                                                          </div>
+                                                          <div className="flex justify-between">
+                                                            <span className="text-gray-600">Cost Basis:</span>
+                                                            <span className="font-medium text-gray-900">
+                                                              ${Math.round(posB.qty * posB.avg_price).toLocaleString()}
+                                                            </span>
+                                                          </div>
+                                                          {posB.unrealized_pnl !== undefined && posB.unrealized_pnl !== null && (
+                                                            <div className="flex justify-between">
+                                                              <span className="text-gray-600">Unrealized P&L:</span>
+                                                              <span className={`font-medium ${posB.unrealized_pnl >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                                                ${Math.round(posB.unrealized_pnl).toLocaleString()}
+                                                              </span>
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                      ) : (
+                                                        <div className="text-xs text-gray-500 italic">No position</div>
+                                                      )}
+                                                    </div>
+                                                  </div>
+                                                  {/* Total Pair P&L */}
+                                                  {(() => {
+                                                    const pnlA = posA?.unrealized_pnl || 0;
+                                                    const pnlB = posB?.unrealized_pnl || 0;
+                                                    const totalPnl = pnlA + pnlB;
+                                                    
+                                                    if ((posA?.unrealized_pnl !== undefined && posA?.unrealized_pnl !== null) || 
+                                                        (posB?.unrealized_pnl !== undefined && posB?.unrealized_pnl !== null)) {
+                                                      return (
+                                                        <div className="mt-2 pt-2 border-t border-blue-300">
+                                                          <div className="flex justify-between items-center">
+                                                            <span className="font-semibold text-sm text-gray-700">Total Pair P&L:</span>
+                                                            <span className={`font-bold text-sm ${totalPnl >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                                                              ${Math.round(totalPnl).toLocaleString()}
+                                                            </span>
+                                                          </div>
+                                                        </div>
+                                                      );
+                                                    }
+                                                    return null;
+                                                  })()}
+                                                </div>
+                                              );
+                                            })()}
+                                          
                                           <div className="grid grid-cols-3 gap-4 text-xs">
                                             {/* Column 1: Data & Aggregation */}
                                             <div className="space-y-3">
