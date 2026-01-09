@@ -3,6 +3,7 @@
 Morning Trading Automation Script
 
 Automates the daily morning routine:
+0. Wakes up the display (moves mouse, disables screen saver)
 1. Runs docker compose down to clean up any existing containers
 2. Opens TWS and signs in (Paper Trading mode) at 6:25 AM
 3. Runs docker compose up at 6:27 AM
@@ -76,6 +77,9 @@ class TradingAutomation:
             logger.info(f"Timestamp: {datetime.now().isoformat()}")
             logger.info("=" * 80)
             
+            # Pre-step: Wake up the display
+            self.prestep_wake_display()
+            
             # Step 0: Docker compose down (clean slate)
             self.step0_docker_down()
             
@@ -130,6 +134,97 @@ class TradingAutomation:
         except Exception as e:
             logger.error(f"CRITICAL ERROR in automation: {e}", exc_info=True)
             return 1
+    
+    def prestep_wake_display(self):
+        """Pre-step: Wake up the display/monitor before starting automation."""
+        self.log_step("PRE-STEP", "Waking up display and ensuring system is ready...")
+        
+        try:
+            # Step 1: Turn on the display using xset
+            try:
+                # Force DPMS (Display Power Management Signaling) on
+                subprocess.run(
+                    ["xset", "dpms", "force", "on"],
+                    env={"DISPLAY": ":1"},
+                    capture_output=True,
+                    timeout=5
+                )
+                self.log_step("PRE-STEP", "Display power on command sent")
+            except Exception as e:
+                logger.warning(f"Could not run xset dpms command: {e}")
+            
+            # Step 2: Disable screen blanking temporarily
+            try:
+                subprocess.run(
+                    ["xset", "s", "off"],
+                    env={"DISPLAY": ":1"},
+                    capture_output=True,
+                    timeout=5
+                )
+                subprocess.run(
+                    ["xset", "-dpms"],
+                    env={"DISPLAY": ":1"},
+                    capture_output=True,
+                    timeout=5
+                )
+                self.log_step("PRE-STEP", "Screen saver and power management disabled")
+            except Exception as e:
+                logger.warning(f"Could not disable screen blanking: {e}")
+            
+            # Step 3: Move mouse to wake up display
+            try:
+                self.log_step("PRE-STEP", "Simulating mouse activity to wake display...")
+                
+                # Get current mouse position
+                result = subprocess.run(
+                    ["xdotool", "getmouselocation", "--shell"],
+                    env={"DISPLAY": ":1"},
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                
+                # Move mouse in a circle pattern to ensure display wakes
+                movements = [
+                    (100, 100), (200, 100), (200, 200), (100, 200), (100, 100),
+                    (300, 300), (400, 300), (400, 400), (300, 400), (300, 300)
+                ]
+                
+                for x, y in movements:
+                    subprocess.run(
+                        ["xdotool", "mousemove", str(x), str(y)],
+                        env={"DISPLAY": ":1"},
+                        capture_output=True,
+                        timeout=5
+                    )
+                    time.sleep(0.2)  # Small delay between movements
+                
+                self.log_step("PRE-STEP", "Mouse movement simulation completed")
+                
+            except Exception as e:
+                logger.warning(f"Could not simulate mouse movement: {e}")
+            
+            # Step 4: Simulate a key press (safer than mouse click)
+            try:
+                subprocess.run(
+                    ["xdotool", "key", "Shift_L"],
+                    env={"DISPLAY": ":1"},
+                    capture_output=True,
+                    timeout=5
+                )
+                self.log_step("PRE-STEP", "Keyboard activity simulated")
+            except Exception as e:
+                logger.warning(f"Could not simulate keyboard activity: {e}")
+            
+            # Wait a moment for the display to fully wake
+            self.log_step("PRE-STEP", "Waiting 5 seconds for display to fully wake...")
+            time.sleep(5)
+            
+            self.log_step("PRE-STEP", "Display wake sequence completed ✓")
+            
+        except Exception as e:
+            logger.warning(f"Error during display wake sequence: {e}")
+            logger.info("Continuing with automation anyway...")
     
     def step0_docker_down(self):
         """Step 0: Clean up any existing Docker containers."""

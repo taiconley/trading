@@ -579,9 +579,20 @@ class TraderService:
             # Update or create order in database
             payload_data = None
             with self.db_session_factory() as session:
-                db_order = session.query(Order).filter(
+                # Check if this external order ID already exists to avoid race condition duplicates
+                existing_orders = session.query(Order).filter(
                     Order.external_order_id == str(ib_order_id)
-                ).first()
+                ).all()
+                
+                if len(existing_orders) > 1:
+                    # Multiple records found! This is a race condition bug - use the oldest one
+                    db_order = min(existing_orders, key=lambda o: o.id)
+                    print(f"   ⚠️  WARNING: Found {len(existing_orders)} duplicate orders for IB order {ib_order_id}, using oldest ID {db_order.id}")
+                    logger.warning(f"Duplicate orders found for external_order_id {ib_order_id}: {[o.id for o in existing_orders]}")
+                elif len(existing_orders) == 1:
+                    db_order = existing_orders[0]
+                else:
+                    db_order = None
                 
                 if db_order:
                     # Update existing order
@@ -591,63 +602,85 @@ class TraderService:
                     session.commit()
                     session.refresh(db_order)
                 else:
-                    # Auto-create external order (placed directly in TWS)
-                    print(f"   ➕ Creating NEW order in database: {trade.contract.symbol} {trade.order.action} {trade.order.totalQuantity}")
-                    logger.info(f"Creating external order from TWS: {ib_order_id}")
+                    # Before creating a new order, check if there's a recent order with matching attributes
+                    # but no external_order_id (race condition with place_order)
+                    recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=10)
+                    matching_order = session.query(Order).filter(
+                        Order.symbol == trade.contract.symbol,
+                        Order.side == trade.order.action,
+                        Order.qty == Decimal(str(trade.order.totalQuantity)),
+                        Order.external_order_id.is_(None),
+                        Order.placed_at >= recent_cutoff
+                    ).order_by(Order.id.desc()).first()
                     
-                    # Ensure account exists
-                    account_id = trade.order.account if trade.order.account else "DU7084660"
-                    account = session.query(Account).filter_by(account_id=account_id).first()
-                    if not account:
-                        account = Account(account_id=account_id, currency='USD')
-                        session.add(account)
-                        session.flush()
-                    
-                    # Ensure symbol exists
-                    symbol = trade.contract.symbol
-                    db_symbol = session.query(Symbol).filter_by(symbol=symbol).first()
-                    if not db_symbol:
-                        logger.info(f"Auto-creating symbol: {symbol}")
-                        db_symbol = Symbol(
+                    if matching_order:
+                        # Found a matching order without external_order_id - this is the original!
+                        print(f"   🔗 Linking status update to existing order ID {matching_order.id} (race condition resolved)")
+                        logger.info(f"Linking external_order_id {ib_order_id} to existing order {matching_order.id}")
+                        matching_order.external_order_id = str(ib_order_id)
+                        matching_order.status = order_status
+                        matching_order.updated_at = datetime.now(timezone.utc)
+                        session.commit()
+                        session.refresh(matching_order)
+                        db_order = matching_order
+                    else:
+                        # Auto-create external order (placed directly in TWS)
+                        print(f"   ➕ Creating NEW order in database: {trade.contract.symbol} {trade.order.action} {trade.order.totalQuantity}")
+                        logger.info(f"Creating external order from TWS: {ib_order_id}")
+                        
+                        # Ensure account exists
+                        account_id = trade.order.account if trade.order.account else "DU7084660"
+                        account = session.query(Account).filter_by(account_id=account_id).first()
+                        if not account:
+                            account = Account(account_id=account_id, currency='USD')
+                            session.add(account)
+                            session.flush()
+                        
+                        # Ensure symbol exists
+                        symbol = trade.contract.symbol
+                        db_symbol = session.query(Symbol).filter_by(symbol=symbol).first()
+                        if not db_symbol:
+                            logger.info(f"Auto-creating symbol: {symbol}")
+                            db_symbol = Symbol(
+                                symbol=symbol,
+                                conid=trade.contract.conId,
+                                primary_exchange=trade.contract.primaryExchange or 'SMART',
+                                currency=trade.contract.currency or 'USD',
+                                active=True
+                            )
+                            session.add(db_symbol)
+                            session.flush()
+                        
+                        # Create new order
+                        # Validate prices to avoid database overflow (IB uses sentinel values for "no price")
+                        limit_price = None
+                        if self._is_valid_price(trade.order.lmtPrice):
+                            limit_price = Decimal(str(trade.order.lmtPrice))
+                        
+                        stop_price = None
+                        if self._is_valid_price(trade.order.auxPrice):
+                            stop_price = Decimal(str(trade.order.auxPrice))
+                        
+                        db_order = Order(
+                            account_id=account_id,
+                            strategy_id=None,  # External order, no strategy
                             symbol=symbol,
-                            conid=trade.contract.conId,
-                            primary_exchange=trade.contract.primaryExchange or 'SMART',
-                            currency=trade.contract.currency or 'USD',
-                            active=True
+                            side=trade.order.action,  # BUY or SELL
+                            qty=Decimal(str(trade.order.totalQuantity)),
+                            order_type=trade.order.orderType,  # MKT, LMT, etc.
+                            limit_price=limit_price,
+                            stop_price=stop_price,
+                            tif=trade.order.tif,
+                            status=order_status,
+                            external_order_id=str(ib_order_id),
+                            placed_at=datetime.now(timezone.utc),
+                            updated_at=datetime.now(timezone.utc)
                         )
-                        session.add(db_symbol)
-                        session.flush()
-                    
-                    # Create new order
-                    # Validate prices to avoid database overflow (IB uses sentinel values for "no price")
-                    limit_price = None
-                    if self._is_valid_price(trade.order.lmtPrice):
-                        limit_price = Decimal(str(trade.order.lmtPrice))
-                    
-                    stop_price = None
-                    if self._is_valid_price(trade.order.auxPrice):
-                        stop_price = Decimal(str(trade.order.auxPrice))
-                    
-                    db_order = Order(
-                        account_id=account_id,
-                        strategy_id=None,  # External order, no strategy
-                        symbol=symbol,
-                        side=trade.order.action,  # BUY or SELL
-                        qty=Decimal(str(trade.order.totalQuantity)),
-                        order_type=trade.order.orderType,  # MKT, LMT, etc.
-                        limit_price=limit_price,
-                        stop_price=stop_price,
-                        tif=trade.order.tif,
-                        status=order_status,
-                        external_order_id=str(ib_order_id),
-                        placed_at=datetime.now(timezone.utc),
-                        updated_at=datetime.now(timezone.utc)
-                    )
-                    session.add(db_order)
-                    session.commit()
-                    session.refresh(db_order)
-                    print(f"   ✅ Order saved to database! ID: {db_order.id}")
-                    logger.info(f"✅ Created external order: {symbol} {trade.order.action} {trade.order.totalQuantity}")
+                        session.add(db_order)
+                        session.commit()
+                        session.refresh(db_order)
+                        print(f"   ✅ Order saved to database! ID: {db_order.id}")
+                        logger.info(f"✅ Created external order: {symbol} {trade.order.action} {trade.order.totalQuantity}")
                 
                 payload_data = {
                     'type': 'order_update',

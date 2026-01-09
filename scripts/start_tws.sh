@@ -283,21 +283,19 @@ for i in {1..10}; do
         echo "[$(date '+%Y-%m-%d %H:%M:%S')] TWS Java process started with PID: $TWS_PID" >> "$TWS_LOG_FILE"
         echo "✓ TWS started successfully! (PID: $TWS_PID)"
         
-        # Attempt automatic login if credentials are available
+        # Automatic login via xdotool
         if [ "$AUTO_LOGIN" = true ] && [ -n "$TWS_USERNAME" ] && [ -n "$TWS_PASSWORD" ]; then
             echo "  Attempting automatic login..."
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Attempting automatic login" >> "$TWS_LOG_FILE"
-            
-            # Call the login automation function
-            if auto_login_tws; then
-                echo "✓ Automatic login completed"
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Automatic login completed" >> "$TWS_LOG_FILE"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Attempting automatic login via xdotool" >> "$TWS_LOG_FILE"
+            auto_login_tws >> "$TWS_LOG_FILE" 2>&1
+            if [ $? -eq 0 ]; then
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Auto-login completed" >> "$TWS_LOG_FILE"
             else
-                echo "⚠ Automatic login may have failed - please check TWS window"
-                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Automatic login may have failed" >> "$TWS_LOG_FILE"
+                echo "[$(date '+%Y-%m-%d %H:%M:%S')] Auto-login had issues - check logs" >> "$TWS_LOG_FILE"
             fi
         else
-            echo "  Please log in to Paper Trading manually..."
+            echo "  TWS launched - will need manual login (no credentials configured)"
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] TWS launched - manual login required (no credentials)" >> "$TWS_LOG_FILE"
         fi
         
         exit 0
