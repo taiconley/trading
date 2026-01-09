@@ -56,6 +56,9 @@ LOOKBACK_WINDOW=200
 STATS_AGGREGATION_SECONDS=1800
 # Automatically calculate spread_history_bars as lookback_window + 100 for buffer
 SPREAD_HISTORY_BARS=300
+# Reconciliation interval (bars between position reconciliation checks)
+# 300 bars = ~25 minutes at 5-second bars, ~1.5 hours at 30-min aggregate
+RECONCILIATION_INTERVAL=1
 
 # Strategy parameters persisted to strategies.params_json
 PARAMS_JSON=$(cat <<JSON
@@ -107,8 +110,8 @@ PARAMS_JSON=$(cat <<JSON
   "max_halflife_bars": 720,
   "require_half_life": true,
   "max_pair_loss_pct": 0.02,
-  "volatility_stop_multiplier": 2.5
-
+  "volatility_stop_multiplier": 2.5,
+  "reconciliation_interval": $RECONCILIATION_INTERVAL
 }
 JSON
 )

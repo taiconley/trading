@@ -119,6 +119,9 @@ class PairsTradingAggregatedConfig(StrategyConfig):
     # Cooldown behavior
     cooldown_on_loss_only: bool = True  # If True, apply cooldown only if trade lost money
     cooldown_after_all_exits: bool = False  # If True, apply cooldown after ANY exit (overrides on_loss_only)
+    
+    # Position reconciliation
+    reconciliation_interval: int = 300  # Bars between automatic position reconciliation checks
 
     class Config:
         extra = "allow"
@@ -216,6 +219,13 @@ class PairsTradingKalmanStrategy(BaseStrategy):
         # State tracking for each pair
         # Key is "SYMBOL_A/SYMBOL_B"
         self._pair_states: Dict[str, Dict[str, Any]] = {}
+        
+        # Periodic reconciliation counter
+        self._bars_since_reconciliation = 0
+        self._reconciliation_interval = self.config.reconciliation_interval  # Read from config (default: 300 bars)
+        
+        # Track ready_to_trade state changes to trigger reconciliation
+        self._last_ready_to_trade_state = False
         
         for pair in self.pairs:
             pair_key = f"{pair[0]}/{pair[1]}"
@@ -414,6 +424,12 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                 "required": False,
                 "min": 0.5,
                 "description": "Exit if spread drifts this many std devs beyond entry"
+            },
+            "reconciliation_interval": {
+                "type": int,
+                "required": False,
+                "min": 1,
+                "description": "Bars between automatic position reconciliation checks (default: 300)"
             }
         }
     
@@ -468,6 +484,28 @@ class PairsTradingKalmanStrategy(BaseStrategy):
             f"use_kalman={self.config.use_kalman}"
         )
     
+    async def _check_ready_to_trade_state(self) -> bool:
+        """
+        Check the current ready_to_trade state from the database.
+        
+        Returns:
+            True if ready_to_trade is enabled, False otherwise
+        """
+        try:
+            with get_db_session() as session:
+                from common.models import Strategy as StrategyModel
+                strategy = session.query(StrategyModel).filter(
+                    StrategyModel.strategy_id == self.config.strategy_id
+                ).first()
+                
+                if strategy:
+                    return bool(strategy.ready_to_trade)
+                return False
+                
+        except Exception as e:
+            self.log_error(f"Failed to check ready_to_trade state: {e}")
+            return False
+    
     async def _reconcile_positions(self):
         """
         Restore strategy state from actual broker positions.
@@ -485,14 +523,23 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                     Position.qty != 0
                 ).all()
                 
-                if not positions:
-                    self.log_info("✅ No open positions to reconcile")
-                    return
+                # Log detailed position data for debugging
+                self.log_info(f"🔍 RECONCILIATION: Querying positions for {len(all_symbols)} symbols: {all_symbols}")
+                self.log_info(f"🔍 RECONCILIATION: Found {len(positions)} non-zero positions in database")
                 
                 # Build position map: symbol -> (qty, avg_price)
                 position_map = {p.symbol: (float(p.qty), float(p.avg_price)) for p in positions}
                 
+                # Log all positions
+                for symbol, (qty, price) in position_map.items():
+                    self.log_info(f"  📊 Position: {symbol} qty={qty}, avg_price=${price:.2f}")
+                
+                if not positions:
+                    self.log_info("✅ No open positions to reconcile")
+                    return
+                
                 reconciled_count = 0
+                desync_detected = []
                 
                 # Check each pair
                 for pair in self.pairs:
@@ -505,19 +552,36 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                     price_a = position_map.get(stock_a, (0, 0))[1]
                     price_b = position_map.get(stock_b, (0, 0))[1]
                     
+                    current_strategy_state = pair_state['current_position']
+                    
                     # Determine if we have a pair position
                     if qty_a != 0 and qty_b != 0:
                         # Check the direction
+                        correct_position_type = None
                         if qty_a > 0 and qty_b < 0:
-                            pair_state['current_position'] = 'long_a_short_b'
+                            correct_position_type = 'long_a_short_b'
                         elif qty_a < 0 and qty_b > 0:
-                            pair_state['current_position'] = 'short_a_long_b'
+                            correct_position_type = 'short_a_long_b'
                         else:
                             self.log_warning(
                                 f"⚠️  Unexpected position combination for {pair_key}: "
                                 f"{stock_a}={qty_a}, {stock_b}={qty_b} (both same direction)"
                             )
                             continue
+                        
+                        # Check for desync
+                        if current_strategy_state != correct_position_type:
+                            desync_detected.append(
+                                f"{pair_key}: strategy thinks '{current_strategy_state}' but broker has '{correct_position_type}'"
+                            )
+                            self.log_warning(
+                                f"⚠️  DESYNC DETECTED for {pair_key}! "
+                                f"Strategy state='{current_strategy_state}' but broker has '{correct_position_type}' "
+                                f"({stock_a}={qty_a}, {stock_b}={qty_b})"
+                            )
+                        
+                        # Update to correct state
+                        pair_state['current_position'] = correct_position_type
                         
                         # Restore critical state from positions
                         pair_state['entry_quantities'] = {
@@ -542,11 +606,38 @@ class PairsTradingKalmanStrategy(BaseStrategy):
                             f"🔄 RECONCILED {pair_key}: Found existing position "
                             f"{pair_state['current_position']} (notional=${pair_state['entry_notional']:.0f})"
                         )
+                    
+                    # Check if strategy thinks it has a position but broker doesn't
+                    elif qty_a == 0 and qty_b == 0 and current_strategy_state != 'flat':
+                        desync_detected.append(
+                            f"{pair_key}: strategy thinks '{current_strategy_state}' but broker has no position"
+                        )
+                        self.log_warning(
+                            f"⚠️  DESYNC DETECTED for {pair_key}! "
+                            f"Strategy state='{current_strategy_state}' but broker has no position. Clearing state."
+                        )
+                        # Clear the position state
+                        pair_state['current_position'] = 'flat'
+                        pair_state['entry_zscore'] = 0.0
+                        pair_state['bars_in_trade'] = 0
+                        pair_state['entry_timestamp'] = None
+                        pair_state['entry_prices'] = {}
+                        pair_state['entry_spread'] = None
+                        pair_state['entry_quantities'] = {}
+                        pair_state['entry_notional'] = 0.0
+                        pair_state['unrealized_pnl'] = 0.0
                 
                 if reconciled_count > 0:
                     self.log_warning(
                         f"🔄 Reconciled {reconciled_count} pair position(s) from database"
                     )
+                
+                if desync_detected:
+                    self.log_warning(
+                        f"⚠️  {len(desync_detected)} DESYNC ISSUE(S) DETECTED AND CORRECTED:"
+                    )
+                    for issue in desync_detected:
+                        self.log_warning(f"  - {issue}")
                     
         except Exception as e:
             self.log_error(f"Failed to reconcile positions: {e}")
@@ -656,6 +747,30 @@ class PairsTradingKalmanStrategy(BaseStrategy):
         
         # Suppress verbose logs during optimization (strategy_id starts with 'opt_')
         is_optimization = self.config.strategy_id.startswith('opt_')
+        
+        # Check for ready_to_trade state changes (not during optimization/backtesting)
+        if not is_optimization:
+            current_ready_to_trade = await self._check_ready_to_trade_state()
+            if current_ready_to_trade and not self._last_ready_to_trade_state:
+                # Ready to trade was just turned ON - trigger reconciliation
+                self.log_warning(
+                    "🔄 READY TO TRADE ENABLED - Triggering position reconciliation to sync with broker"
+                )
+                await self._reconcile_positions()
+                self._bars_since_reconciliation = 0  # Reset periodic timer
+            self._last_ready_to_trade_state = current_ready_to_trade
+        
+        # Periodic reconciliation check (not during optimization/backtesting)
+        if not is_optimization:
+            self._bars_since_reconciliation += 1
+            if self._bars_since_reconciliation >= self._reconciliation_interval:
+                self.log_info(
+                    f"🔄 Running periodic reconciliation check "
+                    f"(every {self._reconciliation_interval} bars = "
+                    f"~{self._reconciliation_interval * self.base_bar_seconds // 60:.0f} minutes)"
+                )
+                await self._reconcile_positions()
+                self._bars_since_reconciliation = 0
         
         # DEBUG: Log data availability (only occasionally to avoid spam)
         if not is_optimization:
